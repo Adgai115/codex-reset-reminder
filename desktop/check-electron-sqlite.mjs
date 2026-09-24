@@ -1,11 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import electronPath from 'electron';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const executable = join(root, 'node_modules', 'electron', 'dist',
-  process.platform === 'win32' ? 'electron.exe' : 'electron');
-const result = spawnSync(executable, [join(root, 'desktop', 'sqlite-probe.mjs')], {
+const result = spawnSync(electronPath, [join(root, 'desktop', 'sqlite-probe.mjs')], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 20000,
 });
 if (result.status !== 0 || !result.stdout.includes('SQLITE_OK')) {
