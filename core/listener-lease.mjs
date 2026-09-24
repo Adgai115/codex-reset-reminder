@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:net';
+import { lstat, unlink } from 'node:fs/promises';
+import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,19 +12,40 @@ export function listenerAddress(identity) {
 }
 
 export async function acquireListenerLease(identity) {
-  const server = createServer((socket) => socket.end());
   const address = listenerAddress(identity);
+  const listen = async () => {
+    const server = createServer((socket) => socket.end());
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(address, resolve);
+      });
+      server.removeAllListeners('error');
+      server.on('error', () => {});
+      return server;
+    } catch (error) {
+      server.close();
+      throw error;
+    }
+  };
   try {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(address, resolve);
-    });
-    server.removeAllListeners('error');
-    server.on('error', () => {});
-    return server;
+    return await listen();
   } catch (error) {
-    server.close();
-    if (error.code === 'EADDRINUSE') return null;
-    throw error;
+    if (error.code !== 'EADDRINUSE') throw error;
+    if (process.platform === 'win32') return null;
   }
+  // Unix socket files survive an unclean exit. Reclaim only an abandoned socket.
+  const before = await lstat(address).catch(() => null);
+  if (!before?.isSocket()) return null;
+  const active = await new Promise((resolve) => {
+    const socket = createConnection(address);
+    socket.once('connect', () => { socket.end(); resolve(true); });
+    socket.once('error', (error) => resolve(error.code !== 'ECONNREFUSED'));
+  });
+  if (active) return null;
+  const after = await lstat(address).catch(() => null);
+  if (!after?.isSocket() || before.ino !== after.ino || before.dev !== after.dev) return null;
+  await unlink(address).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  try { return await listen(); }
+  catch (error) { if (error.code === 'EADDRINUSE') return null; throw error; }
 }

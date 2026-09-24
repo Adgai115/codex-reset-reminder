@@ -6,7 +6,7 @@
 
 安装前请在本机安装并登录 [Codex CLI](https://github.com/openai/codex)，确保 `codex` 命令可以运行。桌面安装包内含 Node.js 24 sidecar，日常读取优先使用 Electron 内置的 `node:sqlite`；不需要另外安装 Node。开发源码和旧版 PowerShell 工具仍需 Node.js 24。
 
-首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置，并停用旧计划任务，避免重复提醒。选择暂不迁移会进入全新配置流程，不修改旧版。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
+首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。应用启动时和每天 08:30 同步一次；同步失败时继续检查已缓存的卡片。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置，并停用旧计划任务，避免重复提醒。选择暂不迁移会进入全新配置流程，不修改旧版。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
 
 卡片管理可以新增、编辑、标记手动卡已使用，记录正式卡的使用反馈，设置或取消延期，以及手动同步 Codex。提醒设置可以开关桌面与飞书渠道、免打扰、提醒前核对、登录自启，并测试桌面弹窗。飞书连接需另行安装本机 `lark-cli`，在设置页输入 App ID、接收人 ID、`lark-cli` 脚本路径和 App Secret；应用先发送测试私聊，成功后才保存连接。密钥由本机 `lark-cli` 保管，不写入应用配置。连接完成后字段锁定；“重新连接”需要二次确认。微信渠道本版不启用。
 
@@ -14,7 +14,7 @@
 
 ### 安装与构建
 
-GitHub Release 提供 Windows NSIS 安装包、macOS DMG、Linux AppImage 和 deb。macOS 包暂未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
+当前可在 GitHub Actions 的三平台构建记录中下载 Windows NSIS、macOS DMG、Linux AppImage 和 deb 测试包；推送版本 tag 后，工作流才会创建 GitHub Release。macOS 包暂未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
 
 从源码构建时使用 Node.js 24：
 

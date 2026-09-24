@@ -44,6 +44,7 @@ async function createSidecarHandler() {
     child = spawn(runtime, [join(directory, 'core-worker.mjs')], {
       cwd: projectRoot, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
+    const worker = child;
     ready = new Promise((resolveReady, rejectReady) => {
       let buffer = '';
       child.stdout.on('data', (chunk) => {
@@ -71,13 +72,15 @@ async function createSidecarHandler() {
         }
       });
       child.stderr.on('data', (chunk) => { console.error('[core-worker]', chunk.toString()); });
-      child.once('exit', (code) => {
-        const error = new Error(`core worker 提前退出，代码 ${code}`);
+      const failWorker = (error) => {
         for (const { reject } of pending.values()) reject(error);
         pending.clear();
-        child = null;
-        ready = null;
+        if (child === worker) { child = null; ready = null; }
         rejectReady(error);
+      };
+      worker.once('error', (error) => failWorker(new Error(`无法启动 core worker：${error.message}`)));
+      worker.once('exit', (code) => {
+        if (child === worker) failWorker(new Error(`core worker 提前退出，代码 ${code}`));
       });
     });
     return ready;

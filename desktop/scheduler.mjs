@@ -73,7 +73,11 @@ export function createScheduler({ coreRequest, onResult = () => {} }) {
     powerMonitor.on('resume', resume);
     hourlyTimer = setInterval(() => check('hourly'), hourMs);
     scheduleDaily();
-    check('startup');
+    enqueue(async () => {
+      try { await coreRequest('syncCards'); }
+      catch (error) { console.warn(`[scheduler] 启动同步失败，继续使用本地缓存：${error.message}`); }
+      await performCheck('startup');
+    });
   }
   function stop() {
     running = false;

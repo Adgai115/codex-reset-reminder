@@ -33,6 +33,9 @@ export function larkCommand(config) {
   }
   const packageRoot = dirname(dirname(resolve(config.larkCliScript)));
   const executable = join(packageRoot, 'bin', 'lark-cli.exe');
-  if (!existsSync(executable)) throw new Error('找不到飞书 CLI 原生程序；请重新安装 lark-cli');
+  if (!existsSync(executable)) {
+    return { executable: config.nodePath || process.env.CODEX_RESET_MONITOR_NODE_PATH || 'node',
+      prefix: [config.larkCliScript] };
+  }
   return { executable, prefix: [] };
 }

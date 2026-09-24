@@ -51,7 +51,8 @@
       "reminder-policy.mjs",
       "later.mjs",
       "config.example.json",
-      "package.json"
+      "package.json",
+      "!**/*.test.mjs"
     ],
     "extraResources": [
       {

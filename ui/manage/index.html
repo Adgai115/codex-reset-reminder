@@ -98,13 +98,16 @@
   }
   async function load() {
     if (!window.api) throw new Error('应用桥接未加载');
-    const [status, cards, latest] = await Promise.all([
+    const [status, cards, latest, confirmed] = await Promise.all([
       window.api.coreStatus(), window.api.core('listCards', { includeInactive: true }),
-      window.api.core('latestSync'),
+      window.api.core('latestSync'), window.api.core('latestCompleteSync'),
     ]);
     $('mode').textContent = status.mode === 'in-process' ? '（内置 core）' : '（兼容模式）';
     $('sync-status').textContent = latest
-      ? `上次核对：${fmt(latest.checkedAt)} · ${latest.outcome === 'complete' ? `${latest.availableCount} 张可用` : latest.outcome === 'failed' ? '同步失败' : '详情不完整'}`
+      ? latest.outcome === 'complete'
+        ? `上次核对：${fmt(latest.checkedAt)} · ${latest.availableCount} 张可用`
+        : `${latest.outcome === 'failed' ? '上次同步失败' : '详情不完整'} · ${confirmed
+          ? `上次确认 ${confirmed.availableCount} 张（${fmt(confirmed.checkedAt)}）` : '尚无确认数据'}`
       : '尚未同步';
     tbody.replaceChildren();
     for (const card of cards) {
