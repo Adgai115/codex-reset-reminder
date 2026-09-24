@@ -15,4 +15,5 @@ node_modules/
 Thumbs.db
 .DS_Store
 node_modules/
-package-lock.json
+dist/
+vendor-node/

@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { app } from 'electron';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
@@ -37,7 +38,10 @@ async function createSidecarHandler() {
 
   function ensureWorker() {
     if (child) return ready;
-    child = spawn('node', [join(directory, 'core-worker.mjs')], {
+    const runtime = app.isPackaged
+      ? join(process.resourcesPath, 'vendor-node', process.platform === 'win32' ? 'node.exe' : 'node')
+      : process.env.CODEX_RESET_MONITOR_NODE_PATH || 'node';
+    child = spawn(runtime, [join(directory, 'core-worker.mjs')], {
       cwd: projectRoot, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     ready = new Promise((resolveReady, rejectReady) => {

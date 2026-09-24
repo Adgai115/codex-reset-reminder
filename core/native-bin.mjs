@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 export function codexCommand(codexScript) {
-  if (process.platform !== 'win32') return { executable: process.execPath, prefix: [codexScript] };
+  if (process.platform !== 'win32') {
+    if (!/\.(?:m?js|cjs)$/i.test(codexScript)) return { executable: codexScript, prefix: [] };
+    return { executable: process.env.CODEX_RESET_MONITOR_NODE_PATH || 'node', prefix: [codexScript] };
+  }
   const packageRoot = dirname(dirname(resolve(codexScript)));
   const target = process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc';
   const platformPackage = process.arch === 'arm64' ? 'codex-win32-arm64' : 'codex-win32-x64';
@@ -22,8 +25,8 @@ export function codexCommand(codexScript) {
 export function larkCommand(config) {
   if (!config.larkCliScript) throw new Error('未配置本机 lark-cli 路径');
   if (process.platform !== 'win32') {
-    if (!config.nodePath) throw new Error('未配置 Node.js 路径');
-    return { executable: config.nodePath, prefix: [config.larkCliScript] };
+    return { executable: config.nodePath || process.env.CODEX_RESET_MONITOR_NODE_PATH || 'node',
+      prefix: [config.larkCliScript] };
   }
   const packageRoot = dirname(dirname(resolve(config.larkCliScript)));
   const executable = join(packageRoot, 'bin', 'lark-cli.exe');
