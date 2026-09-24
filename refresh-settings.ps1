@@ -20,14 +20,7 @@ if ($config.feishu.enabled) {
         if ($task.State -eq 'Running') { Stop-ScheduledTask -TaskName $taskName }
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
-    # The hidden Windows task launcher may leave its Node child alive.
-    $workers = @(Get-CimInstance Win32_Process | Where-Object {
-        $_.CommandLine -match 'codex-reset-reminder[\\/]callback-worker\.mjs'
-    })
-    $workerIds = @($workers | ForEach-Object { $_.ProcessId })
-    $children = @(Get-CimInstance Win32_Process | Where-Object {
-        $workerIds -contains $_.ParentProcessId -and $_.CommandLine -match 'card\.action\.trigger'
-    })
-    foreach ($worker in $workers) { Stop-Process -Id $worker.ProcessId -Force -ErrorAction SilentlyContinue }
-    foreach ($child in $children) { Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Task Scheduler may leave the Node child alive after stopping its wrapper.
+    . (Join-Path $directory 'callback-process.ps1')
+    Stop-ReminderCallbackWorker -Directory $directory
 }
