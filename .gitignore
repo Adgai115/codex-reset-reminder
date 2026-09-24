@@ -1,0 +1,16 @@
+.state/
+config.json
+status.json
+last-run.log
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.dpapi
+.env
+.env.*
+!.env.example
+node_modules/
+*.zip
+Thumbs.db
+.DS_Store

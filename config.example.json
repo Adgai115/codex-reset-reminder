@@ -1,0 +1,8 @@
+{
+  "desktop": { "enabled": true },
+  "reminders": {
+    "quietHours": { "enabled": true, "start": "22:00", "end": "09:00" },
+    "preflightSync": { "enabled": true, "retryMinutes": 60 }
+  },
+  "feishu": { "enabled": false }
+}
