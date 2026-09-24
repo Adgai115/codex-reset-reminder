@@ -20,8 +20,10 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
       await shell.openExternal('https://chatgpt.com/codex');
     } else if (action === 'snooze') {
       if (!['1d', '3d', 'tomorrow10'].includes(option)) throw new Error('提醒时间无效');
-      await coreRequest('scheduleSnooze', { cardId: record.payload.creditId, option });
-      await onScheduleChanged();
+      if (!record.payload.simulated) {
+        await coreRequest('scheduleSnooze', { cardId: record.payload.creditId, option });
+        await onScheduleChanged();
+      }
     } else if (action !== 'dismiss') {
       throw new Error('未知的提醒操作');
     }

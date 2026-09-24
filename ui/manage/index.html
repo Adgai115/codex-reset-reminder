@@ -40,6 +40,7 @@
   <h1>卡片管理 <span id="mode"></span></h1>
   <div>
     <span id="sync-status">加载中…</span>
+    <button id="settings">提醒设置</button>
     <button id="add">新增手动卡</button>
     <button id="sync">立即同步 Codex</button>
   </div>
@@ -157,6 +158,8 @@
     $('card-dialog').showModal();
   }
   $('add').addEventListener('click', () => openCardDialog());
+  $('settings').addEventListener('click', () => window.api.openSettings()
+    .catch((error) => notice(error.message, true)));
   $('cancel-card').addEventListener('click', () => $('card-dialog').close());
   $('cancel-snooze').addEventListener('click', () => $('snooze-dialog').close());
   $('card-form').addEventListener('submit', async (event) => {

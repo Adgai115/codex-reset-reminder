@@ -47,7 +47,10 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
   }
 
   async function start() {
-    if (loop) return;
+    if (loop) {
+      if (!stopped) return;
+      await loop;
+    }
     const config = await readConfig();
     if (!config.feishu?.enabled || config.feishu.as !== 'bot' || !config.feishu.userId) return;
     lease = await acquireListenerLease(databasePath);
@@ -71,5 +74,10 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
     stopped = true;
     child?.kill();
   }
-  return { start, stop };
+  async function refresh() {
+    stop();
+    if (loop) await loop;
+    return start();
+  }
+  return { start, stop, refresh };
 }

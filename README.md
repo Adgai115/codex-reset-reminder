@@ -1,4 +1,35 @@
-# Codex 重置卡到期提醒（Windows 本地版）
+# Codex 重置卡到期提醒
+
+## 跨平台桌面版（Electron）
+
+`feature/cross-platform` 分支在 Windows、macOS 和 Linux 上使用同一套 Node 核心与 Electron 桌面界面。应用在本机读取已登录的 Codex CLI Usage 数据，缓存重置卡和去重记录；7 / 3 / 1 天、延期节点以及休眠恢复由应用内调度器处理。桌面提醒是带按钮的自绘窗口，飞书机器人私聊可选。提醒不调用 Codex 模型，也不消耗模型 Token；“立即使用”仍会请求 Codex 正式用卡接口，需在飞书卡片内二次确认。
+
+安装前请在本机安装并登录 [Codex CLI](https://github.com/openai/codex)，确保 `codex` 命令可以运行。桌面安装包内含 Node.js 24 sidecar，日常读取优先使用 Electron 内置的 `node:sqlite`；不需要另外安装 Node。开发源码和旧版 PowerShell 工具仍需 Node.js 24。
+
+首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置，并停用旧计划任务，避免重复提醒。选择暂不迁移会进入全新配置流程，不修改旧版。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
+
+卡片管理可以新增、编辑、标记手动卡已使用，记录正式卡的使用反馈，设置或取消延期，以及手动同步 Codex。提醒设置可以开关桌面与飞书渠道、免打扰、提醒前核对、登录自启，并测试桌面弹窗。飞书连接需另行安装本机 `lark-cli`，在设置页输入 App ID、接收人 ID、`lark-cli` 脚本路径和 App Secret；应用先发送测试私聊，成功后才保存连接。密钥由本机 `lark-cli` 保管，不写入应用配置。连接完成后字段锁定；“重新连接”需要二次确认。微信渠道本版不启用。
+
+应用必须保持运行才能检查提醒。关闭卡片管理窗口会收起到托盘；托盘菜单可以重新打开管理或设置，也可以退出。电脑关机期间无法提醒；下次启动会补查尚未过期的节点。Linux 桌面环境对托盘激活的处理不同，单击不一定打开窗口，可以从托盘菜单选择“打开卡片管理”。参见 [Electron Tray 平台说明](https://www.electronjs.org/docs/latest/api/tray)。
+
+### 安装与构建
+
+GitHub Release 提供 Windows NSIS 安装包、macOS DMG、Linux AppImage 和 deb。macOS 包暂未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
+
+从源码构建时使用 Node.js 24：
+
+```bash
+npm ci
+npm test
+npm run probe:sqlite
+npm run dist
+```
+
+`npm run dist` 会先把当前平台的 Node.js 24 复制为 sidecar，再用 electron-builder 构建本平台安装包。开发模式运行 `npm start`。GitHub Actions 的 Windows、macOS、Linux matrix 会先跑测试与 Electron SQLite 探针，再分别构建安装包；推送 `v*` tag 后，三个平台全部通过才创建 Release。当前只在 Windows 本机完成了 Electron 界面与目录包实测；macOS 和 Linux 安装包仍以 CI 结果为准。
+
+### Windows PowerShell 旧版
+
+以下是仍可使用的旧版安装、命令和计划任务说明。桌面版迁移前不修改这些脚本。
 
 这是非官方的 Windows 本地工具，使用已登录的 Codex CLI 读取和使用 [Banked Reset](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work)。它依赖 Codex App Server 的用量与用卡方法；Codex 更新后，这些方法可能变化。请以 Codex **Settings → Usage** 显示的卡片和到期时间为准。项目不会把登录凭据上传到自己的服务器。
 

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>提醒设置</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f7f9fc; color: #233247;
+    font: 14px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+  main { padding: 22px 26px; }
+  h1 { margin: 0 0 5px; font-size: 21px; }
+  h2 { font-size: 15px; margin: 0 0 14px; }
+  p, small { color: #6b798e; line-height: 1.5; }
+  section { background: white; border: 1px solid #dfe6ef; border-radius: 10px; padding: 16px; margin-top: 14px; }
+  .line { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+  .line input[type=checkbox] { width: 16px; height: 16px; }
+  .field { display: block; margin: 10px 0; }
+  .field input { margin-top: 5px; display: block; width: 100%; padding: 8px; border: 1px solid #ccd7e3; border-radius: 7px; font: inherit; }
+  .clocks { display: flex; gap: 14px; align-items: center; }
+  .clocks input { width: 110px; }
+  button { border: 1px solid #cbd5e1; background: white; border-radius: 7px; padding: 8px 13px; cursor: pointer; font: inherit; }
+  button.primary { background: #1458df; color: white; border-color: #1458df; }
+  button:disabled { opacity: .5; cursor: wait; }
+  footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0; }
+  #status { min-height: 20px; color: #b42318; margin-top: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>提醒设置</h1><p>设置保存在这台电脑上，保存后立即生效。</p>
+  <section><h2>通知渠道</h2>
+    <label class="line"><input id="autostart" type="checkbox">登录系统时自动启动</label>
+    <label class="line"><input id="desktop" type="checkbox">Windows / macOS / Linux 桌面弹窗</label>
+    <label class="line"><input id="feishu" type="checkbox">飞书机器人私聊</label>
+    <small id="feishu-state">正在读取连接状态…</small>
+  </section>
+  <section><h2>飞书连接</h2>
+    <label class="field">App ID<input id="app-id" placeholder="cli_…"></label>
+    <label class="field">接收人 Open ID（ou_）或 Union ID（on_）<input id="recipient-id"></label>
+    <label class="field">lark-cli 脚本路径<input id="lark-path"></label>
+    <label class="field">App Secret（仅连接时输入）<input id="secret" type="password" autocomplete="new-password"></label>
+    <button id="reconnect">重新连接</button><button id="connect" class="primary">保存并连接</button>
+    <small>连接时会发送一条测试私聊。密钥交给本机 lark-cli 保管，不写入应用配置。</small>
+  </section>
+  <section><h2>免打扰与核对</h2>
+    <label class="line"><input id="quiet" type="checkbox">在此时段内延后提醒</label>
+    <div class="clocks"><input id="quiet-start" type="time">至<input id="quiet-end" type="time"></div>
+    <label class="line"><input id="preflight" type="checkbox">发送前尝试读取 Codex 最新数据</label>
+    <label class="field">最短间隔（分钟）<input id="retry" type="number" min="10" max="1440"></label>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
+  <footer><button id="test">测试桌面弹窗</button><button id="cancel">取消</button><button id="save" class="primary">保存设置</button></footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let connected = false;
+  let unlocked = true;
+  let saving = false;
+  function connectionState() {
+    for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked;
+    $('connect').disabled = !unlocked || saving;
+    $('reconnect').disabled = !connected || unlocked || saving;
+    $('feishu-state').textContent = connected ? '机器人已连接。更换应用或接收人需要先点击“重新连接”。' : '尚未连接，可只使用本地弹窗。';
+  }
+  function fill(settings) {
+    connected = settings.feishuConnected;
+    unlocked = !connected;
+    $('autostart').checked = settings.autoStartEnabled;
+    $('desktop').checked = settings.desktopEnabled;
+    $('feishu').checked = settings.feishuEnabled;
+    $('app-id').value = settings.appId;
+    $('recipient-id').value = settings.recipientId;
+    $('lark-path').value = settings.larkCliScript;
+    $('secret').value = '';
+    $('quiet').checked = settings.quietEnabled;
+    $('quiet-start').value = settings.quietStart;
+    $('quiet-end').value = settings.quietEnd;
+    $('preflight').checked = settings.preflightEnabled;
+    $('retry').value = settings.retryMinutes;
+    connectionState();
+  }
+  window.api.settingsRead().then(fill).catch((error) => { $('status').textContent = error.message; });
+  $('reconnect').addEventListener('click', () => {
+    if (!confirm('重新连接会更换飞书机器人配置。确认继续？')) return;
+    unlocked = true;
+    connectionState();
+  });
+  $('connect').addEventListener('click', async () => {
+    if (saving) return;
+    saving = true; connectionState();
+    $('status').textContent = '正在配置机器人并发送测试私聊…';
+    try {
+      const settings = await window.api.feishuConnect({
+        appId: $('app-id').value, recipientId: $('recipient-id').value,
+        larkCliScript: $('lark-path').value, secret: $('secret').value,
+      });
+      fill(settings);
+      $('status').textContent = '连接成功，测试私聊已发送。';
+    } catch (error) { $('status').textContent = error.message; }
+    finally { saving = false; connectionState(); }
+  });
+  $('test').addEventListener('click', () => window.api.testDesktopReminder()
+    .catch((error) => { $('status').textContent = error.message; }));
+  $('cancel').addEventListener('click', () => window.api.settingsClose());
+  $('save').addEventListener('click', async () => {
+    if (saving) return;
+    saving = true;
+    $('save').disabled = true;
+    $('save').textContent = '保存中…';
+    try {
+      await window.api.settingsSave({ autoStartEnabled: $('autostart').checked,
+        desktopEnabled: $('desktop').checked,
+        feishuEnabled: $('feishu').checked, quietEnabled: $('quiet').checked,
+        quietStart: $('quiet-start').value, quietEnd: $('quiet-end').value,
+        preflightEnabled: $('preflight').checked, retryMinutes: Number($('retry').value) });
+      window.api.settingsClose();
+    } catch (error) { $('status').textContent = error.message; }
+    finally { saving = false; $('save').disabled = false; $('save').textContent = '保存设置'; }
+  });
+</script>
+</body>
+</html>

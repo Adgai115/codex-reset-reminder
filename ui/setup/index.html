@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>安装与连接</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f6f8fc; color: #1c2b40;
+    font: 14px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+  main { padding: 27px 30px; }
+  h1 { font-size: 23px; margin: 0 0 8px; }
+  p { color: #617189; line-height: 1.55; }
+  .card { margin-top: 20px; padding: 18px; background: white; border: 1px solid #dce5f0; border-radius: 11px; }
+  label { display: block; font-weight: 600; margin-bottom: 9px; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; border: 1px solid #cad5e2; border-radius: 7px; padding: 9px; font: inherit; }
+  button { border: 1px solid #c8d3e2; background: white; border-radius: 7px; padding: 9px 14px;
+    font: inherit; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: wait; }
+  button.primary { background: #1458df; border-color: #1458df; color: white; }
+  footer { margin-top: 20px; display: flex; justify-content: flex-end; }
+  #status { min-height: 22px; color: #b42318; margin-top: 12px; }
+  small { display: block; color: #75849a; margin-top: 10px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <h1>安装与连接</h1>
+  <p>先连接这台电脑已登录的 Codex CLI。连接完成后会打开卡片管理，提醒会在应用运行时自动检查。</p>
+  <div class="card">
+    <label for="path">Codex CLI 路径</label>
+    <div class="row"><input id="path" placeholder="正在自动查找…" spellcheck="false"><button id="browse">浏览</button></div>
+    <small>请先安装并登录 Codex CLI。此处只读取 Usage 数据，不会使用重置卡。飞书私聊可稍后配置。</small>
+    <label style="margin-top:14px;font-weight:normal"><input id="autostart" type="checkbox" checked> 登录系统时自动启动</label>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+  <footer><button id="connect" class="primary">验证连接并开始</button></footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  window.api.setupDiscover().then((result) => {
+    $('path').value = result.codexScript || '';
+    $('path').placeholder = result.codexScript ? '' : '未自动找到，请浏览选择';
+  }).catch((error) => { $('status').textContent = error.message; });
+  $('browse').addEventListener('click', async () => {
+    try { const path = await window.api.setupBrowse(); if (path) $('path').value = path; }
+    catch (error) { $('status').textContent = error.message; }
+  });
+  $('connect').addEventListener('click', async () => {
+    $('connect').disabled = true;
+    $('connect').textContent = '连接中…';
+    $('status').textContent = '正在读取 Codex Usage，首次连接可能需要几十秒。';
+    try {
+      await window.api.setupSave({ codexScript: $('path').value,
+        autoStartEnabled: $('autostart').checked });
+      $('status').textContent = '连接成功，正在打开卡片管理。';
+    } catch (error) {
+      $('status').textContent = `连接失败：${error.message}`;
+      $('connect').disabled = false;
+      $('connect').textContent = '验证连接并开始';
+    }
+  });
+</script>
+</body>
+</html>

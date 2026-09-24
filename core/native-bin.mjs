@@ -2,6 +2,9 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 export function codexCommand(codexScript) {
+  if (process.platform === 'win32' && /\.exe$/i.test(codexScript)) {
+    return { executable: codexScript, prefix: [] };
+  }
   if (process.platform !== 'win32') {
     if (!/\.(?:m?js|cjs)$/i.test(codexScript)) return { executable: codexScript, prefix: [] };
     return { executable: process.env.CODEX_RESET_MONITOR_NODE_PATH || 'node', prefix: [codexScript] };

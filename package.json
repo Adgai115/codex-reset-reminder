@@ -1,7 +1,13 @@
 {
   "name": "codex-reset-reminder",
-  "version": "1.1.0",
+  "version": "2.0.0-beta.1",
   "description": "Codex 重置卡到期提醒（跨平台桌面版）",
+  "author": {
+    "name": "Adgai115",
+    "email": "Adgai115@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/Adgai115/codex-reset-reminder",
+  "repository": "https://github.com/Adgai115/codex-reset-reminder.git",
   "type": "module",
   "main": "desktop/main.mjs",
   "private": true,
@@ -22,7 +28,9 @@
     "appId": "com.adgai.codexresetreminder",
     "productName": "Codex Reset Reminder",
     "asar": false,
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "desktop/**/*",
       "ui/**/*",
@@ -44,10 +52,37 @@
       "config.example.json",
       "package.json"
     ],
-    "extraResources": [{ "from": "vendor-node", "to": "vendor-node" }],
-    "win": { "target": ["nsis"], "icon": "assets/app-icon.ico" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true },
-    "mac": { "target": ["dmg"], "icon": "assets/app-icon.png", "identity": null },
-    "linux": { "target": ["AppImage", "deb"], "icon": "assets/app-icon.png", "category": "Utility" }
+    "extraResources": [
+      {
+        "from": "vendor-node",
+        "to": "vendor-node"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/app-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/app-icon.png",
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/app-icon.png",
+      "category": "Utility"
+    }
   }
 }
