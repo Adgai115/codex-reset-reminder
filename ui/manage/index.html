@@ -50,7 +50,9 @@
   }
 
   async function load() {
-    const status = await window.api.coreStatus();
+    try {
+      if (!window.api) throw new Error('preload 未加载（window.api 不存在）');
+      const status = await window.api.coreStatus();
     document.getElementById('mode').textContent =
       status.mode === 'in-process' ? '（内置 core）' : '（sidecar core）';
     try {
@@ -75,11 +77,12 @@
       empty.hidden = cards.length > 0;
       document.getElementById('cards').hidden = cards.length === 0;
     } catch (error) {
+      console.error(error);
       syncStatus.textContent = `读取失败：${error.message}`;
     }
   }
   document.getElementById('refresh').addEventListener('click', load);
-  load();
+  load().catch((error) => { syncStatus.textContent = `初始化失败：${error.message}`; });
 </script>
 </body>
 </html>

@@ -24,7 +24,7 @@ if (!gotLock) {
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       autoHideMenuBar: true,
       webPreferences: {
-        preload: join(directory, 'preload.mjs'),
+        preload: join(directory, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
       },

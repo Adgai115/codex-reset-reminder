@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
+// Preload must be CommonJS: Electron's sandbox does not support ESM preloads.
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   core: (op, args) => ipcRenderer.invoke('core', op, args),
