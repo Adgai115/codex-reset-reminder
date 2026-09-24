@@ -1,9 +1,12 @@
 // Electron main process: single instance, tray + manage window. The app is
 // the cross-platform replacement for main-tray.ps1 / manage.ps1.
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } from 'electron';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { coreRequest, coreStatus } from './core-host.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { coreRequest, coreStatus, setDesktopPresenter } from './core-host.mjs';
+import { createReminderManager } from './reminder-window.mjs';
+import { createScheduler } from './scheduler.mjs';
+import { createCallbackListener } from './callback-listener.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
@@ -14,6 +17,9 @@ if (!gotLock) {
   let tray = null;
   let manageWindow = null;
   let quitting = false;
+  let scheduler = null;
+  let reminders = null;
+  let callbackListener = null;
 
   app.on('second-instance', () => { showManage(); });
 
@@ -68,18 +74,52 @@ if (!gotLock) {
     return refreshMenu;
   }
 
-  ipcMain.handle('core', (_event, op, args) => coreRequest(op, args));
-  ipcMain.handle('core:status', () => coreStatus());
-  ipcMain.handle('manage:show', () => { showManage(); });
-  ipcMain.handle('shell:openExternal', (_event, url) => shell.openExternal(url));
+  const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
+  const allowedOperations = new Set(['listCards', 'getCard', 'latestSync', 'latestCompleteSync',
+    'snooze', 'addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed',
+    'scheduleSnooze', 'clearSnooze', 'syncCards']);
+  const mutatingOperations = new Set(['addManualCard', 'updateManualCard', 'markManualUsed',
+    'reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
+  ipcMain.handle('core', async (event, op, args) => {
+    if (event.senderFrame?.url !== managePage || !allowedOperations.has(op)) {
+      throw new Error('不允许的页面操作');
+    }
+    if (op === 'syncCards' && scheduler) return scheduler.sync('manual');
+    const result = await coreRequest(op, args);
+    if (mutatingOperations.has(op)) await scheduler?.reschedule();
+    return result;
+  });
+  ipcMain.handle('core:status', (event) => {
+    if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
+    return coreStatus();
+  });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (app.isPackaged) {
+      process.env.CODEX_RESET_MONITOR_DATA_DIR = app.getPath('userData');
+      process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(app.getPath('userData'), 'config.json');
+    }
+    scheduler = createScheduler({ coreRequest });
+    reminders = createReminderManager({ coreRequest, onScheduleChanged: scheduler.reschedule });
+    setDesktopPresenter(reminders.present);
     const refreshMenu = createTray();
     showManage();
     setInterval(refreshMenu, 60_000); // keep tray summary fresh
+    scheduler.start();
+    const { databasePath } = await import('../core/store.mjs');
+    callbackListener = createCallbackListener({
+      configPath: process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(projectRoot, 'config.json'),
+      databasePath, coreRequest, onChanged: scheduler.reschedule,
+    });
+    callbackListener.start().catch((error) => console.warn(`[feishu] ${error.message}`));
   });
 
-  app.on('before-quit', () => { quitting = true; });
+  app.on('before-quit', () => {
+    quitting = true;
+    scheduler?.stop();
+    callbackListener?.stop();
+    reminders?.closeAll();
+  });
   app.on('window-all-closed', () => { /* stay in tray */ });
   app.on('activate', () => showManage());
 }

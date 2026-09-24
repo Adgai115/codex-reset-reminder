@@ -65,6 +65,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         if (!dryRun) {
           try {
             await desktop({ cardName: card.title, creditId: card.id, source: card.source,
+              expiresAt: card.expiresAt,
               expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
               days, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex });
             recordDelivery(db, card.id, card.expiresAt, days, 'desktop');
@@ -121,6 +122,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       if (channels.includes('desktop') && !snooze.desktopDeliveredAt && !dryRun) {
         try {
           await desktop({ cardName: card.title, creditId: card.id, source: card.source,
+            expiresAt: card.expiresAt,
             expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
             days: remainingDays, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex });
           recordDelivery(db, card.id, card.expiresAt, 0, 'desktop');

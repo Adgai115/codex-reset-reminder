@@ -6,7 +6,7 @@ import { replanScheduledTask } from './replan.mjs';
 import { markCardUsed, openStore, saveCodexSnapshot } from './store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const configPath = join(directory, 'config.json');
+const configPath = process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(directory, 'config.json');
 
 function windowSummary(window) {
   if (!window || !Number.isFinite(window.usedPercent)) return null;

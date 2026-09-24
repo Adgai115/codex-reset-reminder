@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
+let desktopPresenter = null;
+
+export function setDesktopPresenter(presenter) { desktopPresenter = presenter; }
 
 async function detectSqlite() {
   try {
@@ -22,7 +25,7 @@ async function createInProcessHandler() {
   const { runCoreOperation } = await import('./core-operations.mjs');
   return {
     status: () => ({ mode: 'in-process', platform: process.platform }),
-    request: runCoreOperation,
+    request: (op, args) => runCoreOperation(op, args, { desktop: desktopPresenter }),
   };
 }
 
@@ -48,6 +51,13 @@ async function createSidecarHandler() {
           let message;
           try { message = JSON.parse(line); } catch { continue; }
           if (message.type === 'ready') resolveReady();
+          else if (message.type === 'desktop') {
+            Promise.resolve().then(() => desktopPresenter(message.payload)).then(
+              () => child?.stdin.write(`${JSON.stringify({ type: 'desktop-result', eventId: message.eventId, ok: true })}\n`),
+              (error) => child?.stdin.write(`${JSON.stringify({ type: 'desktop-result', eventId: message.eventId,
+                ok: false, error: error.message })}\n`),
+            );
+          }
           else if (message.type === 'result' && pending.has(message.id)) {
             const { resolve, reject } = pending.get(message.id);
             pending.delete(message.id);
