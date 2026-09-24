@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const linuxEntry = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
-  'autostart', 'codex-reset-reminder.desktop');
+  'autostart', 'com.adgai.codexresetreminder.desktop');
 
 export function autoStartEnabled() {
   if (process.platform === 'linux') return existsSync(linuxEntry());

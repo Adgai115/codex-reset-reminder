@@ -1,5 +1,6 @@
 {
   "name": "codex-reset-reminder",
+  "desktopName": "com.adgai.codexresetreminder.desktop",
   "version": "2.0.0-beta.1",
   "description": "Codex 重置卡到期提醒（跨平台桌面版）",
   "author": {
@@ -73,7 +74,7 @@
       "target": [
         "dmg"
       ],
-      "icon": "assets/app-icon.png",
+      "icon": "assets/app-icon-source.png",
       "identity": null
     },
     "linux": {
@@ -81,8 +82,9 @@
         "AppImage",
         "deb"
       ],
-      "icon": "assets/app-icon.png",
-      "category": "Utility"
+      "icon": "assets/app-icon-source.png",
+      "category": "Utility",
+      "syncDesktopName": true
     }
   }
 }
