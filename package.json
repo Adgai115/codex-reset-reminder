@@ -1,0 +1,16 @@
+{
+  "name": "codex-reset-reminder",
+  "version": "1.1.0",
+  "description": "Codex 重置卡到期提醒（跨平台桌面版）",
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test ./**/*.test.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.0.0"
+  }
+}

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Codex 重置卡提醒</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0;
+    background: Canvas; color: CanvasText; font-size: 14px; }
+  header { padding: 14px 20px; border-bottom: 1px solid graytext; display: flex;
+    justify-content: space-between; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; }
+  #sync-status { opacity: .75; font-size: 12px; }
+  main { padding: 12px 20px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, graytext 35%, transparent); }
+  th { font-weight: 600; opacity: .8; }
+  tr:hover td { background: color-mix(in srgb, highlight 8%, transparent); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
+    background: color-mix(in srgb, highlight 15%, transparent); }
+  .badge.warn { background: color-mix(in srgb, crimson 18%, transparent); }
+  .empty { padding: 40px; text-align: center; opacity: .6; }
+  #mode { font-size: 11px; opacity: .5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>卡片管理 <span id="mode"></span></h1>
+  <div>
+    <span id="sync-status">加载中…</span>
+    <button id="refresh">刷新</button>
+  </div>
+</header>
+<main>
+  <table id="cards">
+    <thead><tr><th>名称</th><th>编号</th><th>到期时间</th><th>剩余</th><th>稍后提醒</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div id="empty" class="empty" hidden>没有可用卡片</div>
+</main>
+<script type="module">
+  const tbody = document.querySelector('#cards tbody');
+  const empty = document.getElementById('empty');
+  const syncStatus = document.getElementById('sync-status');
+
+  function fmt(ts) { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); }
+  function daysLeft(expiresAt) {
+    return Math.max(0, Math.ceil((expiresAt - Date.now() / 1000) / 86400));
+  }
+
+  async function load() {
+    const status = await window.api.coreStatus();
+    document.getElementById('mode').textContent =
+      status.mode === 'in-process' ? '（内置 core）' : '（sidecar core）';
+    try {
+      const [cards, latest] = await Promise.all([
+        window.api.core('listCards'), window.api.core('latestSync')]);
+      syncStatus.textContent = latest
+        ? `上次核对：${fmt(latest.checkedAt)} · ${latest.availableCount} 张可用`
+        : '尚未同步';
+      tbody.innerHTML = '';
+      for (const card of cards) {
+        const snooze = await window.api.core('snooze', { cardId: card.id });
+        const row = document.createElement('tr');
+        const days = daysLeft(card.expiresAt);
+        row.innerHTML = `
+          <td>${card.title}</td>
+          <td title="${card.id}">${card.id.length > 24 ? card.id.slice(0, 24) + '…' : card.id}</td>
+          <td>${fmt(card.expiresAt)}</td>
+          <td><span class="badge ${days <= 3 ? 'warn' : ''}">${days} 天</span></td>
+          <td>${snooze ? fmt(snooze.targetAt) : '—'}</td>`;
+        tbody.appendChild(row);
+      }
+      empty.hidden = cards.length > 0;
+      document.getElementById('cards').hidden = cards.length === 0;
+    } catch (error) {
+      syncStatus.textContent = `读取失败：${error.message}`;
+    }
+  }
+  document.getElementById('refresh').addEventListener('click', load);
+  load();
+</script>
+</body>
+</html>

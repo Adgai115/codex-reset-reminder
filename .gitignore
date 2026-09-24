@@ -14,3 +14,5 @@ node_modules/
 *.zip
 Thumbs.db
 .DS_Store
+node_modules/
+package-lock.json
