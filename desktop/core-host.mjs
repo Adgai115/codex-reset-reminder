@@ -19,22 +19,10 @@ async function detectSqlite() {
 }
 
 async function createInProcessHandler() {
-  const store = await import('../core/store.mjs');
-  const readers = {
-    listCards: (db) => store.listCards(db),
-    latestSync: (db) => store.latestSync(db),
-    latestCompleteSync: (db) => store.latestCompleteSync(db),
-  };
+  const { runCoreOperation } = await import('./core-operations.mjs');
   return {
     status: () => ({ mode: 'in-process', platform: process.platform }),
-    async request(op, args = {}) {
-      const db = store.openStore();
-      try {
-        if (readers[op]) return readers[op](db);
-        if (op === 'snooze') return store.getSnooze(db, args.cardId);
-        throw new Error(`未知操作：${op}`);
-      } finally { db.close(); }
-    },
+    request: runCoreOperation,
   };
 }
 
