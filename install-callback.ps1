@@ -15,5 +15,9 @@ $trigger = @(
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName 'CodexResetCardFeishuActions' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description '本机监听飞书重置卡按钮操作，在二次确认后处理用卡和稍后提醒。' -Force | Out-Null
+$registered = Get-ScheduledTask -TaskName 'CodexResetCardFeishuActions'
+if ($registered.State -eq 'Running') { Stop-ScheduledTask -TaskName 'CodexResetCardFeishuActions' }
+. (Join-Path $directory 'callback-process.ps1')
+Stop-ReminderCallbackWorker -Directory $directory
 Start-ScheduledTask -TaskName 'CodexResetCardFeishuActions'
 Write-Output '飞书卡片操作监听已安装并启动。'

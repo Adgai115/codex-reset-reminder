@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>提醒设置</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: #f7f9fc; color: #233247;
+    font: 14px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+  main { padding: 22px 26px; flex: 1; overflow-y: auto; }
+  h1 { margin: 0 0 5px; font-size: 21px; }
+  h2 { font-size: 15px; margin: 0 0 14px; }
+  p, small { color: #6b798e; line-height: 1.5; }
+  section { background: white; border: 1px solid #dfe6ef; border-radius: 10px; padding: 16px; margin-top: 14px; }
+  .line { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+  .line input[type=checkbox] { width: 16px; height: 16px; }
+  .field { display: block; margin: 10px 0; }
+  .field input { margin-top: 5px; display: block; width: 100%; padding: 8px; border: 1px solid #ccd7e3; border-radius: 7px; font: inherit; }
+  .clocks { display: flex; gap: 14px; align-items: center; }
+  .clocks input { width: 110px; }
+  button { border: 1px solid #cbd5e1; background: white; border-radius: 7px; padding: 8px 13px; cursor: pointer; font: inherit; }
+  button.primary { background: #1458df; color: white; border-color: #1458df; }
+  button:disabled { opacity: .5; cursor: wait; }
+  button:hover:not(:disabled) { border-color: #1458df; }
+  :focus-visible { outline: 2px solid #1458df; outline-offset: 2px; }
+  footer { padding: 10px 26px 16px; background: #f7f9fc; border-top: 1px solid #dfe6ef; }
+  .footer-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  #status { min-height: 20px; color: #52617a; margin: 0 0 8px; overflow-wrap: anywhere; }
+  #status.error { color: #b42318; }
+  #channel-warning { display: block; margin-top: 8px; color: #a04320; }
+  summary { font-weight: 600; cursor: pointer; }
+  details[open] summary { margin-bottom: 12px; }
+  #listener-state { display: block; margin-top: 7px; }
+  #diagnostics { margin: 8px 0; padding-left: 18px; color: #52617a; line-height: 1.7; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>提醒设置</h1><p>保存在这台电脑上。保存后立即生效，取消会放弃修改。</p>
+  <section><h2>通知渠道</h2>
+    <label class="line"><input id="autostart" type="checkbox">登录系统时启动到托盘</label>
+    <label class="line"><input id="desktop" type="checkbox">桌面弹窗提醒</label>
+    <label class="line"><input id="feishu" type="checkbox">飞书机器人私聊</label>
+    <small id="feishu-state">正在读取连接状态…</small>
+    <small id="listener-state" aria-live="polite">正在读取按钮监听状态…</small>
+    <small id="channel-warning" hidden>所有提醒渠道均已关闭；保存后将不会收到到期提醒。</small>
+  </section>
+  <section><details id="feishu-connection"><summary>飞书连接（可选）</summary>
+    <label class="field">App ID<input id="app-id" placeholder="cli_…"></label>
+    <label class="field">接收人 Open ID（ou_）或 Union ID（on_）<input id="recipient-id"></label>
+    <label class="field">lark-cli 脚本路径<input id="lark-path"></label>
+    <label class="field">App Secret（仅连接时输入）<input id="secret" type="password" autocomplete="new-password"></label>
+    <button id="reconnect">重新连接</button><button id="connect" class="primary">保存并连接</button>
+    <small>连接时会发送一条测试私聊。密钥交给本机 lark-cli 保管，不写入应用配置。</small>
+  </details></section>
+  <section><h2>免打扰与核对</h2>
+    <label class="line"><input id="quiet" type="checkbox">在此时段内延后提醒</label>
+    <div class="clocks"><input id="quiet-start" type="time">至<input id="quiet-end" type="time"></div>
+    <small>如延后会越过卡片到期时间，仍按原时间提醒。所有时间使用电脑本地时区。</small>
+    <label class="line"><input id="preflight" type="checkbox">发送前尝试读取 Codex 最新数据</label>
+    <label class="field">最短间隔（分钟）<input id="retry" type="number" min="10" max="1440"></label>
+  </section>
+  <section><h2>连接诊断</h2>
+    <small>本地状态自动读取；Codex Usage 只在点击时检查，不会使用重置卡。</small>
+    <ul id="diagnostics"><li>正在检查本地配置…</li></ul>
+    <button id="probe-codex" type="button">检查 Codex Usage</button>
+    <button id="repair-codex" type="button">重新选择 Codex 程序</button>
+    <small id="codex-probe" role="status" aria-live="polite">尚未检查在线连接</small>
+    <p><small>更新或移动 Codex 后，可重新选择程序；连接成功才会替换路径。请保持使用原来的 Codex 账号。</small></p>
+  </section>
+  <section><h2>版本更新</h2>
+    <small>只在点击时查询 GitHub Release，不会自动下载或安装。</small>
+    <button id="check-updates" type="button">检查新版本</button>
+    <button id="open-update" type="button" hidden>打开下载页</button>
+    <small id="update-state" role="status" aria-live="polite">尚未检查</small>
+  </section>
+</main>
+<footer><div id="status" role="status" aria-live="polite"></div>
+  <div class="footer-actions"><button id="test">测试桌面弹窗</button><button id="cancel">取消</button><button id="save" class="primary">保存设置</button></div>
+</footer>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let connected = false;
+  let unlocked = true;
+  let saving = false;
+  let listener = null;
+  let baseline = null;
+  let connectionBaseline = '';
+  let savedFeishuEnabled = false;
+  const draft = () => ({ autoStartEnabled: $('autostart').checked, desktopEnabled: $('desktop').checked,
+    feishuEnabled: $('feishu').checked, quietEnabled: $('quiet').checked,
+    quietStart: $('quiet-start').value, quietEnd: $('quiet-end').value,
+    preflightEnabled: $('preflight').checked,
+    retryMinutes: $('preflight').checked ? Number($('retry').value) : baseline?.retryMinutes || 60 });
+  const connectionValue = () => JSON.stringify(['app-id', 'recipient-id', 'lark-path'].map((id) => $(id).value));
+  const connectionDirty = () => unlocked && (connectionValue() !== connectionBaseline || Boolean($('secret').value));
+  const dirty = () => Boolean(baseline && (JSON.stringify(draft()) !== JSON.stringify(baseline) || connectionDirty()));
+  function status(message, error = false) {
+    $('status').textContent = message;
+    $('status').classList.toggle('error', error);
+  }
+  async function notifyDraft() { await window.api.settingsDraft({ dirty: dirty(), working: saving }); }
+  function controls() {
+    const blocked = saving || !baseline;
+    for (const id of ['autostart', 'desktop', 'feishu', 'quiet', 'preflight', 'save', 'test', 'repair-codex']) $(id).disabled = blocked;
+    $('cancel').disabled = saving;
+    $('quiet-start').disabled = $('quiet-end').disabled = blocked || !$('quiet').checked;
+    $('retry').disabled = blocked || !$('preflight').checked;
+    $('channel-warning').hidden = $('desktop').checked || $('feishu').checked;
+    connectionState();
+  }
+  function listenerState() {
+    let label;
+    if (!connected) label = '按钮监听：尚未配置机器人';
+    else if (!savedFeishuEnabled) label = '按钮监听：飞书渠道已关闭';
+    else if (!listener) label = '按钮监听：正在读取状态…';
+    else if (listener.state === 'listening') label = listener.lastEventAt
+      ? `按钮监听运行中 · 最近收到交互：${new Date(listener.lastEventAt).toLocaleString('zh-CN', { hour12: false })}`
+      : '按钮监听运行中 · 尚未收到交互事件';
+    else if (listener.state === 'occupied') label = '按钮监听被其他进程占用，当前程序不会处理飞书按钮';
+    else if (listener.state === 'retrying') label = `按钮监听重试中：${listener.lastError || '请检查飞书 CLI'}`;
+    else if (listener.state === 'unconfigured') label = '按钮监听：机器人配置不完整';
+    else if (listener.state === 'disabled') label = '按钮监听：当前未运行';
+    else label = '按钮监听：正在启动…';
+    $('listener-state').textContent = label;
+  }
+  async function refreshListenerState() {
+    try { listener = await window.api.listenerStatus(); }
+    catch (error) { listener = { state: 'retrying', lastError: error.message }; }
+    listenerState();
+  }
+  async function refreshDiagnostics() {
+    try {
+      const checks = await window.api.diagnoseLocal();
+      $('diagnostics').replaceChildren();
+      for (const [name, value] of [['Codex', checks.codex], ['飞书', checks.feishu], ['按钮', checks.listener]]) {
+        const row = document.createElement('li');
+        row.textContent = `${name}：${value}`;
+        $('diagnostics').appendChild(row);
+      }
+    } catch (error) { $('diagnostics').textContent = `本地检查失败：${error.message}`; }
+  }
+  function connectionState() {
+    for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked || saving || !baseline;
+    $('connect').disabled = !unlocked || saving || !baseline;
+    $('reconnect').disabled = !connected || unlocked || saving || !baseline;
+    $('feishu-state').textContent = connected ? '机器人配置已保存。更换应用或接收人需要先点击“重新连接”。' : '尚未连接，可只使用本地弹窗。';
+    listenerState();
+  }
+  function fill(settings) {
+    connected = settings.feishuConnected;
+    unlocked = !connected;
+    $('autostart').checked = settings.autoStartEnabled;
+    $('desktop').checked = settings.desktopEnabled;
+    $('feishu').checked = settings.feishuEnabled;
+    $('app-id').value = settings.appId;
+    $('recipient-id').value = settings.recipientId;
+    $('lark-path').value = settings.larkCliScript;
+    $('secret').value = '';
+    $('quiet').checked = settings.quietEnabled;
+    $('quiet-start').value = settings.quietStart;
+    $('quiet-end').value = settings.quietEnd;
+    $('preflight').checked = settings.preflightEnabled;
+    $('retry').value = settings.retryMinutes;
+    savedFeishuEnabled = settings.feishuEnabled;
+    baseline = draft();
+    connectionBaseline = connectionValue();
+    $('feishu-connection').open = settings.feishuEnabled && !connected;
+    if (settings.version) $('update-state').textContent = `当前版本 ${settings.version} · 尚未检查更新`;
+    controls();
+  }
+  controls();
+  window.api.settingsRead().then(fill).catch((error) => status(error.message, true));
+  refreshListenerState();
+  refreshDiagnostics();
+  setInterval(refreshListenerState, 5000);
+  setInterval(refreshDiagnostics, 10000);
+  $('probe-codex').addEventListener('click', async () => {
+    $('probe-codex').disabled = true;
+    $('codex-probe').textContent = '正在只读检查 Codex Usage…';
+    try { $('codex-probe').textContent = (await window.api.probeCodex()).message; }
+    catch (error) { $('codex-probe').textContent = `检查失败：${error.message}`; }
+    finally { $('probe-codex').disabled = false; }
+  });
+  $('repair-codex').addEventListener('click', async () => {
+    if (saving) return;
+    saving = true; controls();
+    status('请选择 Codex CLI。随后会验证连接，可能需要几十秒…');
+    try {
+      await notifyDraft();
+      const result = await window.api.repairCodex();
+      status(result?.message || '已取消选择，原连接保持不变。');
+      if (result) refreshDiagnostics();
+    } catch (error) { status(`连接未更新：${error.message}`, true); }
+    finally { saving = false; controls(); notifyDraft().catch(() => {}); }
+  });
+  $('check-updates').addEventListener('click', async () => {
+    $('check-updates').disabled = true;
+    $('open-update').hidden = true;
+    $('update-state').textContent = '正在检查公开版本…';
+    try {
+      const result = await window.api.checkUpdates();
+      $('update-state').textContent = result.message;
+      $('open-update').hidden = result.state !== 'available';
+    } catch (error) { $('update-state').textContent = `检查失败：${error.message}`; }
+    finally { $('check-updates').disabled = false; }
+  });
+  $('open-update').addEventListener('click', () => window.api.openUpdate()
+    .catch((error) => { $('update-state').textContent = error.message; }));
+  document.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
+    controls();
+    if ($('feishu').checked && !connected) $('feishu-connection').open = true;
+    status(dirty() ? '有未保存的修改' : '');
+    notifyDraft().catch((error) => status(error.message, true));
+  }));
+  $('reconnect').addEventListener('click', () => {
+    if (!confirm('重新连接会更换飞书机器人配置。确认继续？')) return;
+    unlocked = true;
+    controls();
+  });
+  $('connect').addEventListener('click', async () => {
+    if (saving) return;
+    saving = true; controls();
+    status('正在配置机器人并发送测试私聊…');
+    try {
+      await notifyDraft();
+      const settings = await window.api.feishuConnect({
+        appId: $('app-id').value, recipientId: $('recipient-id').value,
+        larkCliScript: $('lark-path').value, secret: $('secret').value,
+      });
+      // 连接独立保存；保留用户尚未提交的免打扰和渠道草稿。
+      connected = settings.feishuConnected;
+      unlocked = !connected;
+      savedFeishuEnabled = settings.feishuEnabled;
+      $('feishu').checked = settings.feishuEnabled;
+      baseline.feishuEnabled = settings.feishuEnabled;
+      $('app-id').value = settings.appId;
+      $('recipient-id').value = settings.recipientId;
+      $('lark-path').value = settings.larkCliScript;
+      $('secret').value = '';
+      connectionBaseline = connectionValue();
+      status('飞书已连接，测试私聊已发送。其他修改请点击“保存设置”。');
+      setTimeout(refreshListenerState, 1000);
+      refreshDiagnostics();
+    } catch (error) { status(error.message, true); }
+    finally { saving = false; controls(); notifyDraft().catch(() => {}); }
+  });
+  $('test').addEventListener('click', async () => {
+    $('test').disabled = true;
+    try { await window.api.testDesktopReminder(); status('测试弹窗已显示；不会改变真实卡片和提醒记录。'); }
+    catch (error) { status(error.message, true); }
+    finally { controls(); }
+  });
+  $('cancel').addEventListener('click', () => window.api.settingsClose().catch((error) => status(error.message, true)));
+  $('save').addEventListener('click', async () => {
+    if (saving) return;
+    if (connectionDirty()) { status('飞书连接信息尚未提交，请先点击“保存并连接”，或取消本次修改。', true); $('feishu-connection').open = true; return; }
+    if ($('feishu').checked && !connected) { status('请先连接飞书机器人，或关闭飞书渠道后保存。', true); $('feishu-connection').open = true; return; }
+    if ($('quiet').checked && (!$('quiet-start').value || !$('quiet-end').value || $('quiet-start').value === $('quiet-end').value)) {
+      status('免打扰开始和结束时间必须填写，且不能相同。', true); return;
+    }
+    if ($('preflight').checked && !$('retry').reportValidity()) return;
+    saving = true;
+    controls();
+    $('save').textContent = '保存中…';
+    try {
+      await notifyDraft();
+      if (dirty()) fill(await window.api.settingsSave(draft()));
+      saving = false;
+      await notifyDraft();
+      await window.api.settingsClose();
+    } catch (error) { status(`保存失败：${error.message}`, true); }
+    finally { saving = false; controls(); $('save').textContent = '保存设置'; notifyDraft().catch(() => {}); }
+  });
+</script>
+</body>
+</html>

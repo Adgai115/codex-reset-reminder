@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deliveryExists, getSnooze, latestCompleteSync, listCards, openStore } from './store.mjs';
+import { dueThreshold } from './check.mjs';
+import { maxReminderAttempts } from './core/delivery-retry.mjs';
+import { deliveryExists, getReminderAttempt, getSnooze, latestCompleteSync, listCards, openStore } from './store.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -25,15 +27,36 @@ export function planCardNextCheck(db, card, { channels = ['desktop'], quiet = nu
   if (card.status === 'available' && card.expiresAt > nowSeconds) {
     const snooze = getSnooze(db, card.id);
     const activeSnooze = snooze?.expiresAt === card.expiresAt ? snooze : null;
+    const currentDays = dueThreshold(card.expiresAt, nowSeconds);
     for (const days of thresholds) {
       const at = card.expiresAt - days * 86400;
       if (activeSnooze && activeSnooze.targetAt >= at) continue;
-      if (!channels.length || channels.every((channel) =>
-        deliveryExists(db, card.id, card.expiresAt, days, channel))) continue;
-      offer(deliveryTime(at, card.expiresAt, quiet), `${days}d`);
+      if (at <= nowSeconds && currentDays !== days) continue;
+      for (const channel of channels) {
+        if (deliveryExists(db, card.id, card.expiresAt, days, channel)) continue;
+        const attempt = getReminderAttempt(db, { cardId: card.id, expiresAt: card.expiresAt,
+          nodeKind: 'fixed', nodeAt: at, channel });
+        if (attempt) {
+          if (currentDays === days && attempt.attempts < maxReminderAttempts
+            && attempt.nextRetryAt && attempt.nextRetryAt < card.expiresAt) {
+            offer(deliveryTime(attempt.nextRetryAt, card.expiresAt, quiet), `retry-${days}d`);
+          }
+        } else offer(deliveryTime(at, card.expiresAt, quiet), `${days}d`);
+      }
     }
-    if (activeSnooze && channels.some((channel) => !activeSnooze[`${channel}DeliveredAt`])) {
-      offer(deliveryTime(activeSnooze.targetAt, card.expiresAt, quiet), 'snooze');
+    if (activeSnooze && (currentDays === null
+      || activeSnooze.targetAt >= card.expiresAt - currentDays * 86400)) {
+      for (const channel of channels) {
+        if (activeSnooze[`${channel}DeliveredAt`]) continue;
+        const attempt = getReminderAttempt(db, { cardId: card.id, expiresAt: card.expiresAt,
+          nodeKind: 'snooze', nodeAt: activeSnooze.targetAt, channel });
+        if (attempt) {
+          if (attempt.attempts < maxReminderAttempts && attempt.nextRetryAt
+            && attempt.nextRetryAt < card.expiresAt) {
+            offer(deliveryTime(attempt.nextRetryAt, card.expiresAt, quiet), 'retry-snooze');
+          }
+        } else offer(deliveryTime(activeSnooze.targetAt, card.expiresAt, quiet), 'snooze');
+      }
     }
     if (card.source === 'codex' && card.reportedUsedAt !== null) {
       const at = card.reportedUsedAt + verificationDelaySeconds;
@@ -44,13 +67,16 @@ export function planCardNextCheck(db, card, { channels = ['desktop'], quiet = nu
 }
 
 export function planNextCheck(db, { feishuEnabled = false, wechatEnabled = false,
-  channels = null, quiet = null, nowSeconds = Math.floor(Date.now() / 1000) } = {}) {
+  channels = null, quiet = null, nowSeconds = Math.floor(Date.now() / 1000),
+  accountScopeId = null } = {}) {
   let nextAt = null;
   let reason = null;
   const completeSyncAt = latestCompleteSync(db)?.checkedAt ?? 0;
   const activeChannels = channels ?? ['desktop',
     ...(feishuEnabled ? ['feishu'] : []), ...(wechatEnabled ? ['wechat'] : [])];
   for (const card of listCards(db)) {
+    if (card.source === 'codex' && accountScopeId
+      && card.accountScopeId !== accountScopeId) continue;
     const plan = planCardNextCheck(db, card,
       { channels: activeChannels, quiet, nowSeconds, completeSyncAt });
     if (plan.nextAt !== null && (nextAt === null || plan.nextAt < nextAt)) {

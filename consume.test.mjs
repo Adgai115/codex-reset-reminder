@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-consume-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
+process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(directory, 'config.json');
+writeFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH,
+  JSON.stringify({ codexScript: join(directory, 'mock-codex.js') }));
 const { openStore, getCard, saveCodexSnapshot } = await import('./store.mjs');
 const { consumeCredit, refreshCreditStatus } = await import('./consume.mjs');
 const expiry = Math.floor(Date.now() / 1000) + 86400;

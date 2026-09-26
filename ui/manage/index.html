@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Codex 重置卡提醒</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f5f7fb; --surface: #fff; --ink: #202f43; --muted: #607089;
+    --line: #dce3ed; --accent: #245bcc; --tint: #edf3ff; --danger: #b84221; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#171c25; --surface:#202734; --ink:#e2e9f4;
+    --muted:#a5b3c8; --line:#3b475a; --accent:#91b4ff; --tint:#293852; --danger:#ffb49e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; }
+  header { padding:24px 26px 16px; display:flex; justify-content:space-between; gap:18px; align-items:start; }
+  h1 { font-size:23px; margin:0 0 5px; letter-spacing:-.5px; }
+  h2 { font-size:20px; margin:0 0 16px; }
+  p { margin:4px 0; }
+  #sync-status { color:var(--muted); font-size:12px; max-width:560px; }
+  #account-status { margin-top:5px; font-size:12px; max-width:620px; }
+  #account-status.warning { color:var(--danger); }
+  #account-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  #account-actions button { font-size:12px; padding:4px 7px; }
+  .toolbar { display:flex; gap:8px; flex-shrink:0; }
+  main { padding:0 26px 24px; }
+  button, input, select { font:inherit; border:1px solid var(--line); border-radius:7px; padding:8px 12px; background:var(--surface); color:var(--ink); }
+  button { cursor:pointer; transition:background .15s, border-color .15s; }
+  button:hover:not(:disabled) { background:var(--tint); border-color:var(--accent); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:#245bcc; color:white; border-color:#245bcc; }
+  button.primary:hover:not(:disabled) { background:#194dab; }
+  .filterbar { display:flex; justify-content:space-between; align-items:center; padding:10px 0 15px; gap:16px; }
+  .filters { display:flex; gap:5px; }
+  .filters button { background:transparent; border-color:transparent; }
+  .filters button[aria-pressed=true] { background:var(--surface); border-color:var(--line); font-weight:600; }
+  #channel-status { color:var(--muted); font-size:12px; }
+  #notice { min-height:30px; padding-bottom:8px; color:var(--accent); overflow-wrap:anywhere; }
+  .error, #notice.error { color:var(--danger); }
+  .table-wrap { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:auto; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  th, td { text-align:left; padding:14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; font-weight:500; padding-top:11px; padding-bottom:11px; }
+  tr:last-child td { border-bottom:0; }
+  th:nth-child(1) { width:25%; } th:nth-child(2) { width:17%; } th:nth-child(3) { width:14%; }
+  th:nth-child(4) { width:26%; } th:nth-child(5) { width:18%; }
+  td { overflow-wrap:anywhere; }
+  .card-name { font-weight:600; }
+  .sub { color:var(--muted); font-size:12px; margin-top:6px; }
+  .identity { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  .time { font-variant-numeric:tabular-nums; font-size:13px; }
+  .badge { display:inline-block; padding:2px 7px; border-radius:4px; background:var(--tint); color:var(--accent); font-size:12px; }
+  .badge.urgent { color:var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
+  .badge.muted { color:var(--muted); background:var(--bg); }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { font-size:12px; padding:4px 7px; }
+  .delivery-node { margin-bottom:10px; padding-bottom:9px; border-bottom:1px solid var(--line); }
+  .delivery-node:last-child { margin-bottom:0; padding-bottom:0; border-bottom:0; }
+  .delivery-title { font-size:12px; font-weight:600; }
+  .delivery-line { margin-top:4px; font-size:12px; line-height:1.4; }
+  .delivery-line.failed { color:var(--danger); }
+  .delivery-line .sub { display:block; margin-top:1px; }
+  .delivery-line button { font-size:11px; padding:2px 5px; margin-top:3px; }
+  .empty { padding:44px 20px; text-align:center; color:var(--muted); }
+  .footnote { margin-top:14px; color:var(--muted); font-size:12px; }
+  dialog { border:1px solid var(--line); border-radius:12px; padding:24px; width:420px; max-width:90vw; color:var(--ink); background:var(--surface); }
+  dialog::backdrop { background:#101d376b; }
+  dialog label { display:block; margin:14px 0; }
+  dialog input, dialog select { display:block; width:100%; margin-top:6px; }
+  dialog footer { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
+  dialog .error { min-height:22px; font-size:13px; }
+  [hidden] { display:none !important; }
+  @media (max-width:850px) { header { flex-wrap:wrap; } th,td { padding:10px; } }
+  @media (prefers-reduced-motion:reduce) { button { transition:none; } }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>重置卡管理</h1><p id="sync-status" role="status">正在读取本地卡片…</p>
+    <p id="account-status" role="status">正在核对 Codex 账号…</p>
+    <div id="account-actions"><button id="check-account">重新核对账号</button>
+      <button id="bind-account" hidden>确认绑定现有缓存</button></div></div>
+  <div class="toolbar"><button id="settings">提醒设置</button><button id="sync" class="primary">立即同步 Codex</button></div>
+</header>
+<main>
+  <div class="filterbar">
+    <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="history-filter" aria-pressed="false">历史卡</button></div>
+    <span id="channel-status"></span><button id="add">新增手动卡</button>
+  </div>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <div class="table-wrap">
+    <table id="cards"><thead><tr><th>卡片</th><th>到期时间 / 本地</th><th>状态</th><th>提醒发送</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <div id="empty" class="empty" hidden></div>
+  </div>
+  <p class="footnote">提前 7 / 3 / 1 天提醒；延期只改变提醒时间。收起到托盘后仍会提醒，退出应用后停止。</p>
+</main>
+<dialog id="card-dialog" aria-labelledby="dialog-title"><form id="card-form">
+  <h2 id="dialog-title">新增手动卡</h2>
+  <p class="sub">手动卡保存在本机，用于补充未自动读取的到期提醒。</p>
+  <label>卡片名称<input id="card-title" required maxlength="120"></label>
+  <label>到期时间（本地）<input id="card-expiry" type="datetime-local" required></label>
+  <p id="card-error" class="error" role="alert"></p>
+  <footer><button type="button" id="cancel-card">取消</button><button class="primary" id="save-card">保存</button></footer>
+</form></dialog>
+<dialog id="snooze-dialog" aria-labelledby="snooze-heading"><form id="snooze-form">
+  <h2 id="snooze-heading">稍后提醒</h2><p id="snooze-title"></p>
+  <label>提醒时间<select id="snooze-option"></select></label>
+  <p class="sub">仅显示到期前可用的选项；延期期间经过的固定节点不会重复提醒。</p>
+  <p id="snooze-error" class="error" role="alert"></p>
+  <footer><button type="button" id="cancel-snooze">取消</button><button class="primary" id="save-snooze">确认延期</button></footer>
+</form></dialog>
+<script type="module" src="./app.mjs"></script>
+</body>
+</html>
