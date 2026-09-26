@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-delivery-retry-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const { getReminderAttempt, markCardUsed, openStore, saveCodexSnapshot,
+const { addManualCard, getReminderAttempt, markCardUsed, openStore, saveCodexSnapshot,
   scheduleSnooze } = await import('./store.mjs');
 const { planNextCheck } = await import('./plan-next.mjs');
 const { runReminders } = await import('./remind.mjs');
@@ -134,6 +134,37 @@ test('quiet hours defer failed-channel retry and manual retry', async () => {
   const morning = new Date(date); morning.setDate(morning.getDate() + 1); morning.setHours(9, 0, 0, 0);
   await runReminders({ ...send, nowSeconds: Math.floor(morning.getTime() / 1000) });
   assert.equal(calls, 2);
+});
+
+test('overlapping checks claim one in-flight channel attempt', async () => {
+  seed(); config();
+  let calls = 0;
+  let release;
+  let started;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  const entered = new Promise((resolve) => { started = resolve; });
+  const send = { configPath, nowSeconds: now, trackAttempts: true,
+    feishu: async () => { calls++; started(); await barrier; return { messageId: 'om_fake' }; } };
+  const first = runReminders(send);
+  await entered;
+  const second = runReminders(send);
+  release();
+  await Promise.all([first, second]);
+  assert.equal(calls, 1);
+  assert.equal(attempt().attempts, 1);
+});
+
+test('unverified Codex identity pauses only Codex cards', async () => {
+  seed(); config({ desktop: { enabled: true }, feishu: { enabled: false } });
+  const db = openStore();
+  let manualId;
+  try { manualId = addManualCard(db, { title: '手动卡', expiresAt: expiry }); }
+  finally { db.close(); }
+  const shown = [];
+  await runReminders({ configPath, nowSeconds: now, trackAttempts: true,
+    allowCodex: false, desktop: async (payload) => shown.push(payload.creditId) });
+  assert.deepEqual(shown, [manualId]);
+  assert.equal(attempt(), null);
 });
 
 process.on('exit', () => rmSync(directory, { recursive: true, force: true }));

@@ -46,7 +46,8 @@ function recoverMessageFromCardContent(db, event, config) {
 
 export async function handleCardAction(event, config, { db = openStore(),
   refreshStatus = refreshCreditStatus, update = updateFeishuCard,
-  patch = patchFeishuCard, consume = consumeCredit, closeDb = true } = {}) {
+  patch = patchFeishuCard, consume = consumeCredit, verifyCardAction = null,
+  closeDb = true } = {}) {
   try {
     const parsed = parseCardAction(event);
     if (!parsed || !event.event_id || !event.message_id || !event.operator_id || !event.token) return 'ignored';
@@ -65,6 +66,15 @@ export async function handleCardAction(event, config, { db = openStore(),
           null, notice, statusInfo, options);
       }
     };
+
+    if (isOfficialCodexCard(card) && verifyCardAction) {
+      try { await verifyCardAction(card); }
+      catch {
+        await updateCard(card.status === 'used' ? 'used' : 'available',
+          'Codex 账号未确认或已切换。请先在桌面管理页恢复原账号并重新核对；没有执行卡片操作。');
+        return 'account_blocked';
+      }
+    }
 
     if (card?.status === 'used' && card.expiresAt === message.expiresAt) {
       let statusInfo = null;
@@ -111,7 +121,12 @@ export async function handleCardAction(event, config, { db = openStore(),
       if (!claimCardActionEvent(db, event.event_id, event.message_id, `consume:${key}`)) return 'duplicate';
       let result;
       try { result = await consume(card.id, key); }
-      catch {
+      catch (error) {
+        if (String(error?.code || '').startsWith('ACCOUNT_') && !error.afterRequest) {
+          completeCardActionEvent(db, event.event_id, 'account_blocked');
+          await updateCard('available', 'Codex 账号未确认，未发起正式用卡。请在桌面管理页重新核对。');
+          return 'account_blocked';
+        }
         card = getCard(db, card.id);
         if (card?.status === 'used') {
           setFeishuMessageStatus(db, message.messageId, 'used');

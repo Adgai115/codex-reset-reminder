@@ -14,8 +14,8 @@ export function deliveryNodeLabel(result) {
 export function deliveryResultLabel(result) {
   const channel = channelLabels[result.channel] || '提醒';
   if (result.state === 'sent') return result.channel === 'desktop' ? '桌面已弹出' : `${channel}已发送`;
-  if (result.state === 'sending') return `${channel}发送中`;
-  if (result.nextRetryAt) return `${channel}等待重试`;
+  if (result.state === 'sending') return `${channel}发送结果待核实`;
+  if (result.autoPending) return `${channel}等待重试`;
   return `${channel}发送失败`;
 }
 
@@ -47,10 +47,23 @@ export function nextReminder(card, channels, now = Date.now() / 1000) {
 
 export function syncDescription(snapshot, now = Date.now() / 1000) {
   if (snapshot.syncing) return '正在同步 Codex Usage，可继续查看本地卡片…';
+  if (snapshot.account?.state === 'mismatch') return '当前 CLI 账号与缓存绑定账号不一致；Codex 卡同步和提醒已暂停。';
+  if (snapshot.account?.state === 'needsBinding') return '现有 Codex 卡等待绑定原账号；绑定前暂停同步和提醒。';
+  if (['unavailable', 'unidentified'].includes(snapshot.account?.state))
+    return '暂时无法核实 Codex 账号；Codex 卡同步和提醒已暂停，手动卡继续工作。';
   const { latest, confirmed } = snapshot;
   if (!latest) return '尚未同步 Codex；手动卡可独立提醒。';
   const checked = confirmed ? `上次完整核对 ${formatTime(confirmed.checkedAt)}` : '尚无完整核对记录';
   if (latest.outcome !== 'complete') return `${latest.outcome === 'failed' ? '同步失败' : '同步详情不完整'} · ${checked}。已保存的卡片继续提醒。`;
   const stale = now - latest.checkedAt > 86400 ? ' · 超过 24 小时未核对，建议立即同步' : '';
   return `上次核对 ${formatTime(latest.checkedAt)} · Codex 可用 ${latest.availableCount} 张${stale}`;
+}
+
+export function accountDescription(account) {
+  if (!account || account.state === 'checking') return 'Codex 账号待核对，Codex 卡操作暂不可用。';
+  if (account.state === 'verified') return `已绑定并核对：${account.boundDisplay}`;
+  if (account.state === 'needsBinding') return `发现现有 Codex 缓存。当前 CLI：${account.currentDisplay}。请确认这是原账号后绑定。`;
+  if (account.state === 'mismatch') return `账号不一致：缓存绑定 ${account.boundDisplay}，当前 CLI ${account.currentDisplay}。请切回原账号并重新核对。`;
+  if (account.state === 'unidentified') return 'Codex 未提供可辨认的账号身份；请检查 CLI 登录方式并重新核对。';
+  return `暂时无法读取 Codex 账号身份。${account.boundDisplay ? `缓存绑定 ${account.boundDisplay}。` : ''}请检查连接后重新核对。`;
 }

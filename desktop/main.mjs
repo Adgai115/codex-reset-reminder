@@ -186,7 +186,8 @@ if (!gotLock) {
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
     'snooze', 'addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed',
-    'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels']);
+    'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels',
+    'checkAccount', 'confirmLegacyBinding']);
   const mutatingOperations = new Set(['addManualCard', 'updateManualCard', 'markManualUsed',
     'reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
   ipcMain.handle('core', async (event, op, args) => {
@@ -196,6 +197,11 @@ if (!gotLock) {
     if (op === 'syncCards' && scheduler) return scheduler.sync('manual');
     if (op === 'retryFailedChannels' && scheduler) return scheduler.retry(args);
     const result = await coreRequest(op, args);
+    if (op === 'checkAccount' || op === 'confirmLegacyBinding') {
+      stateChanged();
+      if (result.state === 'verified') scheduler?.check('account-confirmed');
+      return result;
+    }
     if (op === 'manageSnapshot') return { ...result, syncing: scheduler?.isSyncing() === true,
       retrying: scheduler?.isRetrying() === true };
     if (mutatingOperations.has(op)) { stateChanged(); scheduler?.check('card-change'); }

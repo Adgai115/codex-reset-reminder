@@ -1,4 +1,4 @@
-import { cardState, deliveryNodeLabel, deliveryResultLabel,
+import { accountDescription, cardState, deliveryNodeLabel, deliveryResultLabel,
   formatTime, nextReminder, syncDescription } from './view-model.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -54,8 +54,11 @@ function renderDelivery(parent, card) {
         `delivery-line ${result.state === 'failed' ? 'failed' : ''}`);
       text(line, 'span', `${result.state === 'sent' ? '发送' : '尝试'}：${formatTime(result.attemptedAt)}`, 'sub');
       if (result.errorText) text(line, 'span', result.errorText, 'sub');
-      if (result.nextRetryAt) text(line, 'span', `第 ${result.attempts}/4 次尝试 · 下次补发 ${formatTime(result.nextRetryAt)}`, 'sub');
-      else if (result.state === 'failed') text(line, 'span', '自动补发已停止；检查渠道设置后等待下一提醒节点。', 'sub');
+      if (result.autoPending) text(line, 'span', `第 ${result.attempts}/4 次尝试 · 下次补发 ${formatTime(result.nextRetryAt)}`, 'sub');
+      else if (result.suspendedReason) text(line, 'span', result.suspendedReason, 'sub');
+      else if (result.state === 'failed') text(line, 'span', result.attempts >= 4
+        ? '自动补发已达上限；检查渠道设置后等待下一提醒节点。'
+        : '自动补发已停止；可检查渠道设置并手动重试。', 'sub');
       if (result.state === 'failed') button(line, '检查渠道设置',
         () => window.api.openSettings().catch((error) => notice(error.message, true)));
     }
@@ -89,6 +92,9 @@ async function retryNode(result) {
 function render() {
   if (!snapshot) return;
   $('sync-status').textContent = syncDescription(snapshot);
+  $('account-status').textContent = accountDescription(snapshot.account);
+  $('account-status').classList.toggle('warning', snapshot.account?.state !== 'verified');
+  $('bind-account').hidden = snapshot.account?.state !== 'needsBinding';
   $('channel-status').textContent = snapshot.channels.length
     ? `提醒：${snapshot.channels.map((name) => ({ desktop: '桌面', feishu: '飞书' })[name] || name).join(' + ')}`
     : '所有提醒渠道已关闭，可在设置中开启';
@@ -115,9 +121,13 @@ function render() {
     renderDelivery(text(row, 'td', ''), card);
     const actions = text(text(row, 'td', ''), 'div', '', 'actions');
     if (!state.active) { text(actions, 'span', '无需处理', 'sub'); continue; }
-    const later = button(actions, '稍后提醒', () => openSnooze(card), !card.snoozeOptions.length);
+    const codexBlocked = card.source === 'codex' && snapshot.account?.state !== 'verified';
+    const later = button(actions, '稍后提醒', () => openSnooze(card),
+      !card.snoozeOptions.length || codexBlocked);
     if (!card.snoozeOptions.length) later.title = '三个固定延期时间均已超过到期时间';
-    if (card.snooze?.expiresAt === card.expiresAt) button(actions, '取消延期', () => action('clearSnooze', { cardId: card.id }, '已取消延期，恢复固定提醒节点'));
+    if (codexBlocked) later.title = '先重新核对 Codex 账号';
+    if (card.snooze?.expiresAt === card.expiresAt) button(actions, '取消延期',
+      () => action('clearSnooze', { cardId: card.id }, '已取消延期，恢复固定提醒节点'), codexBlocked);
     if (card.source === 'manual') {
       button(actions, '编辑', () => openCardDialog(card));
       button(actions, '标记已使用', () => {
@@ -128,7 +138,7 @@ function render() {
       button(actions, '我已使用', () => {
         if (confirm('已在 Codex 中使用过这张卡？\n此操作只记录反馈，下一次同步会核验；不会在这里使用重置卡。'))
           action('reportCardUsed', { cardId: card.id }, '已记录反馈，等待 Codex 核验');
-      });
+      }, codexBlocked);
     }
   }
   $('cards').hidden = cards.length === 0;
@@ -199,6 +209,27 @@ $('add').addEventListener('click', () => openCardDialog());
 $('active-filter').addEventListener('click', () => { history = false; render(); });
 $('history-filter').addEventListener('click', () => { history = true; render(); });
 $('settings').addEventListener('click', () => window.api.openSettings().catch((error) => notice(error.message, true)));
+$('check-account').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true; controls(); notice('正在重新读取 Codex 账号身份…');
+  try {
+    const result = await window.api.core('checkAccount');
+    notice(accountDescription(result), result.state !== 'verified');
+  } catch (error) { notice(`账号核对失败：${error.message}`, true); }
+  finally { busy = false; await load(true); controls(); }
+});
+$('bind-account').addEventListener('click', async () => {
+  if (busy || snapshot?.account?.state !== 'needsBinding') return;
+  const candidate = snapshot.account;
+  if (!confirm(`确认 ${candidate.currentDisplay} 是这些现有 Codex 卡原来的 CLI 账号？\n绑定只保护本地缓存，不会使用重置卡。账号不确定时请先切回原账号。`)) return;
+  busy = true; controls(); notice('正在核对账号并绑定现有缓存…');
+  try {
+    const result = await window.api.core('confirmLegacyBinding', {
+      expectedCandidateToken: candidate.candidateToken });
+    notice(accountDescription(result), result.state !== 'verified');
+  } catch (error) { notice(`绑定失败：${error.message}`, true); }
+  finally { busy = false; await load(true); controls(); }
+});
 $('card-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const expiresAt = Math.floor(new Date($('card-expiry').value).getTime() / 1000);
@@ -224,7 +255,7 @@ $('sync').addEventListener('click', async () => {
   try {
     const result = await window.api.core('syncCards');
     notice(result.complete ? `同步完成：Codex 可用 ${result.availableCount} 张` : '同步详情不完整，保留上次确认的卡片，请稍后重试', !result.complete);
-  } catch (error) { notice(`同步失败：${error.message}。已保存的卡片继续提醒。`, true); }
+  } catch (error) { notice(`同步失败：${error.message}。请查看账号状态和连接设置。`, true); }
   finally { busy = false; await load(true); controls(); }
 });
 window.api.onStateChanged(() => load());

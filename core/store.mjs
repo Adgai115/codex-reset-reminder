@@ -30,6 +30,15 @@ export function openStore() {
       reported_baseline_count INTEGER
     );
     CREATE INDEX IF NOT EXISTS cards_active_expiry ON cards(status, expires_at);
+    CREATE TABLE IF NOT EXISTS account_scopes (
+      slot INTEGER PRIMARY KEY CHECK (slot = 1),
+      scope_id TEXT NOT NULL UNIQUE,
+      email_hash TEXT,
+      workspace_hash TEXT,
+      display_name TEXT NOT NULL,
+      bound_at INTEGER NOT NULL,
+      verified_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS reminder_deliveries (
       card_id TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
@@ -95,12 +104,13 @@ export function openStore() {
   const cardColumns = new Set(db.prepare('PRAGMA table_info(cards)').all().map((column) => column.name));
   if (!cardColumns.has('reported_used_at')) db.exec('ALTER TABLE cards ADD COLUMN reported_used_at INTEGER');
   if (!cardColumns.has('reported_baseline_count')) db.exec('ALTER TABLE cards ADD COLUMN reported_baseline_count INTEGER');
+  if (!cardColumns.has('account_scope_id')) db.exec('ALTER TABLE cards ADD COLUMN account_scope_id TEXT');
   const snoozeColumns = new Set(db.prepare('PRAGMA table_info(snoozes)').all().map((column) => column.name));
   if (!snoozeColumns.has('wechat_delivered_at')) db.exec('ALTER TABLE snoozes ADD COLUMN wechat_delivered_at INTEGER');
   return db;
 }
 
-export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.now() / 1000)) {
+export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.now() / 1000), scopeId = null) {
   const credits = resetCredits?.credits;
   const availableCount = resetCredits?.availableCount;
   if (!Number.isInteger(availableCount) || !Array.isArray(credits)) {
@@ -115,19 +125,20 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
   const newlyUsed = [];
   const noLongerAvailable = [];
   const upsert = db.prepare(`
-    INSERT INTO cards (id, source, title, granted_at, expires_at, status, updated_at, last_seen_at)
-    VALUES (?, 'codex', ?, ?, ?, 'available', ?, ?)
+    INSERT INTO cards (id, source, title, granted_at, expires_at, status, updated_at, last_seen_at, account_scope_id)
+    VALUES (?, 'codex', ?, ?, ?, 'available', ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       source = 'codex', title = excluded.title, granted_at = excluded.granted_at,
       expires_at = excluded.expires_at,
       status = CASE WHEN cards.status = 'used' THEN 'used' ELSE 'available' END,
-      updated_at = excluded.updated_at, last_seen_at = excluded.last_seen_at
+      updated_at = excluded.updated_at, last_seen_at = excluded.last_seen_at,
+      account_scope_id = COALESCE(excluded.account_scope_id, cards.account_scope_id)
   `);
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const credit of rows) {
       upsert.run(credit.id, credit.title || '重置卡', Number.isInteger(credit.grantedAt) ? credit.grantedAt : null,
-        credit.expiresAt, checkedAt, checkedAt);
+        credit.expiresAt, checkedAt, checkedAt, scopeId);
     }
     if (complete) {
       const missing = db.prepare("SELECT id, expires_at AS expiresAt, reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount FROM cards WHERE source = 'codex' AND status = 'available'").all();
@@ -162,6 +173,7 @@ export function recordSyncFailure(db, message, checkedAt = Math.floor(Date.now()
 export function listCards(db, includeInactive = false) {
   return db.prepare(`SELECT id, source, title, granted_at AS grantedAt, expires_at AS expiresAt,
     status, updated_at AS updatedAt, last_seen_at AS lastSeenAt,
+    account_scope_id AS accountScopeId,
     reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount
     FROM cards ${includeInactive ? '' : "WHERE status = 'available'"} ORDER BY expires_at ASC`).all();
 }
@@ -169,8 +181,41 @@ export function listCards(db, includeInactive = false) {
 export function getCard(db, id) {
   return db.prepare(`SELECT id, source, title, granted_at AS grantedAt, expires_at AS expiresAt,
     status, updated_at AS updatedAt, last_seen_at AS lastSeenAt,
+    account_scope_id AS accountScopeId,
     reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount
     FROM cards WHERE id = ?`).get(id) || null;
+}
+
+export function getActiveAccountScope(db) {
+  return db.prepare(`SELECT scope_id AS scopeId, email_hash AS emailHash,
+    workspace_hash AS workspaceHash, display_name AS displayName,
+    bound_at AS boundAt, verified_at AS verifiedAt
+    FROM account_scopes ORDER BY bound_at ASC LIMIT 1`).get() || null;
+}
+
+export function countCodexCards(db) {
+  return db.prepare("SELECT COUNT(*) AS count FROM cards WHERE source = 'codex'")
+    .get().count;
+}
+
+export function bindAccountScope(db, { scopeId, emailHash, workspaceHash, displayName,
+  nowSeconds = Math.floor(Date.now() / 1000) }) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`INSERT INTO account_scopes (slot, scope_id, email_hash, workspace_hash,
+      display_name, bound_at, verified_at) VALUES (1, ?, ?, ?, ?, ?, ?)`)
+      .run(scopeId, emailHash, workspaceHash, displayName, nowSeconds, nowSeconds);
+    db.prepare("UPDATE cards SET account_scope_id = ? WHERE source = 'codex' AND account_scope_id IS NULL")
+      .run(scopeId);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function confirmAccountScope(db, { scopeId, emailHash, workspaceHash, displayName,
+  nowSeconds = Math.floor(Date.now() / 1000) }) {
+  db.prepare(`UPDATE account_scopes SET email_hash = ?, workspace_hash = ?,
+    display_name = ?, verified_at = ? WHERE scope_id = ?`)
+    .run(emailHash, workspaceHash, displayName, nowSeconds, scopeId);
 }
 
 export function reportCardUsed(db, id, reportedAt = Math.floor(Date.now() / 1000)) {

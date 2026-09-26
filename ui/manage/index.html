@@ -17,6 +17,10 @@
   h2 { font-size:20px; margin:0 0 16px; }
   p { margin:4px 0; }
   #sync-status { color:var(--muted); font-size:12px; max-width:560px; }
+  #account-status { margin-top:5px; font-size:12px; max-width:620px; }
+  #account-status.warning { color:var(--danger); }
+  #account-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  #account-actions button { font-size:12px; padding:4px 7px; }
   .toolbar { display:flex; gap:8px; flex-shrink:0; }
   main { padding:0 26px 24px; }
   button, input, select { font:inherit; border:1px solid var(--line); border-radius:7px; padding:8px 12px; background:var(--surface); color:var(--ink); }
@@ -73,7 +77,10 @@
 </head>
 <body>
 <header>
-  <div><h1>重置卡管理</h1><p id="sync-status" role="status">正在读取本地卡片…</p></div>
+  <div><h1>重置卡管理</h1><p id="sync-status" role="status">正在读取本地卡片…</p>
+    <p id="account-status" role="status">正在核对 Codex 账号…</p>
+    <div id="account-actions"><button id="check-account">重新核对账号</button>
+      <button id="bind-account" hidden>确认绑定现有缓存</button></div></div>
   <div class="toolbar"><button id="settings">提醒设置</button><button id="sync" class="primary">立即同步 Codex</button></div>
 </header>
 <main>
