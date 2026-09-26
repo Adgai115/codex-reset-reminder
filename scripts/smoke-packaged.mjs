@@ -71,6 +71,17 @@ async function evaluate(tab, expression) {
   } finally { socket.close(); }
 }
 
+const isDebuggerTimeout = (error) => /渲染进程没有响应|无法连接渲染进程调试端口/.test(error.message);
+
+async function triggerWindow(tab, expression) {
+  try { await evaluate(tab, expression); }
+  catch (error) {
+    if (!isDebuggerTimeout(error)) throw error;
+    // 创建新窗口后，旧渲染进程的 CDP 回执可能丢失；后续必须找到新窗口才算通过。
+    console.log('窗口操作的调试回执超时，继续核对新窗口');
+  }
+}
+
 async function stopTree(child) {
   if (!child) return;
   if (process.platform === 'win32') {
@@ -113,7 +124,7 @@ try {
   }
   const port = await freePort();
   // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
-  const testFlags = process.platform === 'linux' ? ['--no-sandbox'] : [];
+  const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
   child = spawn(appPath, [`--remote-debugging-port=${port}`, '--enable-logging', ...testFlags], {
     detached: process.platform !== 'win32',
     env: { ...process.env, CODEX_RESET_MONITOR_USER_DATA_DIR: profile,
@@ -175,14 +186,20 @@ try {
   assert.deepEqual(flow, { snooze: true, cleared: true, status: 'used' });
   console.log('卡片管理、加卡、延期和已使用流程通过，检查设置窗口');
   // 打开新窗口后，旧窗口可能失焦；直接检查新窗口是否出现。
-  await evaluate(manage, 'window.api.openSettings(); true');
+  await triggerWindow(manage, 'window.api.openSettings(); true');
+  console.log('已请求设置窗口，等待页面与本地诊断');
   let settings;
   do {
     const tab = await page(port, '/ui/settings/index.html', child, deadline);
-    settings = await evaluate(tab, `({bridge: Boolean(window.api), listener: document.querySelector('#listener-state')?.textContent,
-      connection: document.querySelector('#feishu-state')?.textContent,
-      diagnostics: document.querySelector('#diagnostics')?.textContent,
-      updateButton: Boolean(document.querySelector('#check-updates'))})`);
+    try {
+      settings = await evaluate(tab, `({bridge: Boolean(window.api), listener: document.querySelector('#listener-state')?.textContent,
+        connection: document.querySelector('#feishu-state')?.textContent,
+        diagnostics: document.querySelector('#diagnostics')?.textContent,
+        updateButton: Boolean(document.querySelector('#check-updates'))})`);
+    } catch (error) {
+      if (!isDebuggerTimeout(error) || Date.now() >= deadline) throw error;
+      continue;
+    }
     if (settings.listener?.includes('尚未配置机器人') && settings.connection?.includes('尚未连接')
       && settings.diagnostics?.includes('Codex CLI 路径')) break;
     await sleep(300);
@@ -192,8 +209,9 @@ try {
   assert.match(settings.connection, /尚未连接/);
   assert.match(settings.diagnostics, /Codex CLI 路径/);
   assert.ok(settings.updateButton, '检查更新入口未显示');
+  console.log('设置窗口已显示，检查测试弹窗');
   const settingsTab = await page(port, '/ui/settings/index.html', child, deadline);
-  await evaluate(settingsTab, 'window.api.testDesktopReminder(); true');
+  await triggerWindow(settingsTab, 'window.api.testDesktopReminder(); true');
   const reminderTab = await page(port, '/ui/reminder/index.html', child, deadline);
   let reminder;
   do {
