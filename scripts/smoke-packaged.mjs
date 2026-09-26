@@ -48,6 +48,7 @@ async function page(port, suffix, child, deadline) {
 
 async function command(tab, method, params) {
   const socket = new WebSocket(tab.webSocketDebuggerUrl);
+  const context = `${tab.url?.split('/ui/')[1] || tab.id} · ${method} · ${String(params?.expression || '').trim().slice(0, 120)}`;
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('无法连接渲染进程调试端口')), 5000);
@@ -56,7 +57,11 @@ async function command(tab, method, params) {
     });
     const id = 1;
     const result = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('渲染进程没有响应')), 15000);
+      const timer = setTimeout(() => reject(new Error(`渲染进程没有响应：${context}`)), 15000);
+      socket.addEventListener('close', () => {
+        clearTimeout(timer);
+        reject(new Error(`调试窗口已关闭：${context}`));
+      }, { once: true });
       socket.addEventListener('message', (event) => {
         const message = JSON.parse(event.data);
         if (message.id !== id) return;
@@ -107,9 +112,9 @@ const isDebuggerTimeout = (error) => /渲染进程没有响应|无法连接渲�
 async function triggerWindow(tab, expression) {
   try { await evaluate(tab, expression); }
   catch (error) {
-    if (!isDebuggerTimeout(error)) throw error;
-    // 创建新窗口后，旧渲染进程的 CDP 回执可能丢失；后续必须找到新窗口才算通过。
-    console.log('窗口操作的调试回执超时，继续核对新窗口');
+    if (!isDebuggerTimeout(error) && !error.message.startsWith('调试窗口已关闭')) throw error;
+    // 窗口创建或销毁可能先于 CDP 回执；后续必须核对窗口出现/消失及数据，不能直接当作成功。
+    console.log(`窗口操作未收到调试回执，继续核对操作结果：${tab.url?.split('/ui/')[1]}`);
   }
 }
 
@@ -327,6 +332,7 @@ try {
     document.querySelector('#quiet').dispatchEvent(new Event('input', {bubbles:true})); true`);
   assert.equal(await evaluate(settingsTab, `document.querySelector('#quiet-start').disabled`), true);
   await screenshot(settingsTab, 'settings');
+  console.log('设置表单校验通过，正在创建演示提醒');
   if (nativeDialogs) {
     await evaluate(settingsTab, `document.querySelector('#cancel').click(); true`);
     await clickNative('继续编辑');
@@ -344,10 +350,12 @@ try {
   assert.match(reminder.name, /演示重置卡/);
   assert.match(reminder.expiry, /到期时间/);
   await screenshot(reminderTab, 'reminder');
-  // 关闭窗口会销毁发起 IPC 的页面，不等待这个页面上的 Promise 回执。
-  await evaluate(reminderTab, `window.api.reminderAction('dismiss'); true`);
+  console.log('演示提醒内容已显示，检查关闭弹窗与保存设置');
+  // 关闭会销毁调用方页面；确认窗口消失，不把丢失 CDP 回执误判为应用卡住。
+  await triggerWindow(reminderTab, `document.querySelector('#close').click(); true`);
+  await untilClosed(port, '/ui/reminder/index.html');
   // 保存只修改隔离配置，系统自启开关保持读取值，不注册测试启动项。
-  await evaluate(settingsTab, `document.querySelector('#save').click(); true`);
+  await triggerWindow(settingsTab, `document.querySelector('#save').click(); true`);
   await untilClosed(port, '/ui/settings/index.html');
   assert.equal(await evaluate(manage, `Boolean(window.api) && document.querySelector('#cards tbody').textContent.includes('CI 表单卡')`), true);
   const saved = JSON.parse(await readFile(join(profile, 'config.json'), 'utf8'));
