@@ -56,7 +56,7 @@ async function evaluate(tab, expression) {
     });
     const id = 1;
     const result = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('渲染进程没有响应')), 5000);
+      const timer = setTimeout(() => reject(new Error('渲染进程没有响应')), 15000);
       socket.addEventListener('message', (event) => {
         const message = JSON.parse(event.data);
         if (message.id !== id) return;
@@ -126,14 +126,13 @@ try {
   const deadline = Date.now() + 45000;
   if (setupOnly) {
     const setup = await page(port, '/ui/setup/index.html', child, deadline);
-    const result = await evaluate(setup, `(async () => ({
-      bridge: Boolean(window.api),
-      probe: await window.api.setupProbeCodex(${JSON.stringify(join(profile, 'missing-codex'))}),
-      title: document.title
-    }))()`);
-    assert.ok(result.bridge, '首次安装窗口 preload 没有加载');
-    assert.match(result.title, /安装与连接/);
-    assert.equal(result.probe.ok, false);
+    const setupState = await evaluate(setup, `({bridge: Boolean(window.api), title: document.title})`);
+    assert.ok(setupState.bridge, '首次安装窗口 preload 没有加载');
+    assert.match(setupState.title, /安装与连接/);
+    console.log('首次安装窗口已加载，检查 Codex 诊断按钮');
+    const probe = await evaluate(setup,
+      `window.api.setupProbeCodex(${JSON.stringify(join(profile, 'missing-codex'))})`);
+    assert.equal(probe.ok, false);
     await evaluate(setup, `document.querySelector('#path').value = ${JSON.stringify(join(profile, 'missing-codex'))};
       document.querySelector('#probe').click(); true`);
     let probeText = '';

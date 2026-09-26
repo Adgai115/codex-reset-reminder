@@ -37,17 +37,23 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - run: node scripts/verify-package.mjs
+      - name: Smoke first-run setup (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-packaged.mjs --setup
       - name: Smoke packaged UI (Linux)
         if: runner.os == 'Linux'
-        run: |
-          xvfb-run -a node scripts/smoke-packaged.mjs --setup
-          xvfb-run -a node scripts/smoke-packaged.mjs
-          CODEX_RESET_MONITOR_CORE_MODE=sidecar xvfb-run -a node scripts/smoke-packaged.mjs
+        run: xvfb-run -a node scripts/smoke-packaged.mjs
+      - name: Smoke packaged sidecar (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-packaged.mjs
+        env:
+          CODEX_RESET_MONITOR_CORE_MODE: sidecar
+      - name: Smoke first-run setup
+        if: runner.os != 'Linux'
+        run: node scripts/smoke-packaged.mjs --setup
       - name: Smoke packaged UI
         if: runner.os != 'Linux'
-        run: |
-          node scripts/smoke-packaged.mjs --setup
-          node scripts/smoke-packaged.mjs
+        run: node scripts/smoke-packaged.mjs
       - name: Smoke packaged sidecar
         if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs
