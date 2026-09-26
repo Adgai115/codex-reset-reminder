@@ -14,7 +14,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test ./**/*.test.mjs",
+    "test": "node --test \"./**/*.test.mjs\"",
     "probe:sqlite": "node desktop/check-electron-sqlite.mjs",
     "prepare:sidecar": "node desktop/prepare-sidecar.mjs",
     "verify:package": "node scripts/verify-package.mjs",
