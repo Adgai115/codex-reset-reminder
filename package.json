@@ -17,6 +17,7 @@
     "test": "node --test ./**/*.test.mjs",
     "probe:sqlite": "node desktop/check-electron-sqlite.mjs",
     "prepare:sidecar": "node desktop/prepare-sidecar.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "dist:dir": "npm run prepare:sidecar && electron-builder --dir --publish never",
     "dist": "npm run prepare:sidecar && electron-builder --publish never"
   },

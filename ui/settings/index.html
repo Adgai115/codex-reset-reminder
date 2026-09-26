@@ -22,9 +22,11 @@
   button { border: 1px solid #cbd5e1; background: white; border-radius: 7px; padding: 8px 13px; cursor: pointer; font: inherit; }
   button.primary { background: #1458df; color: white; border-color: #1458df; }
   button:disabled { opacity: .5; cursor: wait; }
-  footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0; }
+  footer { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end;
+    gap: 8px; margin: 16px 0 0; padding: 12px 0; background: #f7f9fc; border-top: 1px solid #dfe6ef; }
   #status { min-height: 20px; color: #b42318; margin-top: 11px; }
   #listener-state { display: block; margin-top: 7px; }
+  #diagnostics { margin: 8px 0; padding-left: 18px; color: #52617a; line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -50,6 +52,18 @@
     <div class="clocks"><input id="quiet-start" type="time">至<input id="quiet-end" type="time"></div>
     <label class="line"><input id="preflight" type="checkbox">发送前尝试读取 Codex 最新数据</label>
     <label class="field">最短间隔（分钟）<input id="retry" type="number" min="10" max="1440"></label>
+  </section>
+  <section><h2>连接诊断</h2>
+    <small>本地状态自动读取；Codex Usage 只在点击时检查，不会使用重置卡。</small>
+    <ul id="diagnostics"><li>正在检查本地配置…</li></ul>
+    <button id="probe-codex" type="button">检查 Codex Usage</button>
+    <small id="codex-probe" role="status" aria-live="polite">尚未检查在线连接</small>
+  </section>
+  <section><h2>版本更新</h2>
+    <small>只在点击时查询 GitHub Release，不会自动下载或安装。</small>
+    <button id="check-updates" type="button">检查新版本</button>
+    <button id="open-update" type="button" hidden>打开下载页</button>
+    <small id="update-state" role="status" aria-live="polite">尚未检查</small>
   </section>
   <div id="status" role="status" aria-live="polite"></div>
   <footer><button id="test">测试桌面弹窗</button><button id="cancel">取消</button><button id="save" class="primary">保存设置</button></footer>
@@ -80,6 +94,17 @@
     catch (error) { listener = { state: 'retrying', lastError: error.message }; }
     listenerState();
   }
+  async function refreshDiagnostics() {
+    try {
+      const checks = await window.api.diagnoseLocal();
+      $('diagnostics').replaceChildren();
+      for (const [name, value] of [['Codex', checks.codex], ['飞书', checks.feishu], ['按钮', checks.listener]]) {
+        const row = document.createElement('li');
+        row.textContent = `${name}：${value}`;
+        $('diagnostics').appendChild(row);
+      }
+    } catch (error) { $('diagnostics').textContent = `本地检查失败：${error.message}`; }
+  }
   function connectionState() {
     for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked;
     $('connect').disabled = !unlocked || saving;
@@ -106,7 +131,29 @@
   }
   window.api.settingsRead().then(fill).catch((error) => { $('status').textContent = error.message; });
   refreshListenerState();
+  refreshDiagnostics();
   setInterval(refreshListenerState, 5000);
+  setInterval(refreshDiagnostics, 10000);
+  $('probe-codex').addEventListener('click', async () => {
+    $('probe-codex').disabled = true;
+    $('codex-probe').textContent = '正在只读检查 Codex Usage…';
+    try { $('codex-probe').textContent = (await window.api.probeCodex()).message; }
+    catch (error) { $('codex-probe').textContent = `检查失败：${error.message}`; }
+    finally { $('probe-codex').disabled = false; }
+  });
+  $('check-updates').addEventListener('click', async () => {
+    $('check-updates').disabled = true;
+    $('open-update').hidden = true;
+    $('update-state').textContent = '正在检查公开版本…';
+    try {
+      const result = await window.api.checkUpdates();
+      $('update-state').textContent = result.message;
+      $('open-update').hidden = result.state !== 'available';
+    } catch (error) { $('update-state').textContent = `检查失败：${error.message}`; }
+    finally { $('check-updates').disabled = false; }
+  });
+  $('open-update').addEventListener('click', () => window.api.openUpdate()
+    .catch((error) => { $('update-state').textContent = error.message; }));
   $('feishu').addEventListener('change', connectionState);
   $('reconnect').addEventListener('click', () => {
     if (!confirm('重新连接会更换飞书机器人配置。确认继续？')) return;
@@ -125,6 +172,7 @@
       fill(settings);
       $('status').textContent = '连接成功，测试私聊已发送。';
       setTimeout(refreshListenerState, 1000);
+      refreshDiagnostics();
     } catch (error) { $('status').textContent = error.message; }
     finally { saving = false; connectionState(); }
   });

@@ -36,12 +36,23 @@ jobs:
       - run: npx electron-builder ${{ matrix.target }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: node scripts/verify-package.mjs
       - name: Smoke packaged UI (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a node scripts/smoke-packaged.mjs
+        run: |
+          xvfb-run -a node scripts/smoke-packaged.mjs --setup
+          xvfb-run -a node scripts/smoke-packaged.mjs
+          CODEX_RESET_MONITOR_CORE_MODE=sidecar xvfb-run -a node scripts/smoke-packaged.mjs
       - name: Smoke packaged UI
         if: runner.os != 'Linux'
+        run: |
+          node scripts/smoke-packaged.mjs --setup
+          node scripts/smoke-packaged.mjs
+      - name: Smoke packaged sidecar
+        if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs
+        env:
+          CODEX_RESET_MONITOR_CORE_MODE: sidecar
       - uses: actions/upload-artifact@v4
         with:
           name: codex-reset-reminder-${{ matrix.artifact }}
@@ -59,11 +70,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/check-release-tag.mjs
       - uses: actions/download-artifact@v4
         with:
           pattern: codex-reset-reminder-*
           path: artifacts
           merge-multiple: true
+      - name: Generate SHA256 checksums
+        run: cd artifacts && sha256sum * > SHA256SUMS.txt
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

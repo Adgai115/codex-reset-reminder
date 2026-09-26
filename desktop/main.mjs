@@ -1,7 +1,8 @@
 // Electron main process: single instance, tray + manage window. The app is
 // the cross-platform replacement for main-tray.ps1 / manage.ps1.
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell } from 'electron';
 import { existsSync, mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { coreRequest, coreStatus, setDesktopPresenter } from './core-host.mjs';
@@ -12,6 +13,8 @@ import { discoverCodexScript, ensureLegacyMigrationReady, initializeConfig,
   offerLegacyMigration } from './first-run.mjs';
 import { readSettings, saveSettings, connectFeishu } from './settings.mjs';
 import { setAutoStart } from './autostart.mjs';
+import { diagnoseLocal, probeCodex } from './diagnostics.mjs';
+import { checkForUpdates, releasePageFor } from './update-check.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
@@ -32,6 +35,7 @@ if (!gotLock) {
   let setupWindow = null;
   let settingsWindow = null;
   let trayRefreshTimer = null;
+  let availableUpdate = null;
 
   app.on('second-instance', () => {
     if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); }
@@ -48,6 +52,7 @@ if (!gotLock) {
         preload: join(directory, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true,
       },
     });
     window.loadFile(join(projectRoot, 'ui', 'manage', 'index.html'));
@@ -67,7 +72,7 @@ if (!gotLock) {
   function showSetup() {
     if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); return; }
     setupWindow = new BrowserWindow({
-      width: 580, height: 390, show: false, resizable: false,
+      width: 580, height: 460, show: false, resizable: false,
       title: 'Codex 重置卡提醒 · 安装与连接',
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       autoHideMenuBar: true,
@@ -158,6 +163,27 @@ if (!gotLock) {
     checkSettingsPage(event);
     return callbackListener?.status() || { state: 'starting', lastError: null, lastEventAt: null };
   });
+  ipcMain.handle('settings:diagnoseLocal', (event) => {
+    checkSettingsPage(event);
+    return diagnoseLocal(currentConfigPath(), callbackListener?.status());
+  });
+  ipcMain.handle('settings:probeCodex', async (event) => {
+    checkSettingsPage(event);
+    const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
+    return probeCodex(config.codexScript);
+  });
+  ipcMain.handle('settings:checkUpdates', async (event) => {
+    checkSettingsPage(event);
+    availableUpdate = null;
+    const result = await checkForUpdates(app.getVersion());
+    availableUpdate = result.state === 'available' ? result.latestVersion : null;
+    return result;
+  });
+  ipcMain.handle('settings:openUpdate', async (event) => {
+    checkSettingsPage(event);
+    if (!availableUpdate) throw new Error('请先检查新版本');
+    await shell.openExternal(releasePageFor(availableUpdate));
+  });
   ipcMain.handle('settings:save', async (event, input) => {
     checkSettingsPage(event);
     const settings = await saveSettings(currentConfigPath(), input);
@@ -195,6 +221,10 @@ if (!gotLock) {
   ipcMain.handle('setup:discover', (event) => {
     checkSetupPage(event);
     return { codexScript: discoverCodexScript() };
+  });
+  ipcMain.handle('setup:probeCodex', (event, codexScript) => {
+    checkSetupPage(event);
+    return probeCodex(String(codexScript || '').trim());
   });
   ipcMain.handle('setup:browse', async (event) => {
     checkSetupPage(event);

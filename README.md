@@ -14,6 +14,8 @@
 
 ### 安装与构建
 
+安装页和设置页提供只读 Codex Usage 检查及本地连接诊断。设置页还能手动检查 GitHub Release；发现新版本时由用户决定是否打开下载页，不会自动安装。三平台的真实设备验收项目见 [platform-qa.md](docs/platform-qa.md)，发布前检查见 [release.md](docs/release.md)。
+
 当前可在 GitHub Actions 的三平台构建记录中下载 Windows NSIS、macOS DMG、Linux AppImage 和 deb 测试包；推送版本 tag 后，工作流才会创建 GitHub Release。macOS 包暂未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
 
 从源码构建时使用 Node.js 24：

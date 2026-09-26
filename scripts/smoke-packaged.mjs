@@ -92,22 +92,25 @@ async function stopTree(child) {
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
+const setupOnly = process.argv.includes('--setup');
 let child;
 let logs = '';
 try {
   const appPath = await executable();
   assert.ok(existsSync(appPath), `安装包程序不存在：${appPath}`);
-  // 用假卡和不存在的 Codex 命令，保证测试不会消耗真实卡或发送消息。
-  process.env.CODEX_RESET_MONITOR_DATA_DIR = profile;
-  const { openStore, addManualCard } = await import('../core/store.mjs');
-  const db = openStore();
-  try { addManualCard(db, { title: 'CI 演示重置卡', expiresAt: Math.floor(Date.now() / 1000) + 10 * 86400 }); }
-  finally { db.close(); }
-  const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
-  config.codexScript = join(profile, 'codex-does-not-exist');
-  config.desktop.enabled = false;
-  config.feishu.enabled = false;
-  await writeFile(join(profile, 'config.json'), JSON.stringify(config));
+  // 用隔离的假卡和不存在的 Codex 命令，保证测试不会消耗真实卡或发送消息。
+  if (!setupOnly) {
+    process.env.CODEX_RESET_MONITOR_DATA_DIR = profile;
+    const { openStore, addManualCard } = await import('../core/store.mjs');
+    const db = openStore();
+    try { addManualCard(db, { title: 'CI 演示重置卡', expiresAt: Math.floor(Date.now() / 1000) + 10 * 86400 }); }
+    finally { db.close(); }
+    const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
+    config.codexScript = join(profile, 'codex-does-not-exist');
+    config.desktop.enabled = false;
+    config.feishu.enabled = false;
+    await writeFile(join(profile, 'config.json'), JSON.stringify(config));
+  }
   const port = await freePort();
   // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
   const testFlags = process.platform === 'linux' ? ['--no-sandbox'] : [];
@@ -119,8 +122,28 @@ try {
   });
   child.stdout.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
   child.stderr.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
-  console.log(`已启动 ${process.platform} 安装包，等待卡片管理窗口`);
+  console.log(`已启动 ${process.platform} 安装包，等待${setupOnly ? '安装与连接' : '卡片管理'}窗口`);
   const deadline = Date.now() + 45000;
+  if (setupOnly) {
+    const setup = await page(port, '/ui/setup/index.html', child, deadline);
+    const result = await evaluate(setup, `(async () => ({
+      bridge: Boolean(window.api),
+      probe: await window.api.setupProbeCodex(${JSON.stringify(join(profile, 'missing-codex'))}),
+      title: document.title
+    }))()`);
+    assert.ok(result.bridge, '首次安装窗口 preload 没有加载');
+    assert.match(result.title, /安装与连接/);
+    assert.equal(result.probe.ok, false);
+    await evaluate(setup, `document.querySelector('#path').value = ${JSON.stringify(join(profile, 'missing-codex'))};
+      document.querySelector('#probe').click(); true`);
+    let probeText = '';
+    while (Date.now() < deadline && !probeText.includes('未找到 Codex CLI')) {
+      probeText = await evaluate(setup, `document.querySelector('#probe-status')?.textContent`);
+      await sleep(100);
+    }
+    assert.match(probeText, /未找到 Codex CLI/);
+    console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
+  } else {
   let cards;
   do {
     const tab = await page(port, '/ui/manage/index.html', child, deadline);
@@ -131,20 +154,50 @@ try {
   assert.ok(cards.bridge, 'preload 没有加载');
   assert.ok(cards.rows.some((row) => row.includes('CI 演示重置卡')), `卡片没有显示：${JSON.stringify(cards)}`);
   assert.ok(!cards.status?.includes('读取失败'), `卡片读取失败：${cards.status}`);
-  console.log('卡片管理窗口已显示演示卡，检查设置窗口');
   const manage = await page(port, '/ui/manage/index.html', child, deadline);
+  const flow = await evaluate(manage, `(async () => {
+    const added = await window.api.core('addManualCard', {
+      title: 'CI 交互卡', expiresAt: Math.floor(Date.now() / 1000) + 10 * 86400
+    });
+    const snooze = await window.api.core('scheduleSnooze', { cardId: added.id, option: '1d' });
+    const scheduled = await window.api.core('snooze', { cardId: added.id });
+    await window.api.core('clearSnooze', { cardId: added.id });
+    const cleared = await window.api.core('snooze', { cardId: added.id });
+    await window.api.core('markManualUsed', { cardId: added.id });
+    const card = await window.api.core('getCard', { cardId: added.id });
+    return { snooze: Boolean(snooze.targetAt && scheduled?.targetAt), cleared: !cleared,
+      status: card.status };
+  })()`);
+  assert.deepEqual(flow, { snooze: true, cleared: true, status: 'used' });
+  console.log('卡片管理、加卡、延期和已使用流程通过，检查设置窗口');
   await evaluate(manage, 'window.api.openSettings().then(() => true)');
   let settings;
   do {
     const tab = await page(port, '/ui/settings/index.html', child, deadline);
-    settings = await evaluate(tab, `({bridge: Boolean(window.api), listener: document.querySelector('#listener-state')?.textContent, connection: document.querySelector('#feishu-state')?.textContent})`);
-    if (settings.listener?.includes('尚未配置机器人') && settings.connection?.includes('尚未连接')) break;
+    settings = await evaluate(tab, `({bridge: Boolean(window.api), listener: document.querySelector('#listener-state')?.textContent,
+      connection: document.querySelector('#feishu-state')?.textContent,
+      diagnostics: document.querySelector('#diagnostics')?.textContent,
+      updateButton: Boolean(document.querySelector('#check-updates'))})`);
+    if (settings.listener?.includes('尚未配置机器人') && settings.connection?.includes('尚未连接')
+      && settings.diagnostics?.includes('Codex CLI 路径')) break;
     await sleep(300);
   } while (Date.now() < deadline);
   assert.ok(settings.bridge, '设置窗口 preload 没有加载');
   assert.match(settings.listener, /尚未配置机器人/);
   assert.match(settings.connection, /尚未连接/);
-  console.log(`安装包界面检查通过：${process.platform}，卡片管理和设置窗口`);
+  assert.match(settings.diagnostics, /Codex CLI 路径/);
+  assert.ok(settings.updateButton, '检查更新入口未显示');
+  const settingsTab = await page(port, '/ui/settings/index.html', child, deadline);
+  await evaluate(settingsTab, 'window.api.testDesktopReminder().then(() => true)');
+  const reminderTab = await page(port, '/ui/reminder/index.html', child, deadline);
+  const reminder = await evaluate(reminderTab, `({name: document.querySelector('#name')?.textContent,
+    expiry: document.querySelector('#expiry')?.textContent})`);
+  assert.match(reminder.name, /演示重置卡/);
+  assert.match(reminder.expiry, /到期时间/);
+  // 关闭窗口会销毁发起 IPC 的页面，不等待这个页面上的 Promise 回执。
+  await evaluate(reminderTab, `window.api.reminderAction('dismiss'); true`);
+  console.log(`安装包交互检查通过：${process.platform}，加卡、延期、设置和桌面弹窗`);
+  }
 } catch (error) {
   console.error(error);
   if (logs) console.error(logs);
