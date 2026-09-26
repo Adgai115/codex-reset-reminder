@@ -174,7 +174,8 @@ try {
   })()`);
   assert.deepEqual(flow, { snooze: true, cleared: true, status: 'used' });
   console.log('卡片管理、加卡、延期和已使用流程通过，检查设置窗口');
-  await evaluate(manage, 'window.api.openSettings().then(() => true)');
+  // 打开新窗口后，旧窗口可能失焦；直接检查新窗口是否出现。
+  await evaluate(manage, 'window.api.openSettings(); true');
   let settings;
   do {
     const tab = await page(port, '/ui/settings/index.html', child, deadline);
@@ -192,10 +193,15 @@ try {
   assert.match(settings.diagnostics, /Codex CLI 路径/);
   assert.ok(settings.updateButton, '检查更新入口未显示');
   const settingsTab = await page(port, '/ui/settings/index.html', child, deadline);
-  await evaluate(settingsTab, 'window.api.testDesktopReminder().then(() => true)');
+  await evaluate(settingsTab, 'window.api.testDesktopReminder(); true');
   const reminderTab = await page(port, '/ui/reminder/index.html', child, deadline);
-  const reminder = await evaluate(reminderTab, `({name: document.querySelector('#name')?.textContent,
-    expiry: document.querySelector('#expiry')?.textContent})`);
+  let reminder;
+  do {
+    reminder = await evaluate(reminderTab, `({name: document.querySelector('#name')?.textContent,
+      expiry: document.querySelector('#expiry')?.textContent})`);
+    if (reminder.name?.includes('演示重置卡') && reminder.expiry?.includes('到期时间')) break;
+    await sleep(200);
+  } while (Date.now() < deadline);
   assert.match(reminder.name, /演示重置卡/);
   assert.match(reminder.expiry, /到期时间/);
   // 关闭窗口会销毁发起 IPC 的页面，不等待这个页面上的 Promise 回执。
