@@ -2,7 +2,7 @@ name: Cross-platform desktop build
 
 on:
   push:
-    branches: [main, feature/cross-platform]
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
