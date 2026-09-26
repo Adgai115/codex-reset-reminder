@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { nextRetryAfter } from './delivery-retry.mjs';
 
 // Data lives beside the project root (not core/) so the Windows PowerShell tasks,
 // CLI entry points and any packaged desktop shell all read the same database.
@@ -323,6 +324,22 @@ export function getReminderAttempt(db, { cardId, expiresAt, nodeKind, nodeAt, ch
     .get(cardId, expiresAt, nodeKind, nodeAt, channel) || null;
 }
 
+export function beginReminderAttempt(db, node, channel, attemptedAt) {
+  const previous = getReminderAttempt(db, { ...node, channel });
+  const attempts = (previous?.attempts ?? 0) + 1;
+  const plannedRetry = nextRetryAfter(attempts, attemptedAt);
+  db.prepare(`INSERT INTO reminder_attempts (card_id, expires_at, node_kind, node_at,
+    threshold_days, channel, state, attempts, attempted_at, next_retry_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'sending', ?, ?, ?)
+    ON CONFLICT(card_id, expires_at, node_kind, node_at, channel) DO UPDATE SET
+      state = 'sending', attempts = excluded.attempts,
+      attempted_at = excluded.attempted_at, next_retry_at = excluded.next_retry_at,
+      error_code = NULL, error_text = NULL`)
+    .run(node.cardId, node.expiresAt, node.nodeKind, node.nodeAt, node.thresholdDays,
+      channel, attempts, attemptedAt, plannedRetry < node.expiresAt ? plannedRetry : null);
+  return attempts;
+}
+
 export function recordReminderResult(db, node, channel, { state, attemptedAt, nextRetryAt = null,
   errorCode = null, errorText = null }) {
   if (!['sent', 'failed'].includes(state)) throw new Error('无效的提醒发送结果');
@@ -331,7 +348,9 @@ export function recordReminderResult(db, node, channel, { state, attemptedAt, ne
     error_code, error_text)
     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
     ON CONFLICT(card_id, expires_at, node_kind, node_at, channel) DO UPDATE SET
-      state = excluded.state, attempts = reminder_attempts.attempts + 1,
+      state = excluded.state,
+      attempts = CASE WHEN reminder_attempts.state = 'sending' THEN reminder_attempts.attempts
+        ELSE reminder_attempts.attempts + 1 END,
       attempted_at = excluded.attempted_at, succeeded_at = excluded.succeeded_at,
       next_retry_at = excluded.next_retry_at, error_code = excluded.error_code,
       error_text = excluded.error_text`)

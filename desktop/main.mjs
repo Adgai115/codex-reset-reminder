@@ -186,7 +186,7 @@ if (!gotLock) {
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
     'snooze', 'addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed',
-    'scheduleSnooze', 'clearSnooze', 'syncCards']);
+    'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels']);
   const mutatingOperations = new Set(['addManualCard', 'updateManualCard', 'markManualUsed',
     'reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
   ipcMain.handle('core', async (event, op, args) => {
@@ -194,8 +194,10 @@ if (!gotLock) {
       throw new Error('不允许的页面操作');
     }
     if (op === 'syncCards' && scheduler) return scheduler.sync('manual');
+    if (op === 'retryFailedChannels' && scheduler) return scheduler.retry(args);
     const result = await coreRequest(op, args);
-    if (op === 'manageSnapshot') return { ...result, syncing: scheduler?.isSyncing() === true };
+    if (op === 'manageSnapshot') return { ...result, syncing: scheduler?.isSyncing() === true,
+      retrying: scheduler?.isRetrying() === true };
     if (mutatingOperations.has(op)) { stateChanged(); scheduler?.check('card-change'); }
     return result;
   });

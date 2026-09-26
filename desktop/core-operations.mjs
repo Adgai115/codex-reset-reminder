@@ -6,6 +6,9 @@ import { runReminders } from '../remind.mjs';
 import { preflightSync } from '../preflight-sync.mjs';
 import { planCardNextCheck, planNextCheck } from '../plan-next.mjs';
 import { enabledChannels, quietHours } from '../core/reminder-policy.mjs';
+import { deliveryTime } from '../core/reminder-policy.mjs';
+import { dueThreshold } from '../check.mjs';
+import { maxReminderAttempts } from '../core/delivery-retry.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -40,13 +43,29 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         const confirmed = store.latestCompleteSync(db);
         const options = { channels, quiet: quietHours(config), nowSeconds,
           completeSyncAt: confirmed?.checkedAt ?? 0 };
+        const canRetry = (card, snooze, result) => {
+          if (card.status !== 'available' || card.expiresAt <= nowSeconds
+            || result.expiresAt !== card.expiresAt || !channels.includes(result.channel)
+            || result.state !== 'failed' || result.attempts >= maxReminderAttempts) return false;
+          if (nowSeconds < deliveryTime(nowSeconds, card.expiresAt, options.quiet)) return false;
+          const days = dueThreshold(card.expiresAt, nowSeconds);
+          if (result.nodeKind === 'fixed') return days === result.thresholdDays
+            && !(snooze?.expiresAt === card.expiresAt && snooze.targetAt >= result.nodeAt);
+          return snooze?.expiresAt === card.expiresAt && snooze.targetAt === result.nodeAt
+            && nowSeconds >= deliveryTime(snooze.targetAt, card.expiresAt, options.quiet)
+            && (days === null || snooze.targetAt >= card.expiresAt - days * 86400);
+        };
         return { channels, latest: store.latestSync(db), confirmed,
-          cards: store.listCards(db, true).map((card) => ({ ...card,
-            snooze: store.getSnooze(db, card.id),
-            deliveryResults: store.listReminderResults(db, card.id),
-            snoozeOptions: getSnoozeOptions(card, nowSeconds),
-            plan: planCardNextCheck(db, card, options),
-          })) };
+          cards: store.listCards(db, true).map((card) => {
+            const snooze = store.getSnooze(db, card.id);
+            return { ...card, snooze,
+              deliveryResults: store.listReminderResults(db, card.id).map((result) => ({
+                ...result, retryable: canRetry(card, snooze, result),
+              })),
+              snoozeOptions: getSnoozeOptions(card, nowSeconds),
+              plan: planCardNextCheck(db, card, options),
+            };
+          }) };
       }
       case 'listCards': return store.listCards(db, args.includeInactive === true);
       case 'getCard': return store.getCard(db, value(args.cardId));

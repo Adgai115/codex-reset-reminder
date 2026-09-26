@@ -10,6 +10,7 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
   let exactTimer = null;
   let queue = Promise.resolve();
   let syncPromise = null;
+  const retrying = new Map();
 
   function enqueue(task) {
     const result = queue.catch(() => {}).then(task);
@@ -28,7 +29,7 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
     exactTimer = setTimeout(() => { check('exact'); }, delay);
   }
 
-  async function performCheck(reason) {
+  async function performCheck(reason, options = {}) {
     if (!running) return;
     try {
       const due = await coreRequest('dueUsageVerifications');
@@ -38,12 +39,27 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
       }
       try { await coreRequest('preflightSync'); }
       catch (error) { console.warn(`[scheduler] 提醒前核对失败：${error.message}`); }
-      const result = await coreRequest('runReminders');
+      const result = await coreRequest('runReminders', options);
       onResult(result, reason);
+      return result;
     } finally { await reschedule(); onChanged(); }
   }
 
   function check(reason = 'manual') { return enqueue(() => performCheck(reason)); }
+
+  function retry(node) {
+    const key = `${node?.cardId}:${node?.expiresAt}:${node?.nodeKind}:${node?.nodeAt}`;
+    if (!node?.cardId || !Number.isInteger(node?.expiresAt)
+      || !['fixed', 'snooze'].includes(node?.nodeKind) || !Number.isInteger(node?.nodeAt)) {
+      throw new Error('重试节点无效');
+    }
+    if (retrying.has(key)) return retrying.get(key);
+    const pending = enqueue(() => performCheck('manual-retry', { manualRetry: node }))
+      .finally(() => { retrying.delete(key); onChanged(); });
+    retrying.set(key, pending);
+    onChanged();
+    return pending;
+  }
 
   function sync(reason = 'manual') {
     if (syncPromise) return syncPromise;
@@ -85,5 +101,6 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
     clearTimeout(exactTimer);
     powerMonitor.removeListener('resume', resume);
   }
-  return { start, stop, check, sync, isSyncing: () => Boolean(syncPromise), reschedule: () => enqueue(reschedule) };
+  return { start, stop, check, retry, sync, isSyncing: () => Boolean(syncPromise),
+    isRetrying: () => retrying.size > 0, reschedule: () => enqueue(reschedule) };
 }

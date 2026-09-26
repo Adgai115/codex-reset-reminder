@@ -30,6 +30,8 @@ export function cardState(card, now = Date.now() / 1000) {
 }
 
 const kindLabel = (kind) => ({ '7d': '提前 7 天', '3d': '提前 3 天', '1d': '提前 1 天',
+  'retry-7d': '提前 7 天失败渠道补发', 'retry-3d': '提前 3 天失败渠道补发',
+  'retry-1d': '提前 1 天失败渠道补发', 'retry-snooze': '延期提醒失败渠道补发',
   snooze: '延期提醒', verify: '使用核验' })[kind] || '提醒';
 
 export function nextReminder(card, channels, now = Date.now() / 1000) {
@@ -38,6 +40,8 @@ export function nextReminder(card, channels, now = Date.now() / 1000) {
   if (plan.dueAt) return `${kindLabel(plan.dueKind)}待补查`;
   if (plan.nextAt) return `${kindLabel(plan.nextKind)} · ${formatTime(plan.nextAt)}`;
   if (!channels.length) return '提醒渠道已关闭';
+  if (card.deliveryResults?.some((result) => result.expiresAt === card.expiresAt
+    && result.state === 'failed' && !result.nextRetryAt)) return '部分渠道发送失败，已达补发上限';
   return '本轮提醒已完成';
 }
 

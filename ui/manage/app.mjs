@@ -23,7 +23,8 @@ function notice(message, error = false) {
 }
 function controls() {
   document.querySelectorAll('button, dialog input, dialog select').forEach((element) => {
-    element.disabled = busy || element.dataset.unavailable === 'true';
+    element.disabled = busy || element.dataset.unavailable === 'true'
+      || (snapshot?.retrying === true && element.dataset.retry === 'true');
   });
   $('sync').disabled = busy || snapshot?.syncing === true;
   $('sync').textContent = snapshot?.syncing ? '同步中…' : '立即同步 Codex';
@@ -53,10 +54,37 @@ function renderDelivery(parent, card) {
         `delivery-line ${result.state === 'failed' ? 'failed' : ''}`);
       text(line, 'span', `${result.state === 'sent' ? '发送' : '尝试'}：${formatTime(result.attemptedAt)}`, 'sub');
       if (result.errorText) text(line, 'span', result.errorText, 'sub');
+      if (result.nextRetryAt) text(line, 'span', `第 ${result.attempts}/4 次尝试 · 下次补发 ${formatTime(result.nextRetryAt)}`, 'sub');
+      else if (result.state === 'failed') text(line, 'span', '自动补发已停止；检查渠道设置后等待下一提醒节点。', 'sub');
       if (result.state === 'failed') button(line, '检查渠道设置',
         () => window.api.openSettings().catch((error) => notice(error.message, true)));
     }
+    if (results.some((result) => result.retryable)) {
+      const first = results[0];
+      const retry = button(group, '重试失败渠道', () => retryNode(first));
+      retry.dataset.retry = 'true';
+    }
   }
+}
+
+async function retryNode(result) {
+  if (busy || snapshot?.retrying) return;
+  busy = true; controls();
+  notice('正在补发此节点的失败渠道，请稍候…');
+  try {
+    const response = await window.api.core('retryFailedChannels', {
+      cardId: result.cardId, expiresAt: result.expiresAt,
+      nodeKind: result.nodeKind, nodeAt: result.nodeAt,
+    });
+    const rows = response.due || [];
+    const sent = rows.flatMap((row) => [row.desktop, row.feishu, row.wechat])
+      .filter((state) => state === 'sent' || state === 'shown').length;
+    const failed = rows.flatMap((row) => [row.desktop, row.feishu, row.wechat])
+      .filter((state) => state?.startsWith('failed:')).length;
+    notice(sent || failed ? `补发完成：成功 ${sent} 个渠道，失败 ${failed} 个渠道。`
+      : '当前节点没有可补发的失败渠道；请查看发送状态和账号提示。', failed > 0);
+  } catch (error) { notice(`补发失败：${error.message}`, true); }
+  finally { busy = false; await load(true); controls(); }
 }
 function render() {
   if (!snapshot) return;
