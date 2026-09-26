@@ -99,7 +99,9 @@ try {
   config.feishu.enabled = false;
   await writeFile(join(profile, 'config.json'), JSON.stringify(config));
   const port = await freePort();
-  child = spawn(appPath, [`--remote-debugging-port=${port}`, '--enable-logging'], {
+  // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
+  const testFlags = process.platform === 'linux' ? ['--no-sandbox'] : [];
+  child = spawn(appPath, [`--remote-debugging-port=${port}`, '--enable-logging', ...testFlags], {
     detached: process.platform !== 'win32',
     env: { ...process.env, CODEX_RESET_MONITOR_USER_DATA_DIR: profile,
       CODEX_RESET_MONITOR_SKIP_MIGRATION: '1', CODEX_RESET_MONITOR_DATA_DIR: profile },
