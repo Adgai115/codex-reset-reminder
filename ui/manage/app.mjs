@@ -1,4 +1,5 @@
-import { cardState, formatTime, nextReminder, syncDescription } from './view-model.mjs';
+import { cardState, deliveryNodeLabel, deliveryResultLabel,
+  formatTime, nextReminder, syncDescription } from './view-model.mjs';
 
 const $ = (id) => document.getElementById(id);
 let snapshot = null;
@@ -33,6 +34,30 @@ function button(parent, label, callback, unavailable = false) {
   element.addEventListener('click', callback);
   return element;
 }
+function renderDelivery(parent, card) {
+  if (!card.deliveryResults?.length) {
+    text(parent, 'span', '尚无发送记录', 'sub');
+    return;
+  }
+  const nodes = new Map();
+  for (const result of card.deliveryResults) {
+    const key = `${result.expiresAt}:${result.nodeKind}:${result.nodeAt}`;
+    if (!nodes.has(key)) nodes.set(key, []);
+    nodes.get(key).push(result);
+  }
+  for (const results of nodes.values()) {
+    const group = text(parent, 'div', '', 'delivery-node');
+    text(group, 'div', deliveryNodeLabel(results[0]), 'delivery-title');
+    for (const result of results) {
+      const line = text(group, 'div', deliveryResultLabel(result),
+        `delivery-line ${result.state === 'failed' ? 'failed' : ''}`);
+      text(line, 'span', `${result.state === 'sent' ? '发送' : '尝试'}：${formatTime(result.attemptedAt)}`, 'sub');
+      if (result.errorText) text(line, 'span', result.errorText, 'sub');
+      if (result.state === 'failed') button(line, '检查渠道设置',
+        () => window.api.openSettings().catch((error) => notice(error.message, true)));
+    }
+  }
+}
 function render() {
   if (!snapshot) return;
   $('sync-status').textContent = syncDescription(snapshot);
@@ -59,6 +84,7 @@ function render() {
     const status = text(row, 'td', '');
     text(status, 'span', state.label, `badge ${state.tone}`);
     if (state.active && card.reportedUsedAt) text(status, 'div', '读取 Codex 后核验；不会直接扣减卡片。', 'sub');
+    renderDelivery(text(row, 'td', ''), card);
     const actions = text(text(row, 'td', ''), 'div', '', 'actions');
     if (!state.active) { text(actions, 'span', '无需处理', 'sub'); continue; }
     const later = button(actions, '稍后提醒', () => openSnooze(card), !card.snoozeOptions.length);

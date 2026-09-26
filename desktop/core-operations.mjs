@@ -19,7 +19,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
     return syncCards(configPath());
   }
   if (op === 'runReminders') {
-    return runReminders({ configPath: configPath(), desktop, ...args });
+    return runReminders({ configPath: configPath(), desktop, trackAttempts: true, ...args });
   }
   if (op === 'preflightSync') {
     return preflightSync({ configPath: configPath(),
@@ -43,6 +43,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         return { channels, latest: store.latestSync(db), confirmed,
           cards: store.listCards(db, true).map((card) => ({ ...card,
             snooze: store.getSnooze(db, card.id),
+            deliveryResults: store.listReminderResults(db, card.id),
             snoozeOptions: getSnoozeOptions(card, nowSeconds),
             plan: planCardNextCheck(db, card, options),
           })) };

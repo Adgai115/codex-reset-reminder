@@ -3,6 +3,22 @@ export const formatTime = (seconds) => seconds ? new Date(seconds * 1000).toLoca
   year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
 }) : '尚无记录';
 
+const channelLabels = { desktop: '桌面', feishu: '飞书', wechat: '公众号' };
+
+export function deliveryNodeLabel(result) {
+  return result.nodeKind === 'snooze'
+    ? `延期提醒 · ${formatTime(result.nodeAt)}`
+    : `提前 ${result.thresholdDays} 天 · ${formatTime(result.nodeAt)}`;
+}
+
+export function deliveryResultLabel(result) {
+  const channel = channelLabels[result.channel] || '提醒';
+  if (result.state === 'sent') return result.channel === 'desktop' ? '桌面已弹出' : `${channel}已发送`;
+  if (result.state === 'sending') return `${channel}发送中`;
+  if (result.nextRetryAt) return `${channel}等待重试`;
+  return `${channel}发送失败`;
+}
+
 export function cardState(card, now = Date.now() / 1000) {
   if (card.status === 'used') return { active: false, label: '已使用', tone: 'muted' };
   if (card.expiresAt <= now) return { active: false, label: '已过期', tone: 'muted' };

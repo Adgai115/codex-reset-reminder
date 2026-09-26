@@ -332,7 +332,8 @@ if (!gotLock) {
 
   async function startRuntime() {
     if (scheduler) return;
-    scheduler = createScheduler({ coreRequest, onChanged: stateChanged });
+    scheduler = createScheduler({ coreRequest, onResult: () => stateChanged(),
+      onChanged: stateChanged });
     const onChanged = () => { stateChanged(); scheduler.reschedule(); };
     reminders = createReminderManager({ coreRequest, onScheduleChanged: onChanged });
     setDesktopPresenter(reminders.present);

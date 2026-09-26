@@ -38,6 +38,24 @@ export function openStore() {
       PRIMARY KEY (card_id, expires_at, threshold_days, channel),
       FOREIGN KEY (card_id) REFERENCES cards(id)
     );
+    CREATE TABLE IF NOT EXISTS reminder_attempts (
+      card_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      node_kind TEXT NOT NULL CHECK (node_kind IN ('fixed', 'snooze')),
+      node_at INTEGER NOT NULL,
+      threshold_days INTEGER NOT NULL,
+      channel TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      attempted_at INTEGER,
+      succeeded_at INTEGER,
+      next_retry_at INTEGER,
+      error_code TEXT,
+      error_text TEXT,
+      PRIMARY KEY (card_id, expires_at, node_kind, node_at, channel),
+      FOREIGN KEY (card_id) REFERENCES cards(id)
+    );
+    CREATE INDEX IF NOT EXISTS reminder_attempts_retry ON reminder_attempts(state, next_retry_at);
     CREATE TABLE IF NOT EXISTS sync_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       checked_at INTEGER NOT NULL,
@@ -294,6 +312,56 @@ export function deliveryExists(db, id, expiresAt, days, channel) {
 export function recordDelivery(db, id, expiresAt, days, channel) {
   db.prepare('INSERT OR IGNORE INTO reminder_deliveries (card_id, expires_at, threshold_days, channel, delivered_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, expiresAt, days, channel, Math.floor(Date.now() / 1000));
+}
+
+export function getReminderAttempt(db, { cardId, expiresAt, nodeKind, nodeAt, channel }) {
+  return db.prepare(`SELECT card_id AS cardId, expires_at AS expiresAt, node_kind AS nodeKind,
+    node_at AS nodeAt, threshold_days AS thresholdDays, channel, state, attempts,
+    attempted_at AS attemptedAt, succeeded_at AS succeededAt,
+    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText
+    FROM reminder_attempts WHERE card_id = ? AND expires_at = ? AND node_kind = ? AND node_at = ? AND channel = ?`)
+    .get(cardId, expiresAt, nodeKind, nodeAt, channel) || null;
+}
+
+export function recordReminderResult(db, node, channel, { state, attemptedAt, nextRetryAt = null,
+  errorCode = null, errorText = null }) {
+  if (!['sent', 'failed'].includes(state)) throw new Error('无效的提醒发送结果');
+  db.prepare(`INSERT INTO reminder_attempts (card_id, expires_at, node_kind, node_at,
+    threshold_days, channel, state, attempts, attempted_at, succeeded_at, next_retry_at,
+    error_code, error_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+    ON CONFLICT(card_id, expires_at, node_kind, node_at, channel) DO UPDATE SET
+      state = excluded.state, attempts = reminder_attempts.attempts + 1,
+      attempted_at = excluded.attempted_at, succeeded_at = excluded.succeeded_at,
+      next_retry_at = excluded.next_retry_at, error_code = excluded.error_code,
+      error_text = excluded.error_text`)
+    .run(node.cardId, node.expiresAt, node.nodeKind, node.nodeAt, node.thresholdDays,
+      channel, state, attemptedAt, state === 'sent' ? attemptedAt : null, nextRetryAt,
+      errorCode, errorText);
+}
+
+export function listReminderResults(db, cardId) {
+  const attempts = db.prepare(`SELECT card_id AS cardId, expires_at AS expiresAt,
+    node_kind AS nodeKind, node_at AS nodeAt, threshold_days AS thresholdDays, channel,
+    state, attempts, attempted_at AS attemptedAt, succeeded_at AS succeededAt,
+    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText
+    FROM reminder_attempts WHERE card_id = ? ORDER BY node_at DESC, attempted_at DESC`).all(cardId);
+  const oldDeliveries = db.prepare(`SELECT d.card_id AS cardId, d.expires_at AS expiresAt,
+    CASE WHEN d.threshold_days = 0 THEN 'snooze' ELSE 'fixed' END AS nodeKind,
+    CASE WHEN d.threshold_days = 0 THEN COALESCE(s.target_at, d.delivered_at)
+      ELSE d.expires_at - d.threshold_days * 86400 END AS nodeAt,
+    d.threshold_days AS thresholdDays, d.channel, d.delivered_at AS attemptedAt
+    FROM reminder_deliveries d LEFT JOIN snoozes s ON s.card_id = d.card_id
+      AND s.expires_at = d.expires_at
+    WHERE d.card_id = ? AND NOT EXISTS (
+      SELECT 1 FROM reminder_attempts a WHERE a.card_id = d.card_id
+        AND a.expires_at = d.expires_at AND a.threshold_days = d.threshold_days
+        AND a.channel = d.channel)
+    ORDER BY d.delivered_at DESC`).all(cardId);
+  return [...attempts, ...oldDeliveries.map((row) => ({ ...row, state: 'sent',
+    attempts: 1, succeededAt: row.attemptedAt, nextRetryAt: null,
+    errorCode: null, errorText: null }))]
+    .sort((a, b) => b.nodeAt - a.nodeAt || b.attemptedAt - a.attemptedAt);
 }
 
 export function latestSync(db) {

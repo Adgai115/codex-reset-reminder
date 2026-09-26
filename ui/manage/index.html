@@ -39,7 +39,8 @@
   th, td { text-align:left; padding:14px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-size:12px; font-weight:500; padding-top:11px; padding-bottom:11px; }
   tr:last-child td { border-bottom:0; }
-  th:nth-child(1) { width:34%; } th:nth-child(2) { width:21%; } th:nth-child(3) { width:19%; } th:nth-child(4) { width:26%; }
+  th:nth-child(1) { width:25%; } th:nth-child(2) { width:17%; } th:nth-child(3) { width:14%; }
+  th:nth-child(4) { width:26%; } th:nth-child(5) { width:18%; }
   td { overflow-wrap:anywhere; }
   .card-name { font-weight:600; }
   .sub { color:var(--muted); font-size:12px; margin-top:6px; }
@@ -50,6 +51,13 @@
   .badge.muted { color:var(--muted); background:var(--bg); }
   .actions { display:flex; gap:6px; flex-wrap:wrap; }
   .actions button { font-size:12px; padding:4px 7px; }
+  .delivery-node { margin-bottom:10px; padding-bottom:9px; border-bottom:1px solid var(--line); }
+  .delivery-node:last-child { margin-bottom:0; padding-bottom:0; border-bottom:0; }
+  .delivery-title { font-size:12px; font-weight:600; }
+  .delivery-line { margin-top:4px; font-size:12px; line-height:1.4; }
+  .delivery-line.failed { color:var(--danger); }
+  .delivery-line .sub { display:block; margin-top:1px; }
+  .delivery-line button { font-size:11px; padding:2px 5px; margin-top:3px; }
   .empty { padding:44px 20px; text-align:center; color:var(--muted); }
   .footnote { margin-top:14px; color:var(--muted); font-size:12px; }
   dialog { border:1px solid var(--line); border-radius:12px; padding:24px; width:420px; max-width:90vw; color:var(--ink); background:var(--surface); }
@@ -75,7 +83,7 @@
   </div>
   <div id="notice" role="status" aria-live="polite"></div>
   <div class="table-wrap">
-    <table id="cards"><thead><tr><th>卡片</th><th>到期时间 / 本地</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <table id="cards"><thead><tr><th>卡片</th><th>到期时间 / 本地</th><th>状态</th><th>提醒发送</th><th>操作</th></tr></thead><tbody></tbody></table>
     <div id="empty" class="empty" hidden></div>
   </div>
   <p class="footnote">提前 7 / 3 / 1 天提醒；延期只改变提醒时间。收起到托盘后仍会提醒，退出应用后停止。</p>

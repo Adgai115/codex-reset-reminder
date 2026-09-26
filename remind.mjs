@@ -5,14 +5,16 @@ import { dueThreshold, showNotification } from './check.mjs';
 import { sendFeishuReminder } from './feishu.mjs';
 import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
+import { safeDeliveryFailure } from './core/delivery-results.mjs';
 import { clearSnooze, deliveryExists, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
-  markSnoozeDelivered, openStore, recordDelivery, recordFeishuMessage } from './store.mjs';
+  markSnoozeDelivered, openStore, recordDelivery, recordFeishuMessage, recordReminderResult } from './store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   configPath = join(directory, 'config.json'), desktop = showNotification,
-  feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false } = {}) {
+  feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false,
+  trackAttempts = false } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
@@ -20,6 +22,13 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   const results = [];
   let shownIndex = 0;
   try {
+    const saveResult = (node, channel, state, error = null) => {
+      if (!trackAttempts || dryRun) return error ? `failed: ${error.message}` : state;
+      const failure = error ? safeDeliveryFailure(error, channel) : null;
+      recordReminderResult(db, node, channel, { state: error ? 'failed' : 'sent',
+        attemptedAt: nowSeconds, errorCode: failure?.code, errorText: failure?.text });
+      return error ? `failed: ${failure.text}` : state;
+    };
     const cards = listCards(db);
     const lastCompleteSync = latestCompleteSync(db);
     const syncedCount = lastCompleteSync?.availableCount ?? null;
@@ -28,6 +37,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       const days = dueThreshold(card.expiresAt, nowSeconds);
       if (days === null) continue;
       const nodeAt = card.expiresAt - days * 86400;
+      const node = { cardId: card.id, expiresAt: card.expiresAt, nodeKind: 'fixed', nodeAt,
+        thresholdDays: days };
       if (nowSeconds < deliveryTime(nodeAt, card.expiresAt, quiet)) continue;
       const snooze = getSnooze(db, card.id);
       if (snooze?.expiresAt === card.expiresAt
@@ -46,8 +57,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
                 expiresAt: card.expiresAt, thresholdDays: days, recipientOpenId: config.feishu.userId });
             }
             recordDelivery(db, card.id, card.expiresAt, days, 'feishu');
-            result.feishu = 'sent';
-          } catch (error) { result.feishu = `failed: ${error.message}`; }
+            result.feishu = saveResult(node, 'feishu', 'sent');
+          } catch (error) { result.feishu = saveResult(node, 'feishu', 'failed', error); }
         }
       }
       if (!deliveryExists(db, card.id, card.expiresAt, days, 'wechat') && channels.includes('wechat')) {
@@ -56,8 +67,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
           try {
             await wechat(config, card, days, { currentAvailableCount: syncedCount });
             recordDelivery(db, card.id, card.expiresAt, days, 'wechat');
-            result.wechat = 'sent';
-          } catch (error) { result.wechat = `failed: ${error.message}`; }
+            result.wechat = saveResult(node, 'wechat', 'sent');
+          } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
         }
       }
       if (!deliveryExists(db, card.id, card.expiresAt, days, 'desktop') && channels.includes('desktop')) {
@@ -70,8 +81,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
               days, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex });
             recordDelivery(db, card.id, card.expiresAt, days, 'desktop');
             shownIndex++;
-            result.desktop = 'shown';
-          } catch (error) { result.desktop = `failed: ${error.message}`; }
+            result.desktop = saveResult(node, 'desktop', 'shown');
+          } catch (error) { result.desktop = saveResult(node, 'desktop', 'failed', error); }
         }
       }
       results.push(result);
@@ -90,6 +101,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       const desktopDone = !channels.includes('desktop') || Boolean(snooze.desktopDeliveredAt);
       if (desktopDone && feishuDone && wechatDone) continue;
       const remainingDays = Math.max(0, Math.ceil((card.expiresAt - nowSeconds) / 86400));
+      const node = { cardId: card.id, expiresAt: card.expiresAt, nodeKind: 'snooze',
+        nodeAt: snooze.targetAt, thresholdDays: 0 };
       const result = { id: card.id, title: card.title, expiresAt: card.expiresAt, days: remainingDays,
         snooze: true, desktop: !channels.includes('desktop') ? 'disabled'
           : snooze.desktopDeliveredAt ? 'already_sent' : 'due',
@@ -107,8 +120,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
           }
           recordDelivery(db, card.id, card.expiresAt, 0, 'feishu');
           markSnoozeDelivered(db, card.id, 'feishu');
-          result.feishu = 'sent';
-        } catch (error) { result.feishu = `failed: ${error.message}`; }
+          result.feishu = saveResult(node, 'feishu', 'sent');
+        } catch (error) { result.feishu = saveResult(node, 'feishu', 'failed', error); }
       }
       if (channels.includes('wechat') && !snooze.wechatDeliveredAt && !dryRun) {
         try {
@@ -116,8 +129,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
             { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt });
           recordDelivery(db, card.id, card.expiresAt, 0, 'wechat');
           markSnoozeDelivered(db, card.id, 'wechat');
-          result.wechat = 'sent';
-        } catch (error) { result.wechat = `failed: ${error.message}`; }
+          result.wechat = saveResult(node, 'wechat', 'sent');
+        } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
       }
       if (channels.includes('desktop') && !snooze.desktopDeliveredAt && !dryRun) {
         try {
@@ -128,8 +141,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
           recordDelivery(db, card.id, card.expiresAt, 0, 'desktop');
           markSnoozeDelivered(db, card.id, 'desktop');
           shownIndex++;
-          result.desktop = 'shown';
-        } catch (error) { result.desktop = `failed: ${error.message}`; }
+          result.desktop = saveResult(node, 'desktop', 'shown');
+        } catch (error) { result.desktop = saveResult(node, 'desktop', 'failed', error); }
       }
       results.push(result);
     }
