@@ -124,6 +124,15 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
   const seenIds = new Set(rows.map((credit) => credit.id));
   const newlyUsed = [];
   const noLongerAvailable = [];
+  if (scopeId) {
+    const owner = db.prepare('SELECT source, account_scope_id AS scopeId FROM cards WHERE id = ?');
+    for (const credit of rows) {
+      const existing = owner.get(credit.id);
+      if (existing && (existing.source !== 'codex' || existing.scopeId !== scopeId)) {
+        throw new Error('Codex 卡片归属账号不一致，已停止合并缓存');
+      }
+    }
+  }
   const upsert = db.prepare(`
     INSERT INTO cards (id, source, title, granted_at, expires_at, status, updated_at, last_seen_at, account_scope_id)
     VALUES (?, 'codex', ?, ?, ?, 'available', ?, ?, ?)
@@ -141,7 +150,10 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
         credit.expiresAt, checkedAt, checkedAt, scopeId);
     }
     if (complete) {
-      const missing = db.prepare("SELECT id, expires_at AS expiresAt, reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount FROM cards WHERE source = 'codex' AND status = 'available'").all();
+      const missing = db.prepare(`SELECT id, expires_at AS expiresAt,
+        reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount
+        FROM cards WHERE source = 'codex' AND status = 'available'
+        ${scopeId ? 'AND account_scope_id = ?' : ''}`).all(...(scopeId ? [scopeId] : []));
       const setStatus = db.prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ? AND status = 'available'");
       for (const card of missing) {
         if (seenIds.has(card.id)) continue;

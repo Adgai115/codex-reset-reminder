@@ -9,6 +9,8 @@ let busy = false;
 let loading = false;
 let reloadPending = false;
 let history = false;
+let accountChecking = false;
+let lastAccountCheckAt = 0;
 const hasDialog = () => Boolean(document.querySelector('dialog[open]'));
 const text = (parent, tag, content, className = '') => {
   const element = document.createElement(tag);
@@ -214,10 +216,21 @@ $('check-account').addEventListener('click', async () => {
   busy = true; controls(); notice('正在重新读取 Codex 账号身份…');
   try {
     const result = await window.api.core('checkAccount');
+    lastAccountCheckAt = Date.now();
     notice(accountDescription(result), result.state !== 'verified');
   } catch (error) { notice(`账号核对失败：${error.message}`, true); }
   finally { busy = false; await load(true); controls(); }
 });
+async function refreshAccountOnFocus() {
+  if (busy || accountChecking || hasDialog() || Date.now() - lastAccountCheckAt < 300_000) return;
+  accountChecking = true;
+  try {
+    await window.api.core('checkAccount');
+    lastAccountCheckAt = Date.now();
+    await load(true);
+  } catch { /* 页面保留上次状态，用户可使用重新核对入口。 */ }
+  finally { accountChecking = false; }
+}
 $('bind-account').addEventListener('click', async () => {
   if (busy || snapshot?.account?.state !== 'needsBinding') return;
   const candidate = snapshot.account;
@@ -259,8 +272,10 @@ $('sync').addEventListener('click', async () => {
   finally { busy = false; await load(true); controls(); }
 });
 window.api.onStateChanged(() => load());
-window.addEventListener('focus', () => load());
+window.addEventListener('focus', () => { load(); refreshAccountOnFocus(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 // 仅刷新本地时间和状态，不会轮询 Codex。
 setInterval(() => { if (!document.hidden) load(); }, 60_000);
+setInterval(() => { if (!document.hidden) refreshAccountOnFocus(); }, 300_000);
 load();
+refreshAccountOnFocus();

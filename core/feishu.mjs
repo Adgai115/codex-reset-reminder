@@ -173,6 +173,12 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
   };
 }
 
+export function feishuReminderIdempotencyKey(card, days, snoozeTargetAt = null) {
+  return createHash('sha256')
+    .update(`${card.id}:${card.expiresAt}:${snoozeTargetAt ?? `${days}d`}:feishu`)
+    .digest('hex').slice(0, 48);
+}
+
 export async function sendFeishuReminder(config, card, days, { dryRun = false, simulation = false,
   currentAvailableCount = null, syncedAt = null, snoozeTargetAt = null } = {}) {
   const channel = config.feishu;
@@ -180,8 +186,7 @@ export async function sendFeishuReminder(config, card, days, { dryRun = false, s
   if (!['bot', 'user'].includes(channel.as)) throw new Error('飞书发送身份未配置');
   if (Boolean(channel.chatId) === Boolean(channel.userId)) throw new Error('飞书必须配置一个群聊 ID 或用户 ID');
 
-  const idempotencyKey = createHash('sha256')
-    .update(`${card.id}:${card.expiresAt}:${snoozeTargetAt ?? `${days}d`}:feishu`).digest('hex').slice(0, 48);
+  const idempotencyKey = feishuReminderIdempotencyKey(card, days, snoozeTargetAt);
   const args = ['im', '+messages-send', '--profile', channel.profile || 'codex-reset-monitor', '--as', channel.as,
     channel.chatId ? '--chat-id' : '--user-id', channel.chatId || channel.userId,
     '--msg-type', 'interactive', '--content', JSON.stringify(buildFeishuCard(card, days,

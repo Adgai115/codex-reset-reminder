@@ -145,4 +145,17 @@ test('workspace identity takes precedence when the protocol provides it', async 
   assert.equal((await checkAccount(configPath, { appServer: read(null) })).state, 'unidentified');
 });
 
+test('a newly unscoped Codex row cannot be silently merged into the bound scope', () => {
+  const db = openStore();
+  try {
+    const scopeId = getActiveAccountScope(db).scopeId;
+    db.prepare(`INSERT INTO cards (id, source, title, expires_at, status, updated_at)
+      VALUES (?, 'codex', ?, ?, 'available', ?)`).run('foreign-unscoped', '未归属卡', expiry, 1);
+    assert.throws(() => saveCodexSnapshot(db, { availableCount: 1, credits: [
+      { id: 'foreign-unscoped', status: 'available', title: '未归属卡', expiresAt: expiry },
+    ] }, Math.floor(Date.now() / 1000), scopeId), /归属账号不一致/);
+    assert.equal(getCard(db, 'foreign-unscoped').accountScopeId, null);
+  } finally { db.close(); }
+});
+
 process.on('exit', () => rmSync(directory, { recursive: true, force: true }));

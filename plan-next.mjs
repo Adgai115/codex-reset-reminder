@@ -67,13 +67,16 @@ export function planCardNextCheck(db, card, { channels = ['desktop'], quiet = nu
 }
 
 export function planNextCheck(db, { feishuEnabled = false, wechatEnabled = false,
-  channels = null, quiet = null, nowSeconds = Math.floor(Date.now() / 1000) } = {}) {
+  channels = null, quiet = null, nowSeconds = Math.floor(Date.now() / 1000),
+  accountScopeId = null } = {}) {
   let nextAt = null;
   let reason = null;
   const completeSyncAt = latestCompleteSync(db)?.checkedAt ?? 0;
   const activeChannels = channels ?? ['desktop',
     ...(feishuEnabled ? ['feishu'] : []), ...(wechatEnabled ? ['wechat'] : [])];
   for (const card of listCards(db)) {
+    if (card.source === 'codex' && accountScopeId
+      && card.accountScopeId !== accountScopeId) continue;
     const plan = planCardNextCheck(db, card,
       { channels: activeChannels, quiet, nowSeconds, completeSyncAt });
     if (plan.nextAt !== null && (nextAt === null || plan.nextAt < nextAt)) {

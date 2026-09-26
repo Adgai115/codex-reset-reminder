@@ -140,6 +140,7 @@ async function stopTree(child) {
 
 const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
 const setupOnly = process.argv.includes('--setup');
+const p0Only = process.argv.includes('--p0');
 const background = process.argv.includes('--background');
 const nativeDialogs = process.platform === 'win32' && process.argv.includes('--native-dialogs');
 let child;
@@ -163,19 +164,29 @@ try {
   // 用隔离的假卡和不存在的 Codex 命令，保证测试不会消耗真实卡或发送消息。
   if (!setupOnly) {
     process.env.CODEX_RESET_MONITOR_DATA_DIR = profile;
-    const { openStore, addManualCard } = await import('../core/store.mjs');
+    const { openStore, addManualCard, recordReminderResult } = await import('../core/store.mjs');
     const db = openStore();
     try {
       const now = Math.floor(Date.now() / 1000);
-      addManualCard(db, { title: 'CI 演示重置卡', expiresAt: now + 10 * 86400 });
-      addManualCard(db, { title: 'CI 即将到期卡', expiresAt: now + 3600 });
-      const expired = addManualCard(db, { title: 'CI 过期卡', expiresAt: now + 60 });
-      db.prepare('UPDATE cards SET expires_at = ? WHERE id = ?').run(now - 60, expired);
+      if (p0Only) {
+        const expiresAt = now + 7 * 86400;
+        const cardId = addManualCard(db, { title: 'CI 补发演示卡', expiresAt });
+        recordReminderResult(db, { cardId, expiresAt, nodeKind: 'fixed', nodeAt: now,
+          thresholdDays: 7 }, 'desktop', { state: 'failed', attemptedAt: now,
+          nextRetryAt: now + 3600, errorCode: 'send_failed',
+          errorText: '桌面弹窗失败；请在提醒设置中测试桌面弹窗。' });
+      } else {
+        addManualCard(db, { title: 'CI 演示重置卡', expiresAt: now + 10 * 86400 });
+        addManualCard(db, { title: 'CI 即将到期卡', expiresAt: now + 3600 });
+        const expired = addManualCard(db, { title: 'CI 过期卡', expiresAt: now + 60 });
+        db.prepare('UPDATE cards SET expires_at = ? WHERE id = ?').run(now - 60, expired);
+      }
     }
     finally { db.close(); }
     const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
     config.codexScript = join(profile, 'codex-does-not-exist');
-    config.desktop.enabled = false;
+    config.desktop.enabled = p0Only;
+    if (p0Only) config.reminders.quietHours.enabled = false;
     config.feishu.enabled = false;
     await writeFile(join(profile, 'config.json'), JSON.stringify(config));
   }
@@ -238,6 +249,41 @@ try {
     assert.match(probeText, /未找到 Codex CLI/);
     await screenshot(setup, 'setup');
     console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
+  } else if (p0Only) {
+    const manage = await page(port, '/ui/manage/index.html', child, deadline);
+    await until(manage, `document.querySelector('#cards tbody')?.textContent.includes('CI 补发演示卡')
+      && document.querySelector('#cards tbody')?.textContent.includes('桌面等待重试')`, '补发结果展示');
+    await until(manage, `document.querySelector('#account-status')?.textContent.includes('无法读取 Codex 账号身份')`,
+      '账号不可核实提示');
+    const initial = await evaluate(manage, `({
+      account: document.querySelector('#account-status').textContent,
+      retry: Array.from(document.querySelectorAll('#cards tbody button')).some(button => button.textContent === '重试失败渠道' && !button.disabled),
+      error: document.querySelector('#cards tbody').textContent.includes('桌面弹窗失败')
+    })`);
+    assert.match(initial.account, /无法读取 Codex 账号身份/);
+    assert.equal(initial.retry, true);
+    assert.equal(initial.error, true);
+    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    await until(manage, `document.querySelector('#notice').textContent.includes('无法读取 Codex 账号身份')`, '账号重新核对结果');
+    const progress = await evaluate(manage, `(() => {
+      const button = Array.from(document.querySelectorAll('#cards tbody button'))
+        .find(item => item.textContent === '重试失败渠道');
+      button.click();
+      return { notice: document.querySelector('#notice').textContent, disabled: button.disabled };
+    })()`);
+    assert.match(progress.notice, /正在补发/);
+    assert.equal(progress.disabled, true);
+    const reminderTab = await page(port, '/ui/reminder/index.html', child, deadline);
+    await until(manage, `document.querySelector('#cards tbody').textContent.includes('桌面已弹出')
+      && document.querySelector('#notice').textContent.includes('补发完成')`, '补发结果刷新');
+    assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
+      .some(button => button.textContent === '重试失败渠道')`), false);
+    await screenshot(manage, 'p0-results');
+    await triggerWindow(reminderTab, `document.querySelector('#close').click(); true`);
+    await untilClosed(port, '/ui/reminder/index.html');
+    assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs),
+      '新增界面出现未处理脚本错误');
+    console.log(`P0 界面检查通过：${process.platform}，结果、账号状态、加载态和失败渠道补发`);
   } else {
   let cards;
   do {

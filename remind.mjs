@@ -16,7 +16,7 @@ const directory = dirname(fileURLToPath(import.meta.url));
 export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   configPath = join(directory, 'config.json'), desktop = showNotification,
   feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false,
-  trackAttempts = false, manualRetry = null, allowCodex = true } = {}) {
+  trackAttempts = false, manualRetry = null, allowCodex = true, accountScopeId = null } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
@@ -53,7 +53,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     const syncedCount = lastCompleteSync?.availableCount ?? null;
     const syncedAt = lastCompleteSync?.checkedAt ?? null;
     for (const card of cards) {
-      if (card.source === 'codex' && !allowCodex) continue;
+      if (card.source === 'codex' && (!allowCodex
+        || (accountScopeId && card.accountScopeId !== accountScopeId))) continue;
       const days = dueThreshold(card.expiresAt, nowSeconds);
       if (days === null) continue;
       const nodeAt = card.expiresAt - days * 86400;
@@ -116,7 +117,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     for (const snooze of listDueSnoozes(db, nowSeconds)) {
       const card = cards.find((item) => item.id === snooze.cardId);
       if (!card) continue;
-      if (card.source === 'codex' && !allowCodex) continue;
+      if (card.source === 'codex' && (!allowCodex
+        || (accountScopeId && card.accountScopeId !== accountScopeId))) continue;
       if (nowSeconds < deliveryTime(snooze.targetAt, card.expiresAt, quiet)) continue;
       const days = dueThreshold(card.expiresAt, nowSeconds);
       if (days !== null && snooze.targetAt < card.expiresAt - days * 86400) {

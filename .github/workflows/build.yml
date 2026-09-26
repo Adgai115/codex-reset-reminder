@@ -43,6 +43,9 @@ jobs:
       - name: Smoke packaged UI (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/smoke-packaged.mjs
+      - name: Smoke P0 reminder flow (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-packaged.mjs --p0
       - name: Smoke packaged sidecar (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/smoke-packaged.mjs --background
@@ -54,6 +57,9 @@ jobs:
       - name: Smoke packaged UI
         if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs
+      - name: Smoke P0 reminder flow
+        if: runner.os != 'Linux'
+        run: node scripts/smoke-packaged.mjs --p0
       - name: Smoke packaged sidecar
         if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs --background

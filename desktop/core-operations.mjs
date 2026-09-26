@@ -26,10 +26,10 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
     return protectedSync(configPath());
   }
   if (op === 'runReminders') {
-    let allowCodex = false;
-    try { await verifiedScope(); allowCodex = true; } catch { /* 手动卡仍可提醒。 */ }
+    let accountScopeId = null;
+    try { accountScopeId = await verifiedScope(); } catch { /* 手动卡仍可提醒。 */ }
     return runReminders({ configPath: configPath(), desktop, trackAttempts: true,
-      ...args, allowCodex });
+      ...args, allowCodex: Boolean(accountScopeId), accountScopeId });
   }
   if (op === 'preflightSync') {
     return preflightSync({ configPath: configPath(),
@@ -57,6 +57,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const confirmed = store.latestCompleteSync(db);
         const account = accountStatus(db);
+        const boundScopeId = store.getActiveAccountScope(db)?.scopeId ?? null;
         const options = { channels, quiet: quietHours(config), nowSeconds,
           completeSyncAt: confirmed?.checkedAt ?? 0 };
         const nodeIsCurrent = (card, snooze, result) => {
@@ -70,7 +71,8 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
             && (days === null || snooze.targetAt >= card.expiresAt - days * 86400);
         };
         return { channels, latest: store.latestSync(db), confirmed, account,
-          cards: store.listCards(db, true).map((card) => {
+          cards: store.listCards(db, true).filter((card) => card.source === 'manual'
+            || !boundScopeId || card.accountScopeId === boundScopeId).map((card) => {
             const snooze = store.getSnooze(db, card.id);
             return { ...card, snooze,
               deliveryResults: store.listReminderResults(db, card.id).map((result) => {
@@ -92,14 +94,19 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
             };
           }) };
       }
-      case 'listCards': return store.listCards(db, args.includeInactive === true);
+      case 'listCards': {
+        const boundScopeId = store.getActiveAccountScope(db)?.scopeId ?? null;
+        return store.listCards(db, args.includeInactive === true).filter((card) =>
+          card.source === 'manual' || !boundScopeId || card.accountScopeId === boundScopeId);
+      }
       case 'getCard': return store.getCard(db, value(args.cardId));
       case 'latestSync': return store.latestSync(db);
       case 'latestCompleteSync': return store.latestCompleteSync(db);
       case 'dueUsageVerifications': return store.listDueUsageVerifications(db);
       case 'planNextCheck': {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
-        return planNextCheck(db, { channels: enabledChannels(config), quiet: quietHours(config) });
+        return planNextCheck(db, { channels: enabledChannels(config), quiet: quietHours(config),
+          accountScopeId: store.getActiveAccountScope(db)?.scopeId ?? null });
       }
       case 'snooze': return store.getSnooze(db, value(args.cardId));
       case 'addManualCard': return { id: store.addManualCard(db, {

@@ -61,7 +61,7 @@ export function syncDescription(snapshot, now = Date.now() / 1000) {
 
 export function accountDescription(account) {
   if (!account || account.state === 'checking') return 'Codex 账号待核对，Codex 卡操作暂不可用。';
-  if (account.state === 'verified') return `已绑定并核对：${account.boundDisplay}`;
+  if (account.state === 'verified') return `缓存绑定 ${account.boundDisplay} · 最近核对 ${formatTime(account.verifiedAt)}`;
   if (account.state === 'needsBinding') return `发现现有 Codex 缓存。当前 CLI：${account.currentDisplay}。请确认这是原账号后绑定。`;
   if (account.state === 'mismatch') return `账号不一致：缓存绑定 ${account.boundDisplay}，当前 CLI ${account.currentDisplay}。请切回原账号并重新核对。`;
   if (account.state === 'unidentified') return 'Codex 未提供可辨认的账号身份；请检查 CLI 登录方式并重新核对。';
