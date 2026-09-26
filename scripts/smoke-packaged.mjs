@@ -48,11 +48,12 @@ async function page(port, suffix, child, deadline) {
 
 async function evaluate(tab, expression) {
   const socket = new WebSocket(tab.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true });
-    socket.addEventListener('error', reject, { once: true });
-  });
   try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('无法连接渲染进程调试端口')), 5000);
+      socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      socket.addEventListener('error', (error) => { clearTimeout(timer); reject(error); }, { once: true });
+    });
     const id = 1;
     const result = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('渲染进程没有响应')), 5000);
@@ -71,14 +72,23 @@ async function evaluate(tab, expression) {
 }
 
 async function stopTree(child) {
-  if (!child || child.exitCode !== null) return;
+  if (!child) return;
   if (process.platform === 'win32') {
     await new Promise((resolve) => spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'],
       { windowsHide: true, stdio: 'ignore' }).once('close', resolve));
   } else {
     try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill(); }
   }
-  await Promise.race([new Promise((resolve) => child.once('close', resolve)), sleep(5000)]);
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 3000);
+    child.once('close', () => { clearTimeout(timer); resolve(); });
+  });
+  if (process.platform !== 'win32') {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 进程组已退出。 */ }
+  }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.unref();
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
@@ -109,6 +119,7 @@ try {
   });
   child.stdout.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
   child.stderr.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
+  console.log(`已启动 ${process.platform} 安装包，等待卡片管理窗口`);
   const deadline = Date.now() + 45000;
   let cards;
   do {
@@ -120,6 +131,7 @@ try {
   assert.ok(cards.bridge, 'preload 没有加载');
   assert.ok(cards.rows.some((row) => row.includes('CI 演示重置卡')), `卡片没有显示：${JSON.stringify(cards)}`);
   assert.ok(!cards.status?.includes('读取失败'), `卡片读取失败：${cards.status}`);
+  console.log('卡片管理窗口已显示演示卡，检查设置窗口');
   const manage = await page(port, '/ui/manage/index.html', child, deadline);
   await evaluate(manage, 'window.api.openSettings().then(() => true)');
   let settings;
@@ -141,3 +153,5 @@ try {
   await stopTree(child);
   await rm(profile, { recursive: true, force: true });
 }
+// Electron 的渲染子进程可能继承测试脚本的管道；完成清理后直接退出。
+process.exit(process.exitCode || 0);
