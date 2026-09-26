@@ -15,6 +15,7 @@ import { readSettings, saveSettings, connectFeishu } from './settings.mjs';
 import { setAutoStart } from './autostart.mjs';
 import { diagnoseLocal, probeCodex } from './diagnostics.mjs';
 import { checkForUpdates, releasePageFor } from './update-check.mjs';
+import { repairCodexPath } from './cli-repair.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
@@ -36,6 +37,37 @@ if (!gotLock) {
   let settingsWindow = null;
   let trayRefreshTimer = null;
   let availableUpdate = null;
+  let refreshTray = null;
+  let stateTimer = null;
+  let settingsDraft = { dirty: false, working: false };
+  let closingSettings = false;
+  let choosingClose = false;
+
+  function stateChanged() {
+    if (quitting) return;
+    clearTimeout(stateTimer);
+    stateTimer = setTimeout(() => {
+      if (manageWindow && !manageWindow.isDestroyed()) manageWindow.webContents.send('state:changed');
+      refreshTray?.();
+    }, 120);
+  }
+
+  async function discardSettings() {
+    if (settingsDraft.working) {
+      settingsWindow?.show(); settingsWindow?.focus();
+      await dialog.showMessageBox(settingsWindow, { type: 'info', message: '正在保存或连接，请稍候再关闭。' });
+      return false;
+    }
+    if (!settingsDraft.dirty) return true;
+    const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
+      message: '提醒设置尚未保存', detail: '关闭会放弃本次修改，已保存的提醒继续生效。',
+      buttons: ['继续编辑', '放弃修改'], defaultId: 0, cancelId: 0 });
+    return response === 1;
+  }
+
+  async function requestQuit() {
+    if (await discardSettings()) { quitting = true; app.quit(); }
+  }
 
   app.on('second-instance', () => {
     if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); }
@@ -44,7 +76,7 @@ if (!gotLock) {
 
   function createManageWindow() {
     const window = new BrowserWindow({
-      width: 860, height: 560, show: false,
+      width: 1000, height: 650, minWidth: 800, minHeight: 480, show: false,
       title: 'Codex 重置卡提醒',
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       autoHideMenuBar: true,
@@ -57,8 +89,19 @@ if (!gotLock) {
     });
     window.loadFile(join(projectRoot, 'ui', 'manage', 'index.html'));
     window.once('ready-to-show', () => window.show());
-    window.on('close', (event) => {
-      if (!quitting) { event.preventDefault(); window.hide(); } // close hides to tray
+    window.on('close', async (event) => {
+      if (quitting) return;
+      event.preventDefault();
+      if (choosingClose) return;
+      choosingClose = true;
+      try {
+        const { response } = await dialog.showMessageBox(window, { type: 'question', noLink: true,
+          message: '关闭窗口后，是否继续提醒？',
+          detail: '收起到托盘会继续检查到期时间和飞书交互；退出应用会停止本机的全部提醒。',
+          buttons: ['收起到托盘', '退出应用', '取消'], defaultId: 0, cancelId: 2 });
+        if (response === 0) { settingsWindow?.hide(); window.hide(); }
+        else if (response === 1) await requestQuit();
+      } finally { choosingClose = false; }
     });
     window.on('minimize', (event) => { event.preventDefault(); window.hide(); });
     return window;
@@ -66,13 +109,15 @@ if (!gotLock) {
 
   function showManage() {
     if (!manageWindow || manageWindow.isDestroyed()) manageWindow = createManageWindow();
-    else { manageWindow.show(); manageWindow.focus(); }
+    else { if (manageWindow.isMinimized()) manageWindow.restore(); manageWindow.show(); manageWindow.focus(); }
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.show();
+    stateChanged();
   }
 
   function showSetup() {
     if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); return; }
     setupWindow = new BrowserWindow({
-      width: 580, height: 460, show: false, resizable: false,
+      width: 620, height: 560, minWidth: 560, minHeight: 480, show: false,
       title: 'Codex 重置卡提醒 · 安装与连接',
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       autoHideMenuBar: true,
@@ -87,7 +132,7 @@ if (!gotLock) {
   function showSettings() {
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
     settingsWindow = new BrowserWindow({
-      width: 660, height: 700, show: false, title: 'Codex 重置卡提醒 · 提醒设置',
+      width: 660, height: 700, minWidth: 560, minHeight: 500, show: false, title: 'Codex 重置卡提醒 · 提醒设置',
       parent: manageWindow, autoHideMenuBar: true,
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       webPreferences: { preload: join(directory, 'preload.cjs'), contextIsolation: true,
@@ -95,7 +140,19 @@ if (!gotLock) {
     });
     settingsWindow.loadFile(join(projectRoot, 'ui', 'settings', 'index.html'));
     settingsWindow.once('ready-to-show', () => settingsWindow.show());
-    settingsWindow.on('closed', () => { settingsWindow = null; });
+    let confirming = false;
+    settingsWindow.on('close', async (event) => {
+      if (quitting || closingSettings || (!settingsDraft.dirty && !settingsDraft.working)) return;
+      event.preventDefault();
+      if (confirming) return;
+      confirming = true;
+      try {
+        if (await discardSettings()) { closingSettings = true; settingsWindow.close(); }
+      } finally { confirming = false; }
+    });
+    settingsWindow.on('closed', () => {
+      settingsWindow = null; settingsDraft = { dirty: false, working: false }; closingSettings = false;
+    });
   }
 
   function createTray() {
@@ -106,19 +163,20 @@ if (!gotLock) {
     const refreshMenu = async () => {
       let summary = '状态不可用';
       try {
-        const cards = await coreRequest('listCards');
+        const cards = (await coreRequest('listCards')).filter((card) => card.expiresAt > Date.now() / 1000);
         const latest = await coreRequest('latestSync');
         const count = cards.length;
         const next = cards[0];
         summary = `${count} 张可用 · 最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'} · 上次核对：${latest ? new Date(latest.checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
       } catch (error) { summary = `读取失败：${error.message}`; }
+      if (quitting || tray.isDestroyed()) return;
       tray.setToolTip(`Codex 重置卡提醒\n${summary}`);
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开卡片管理', click: () => showManage() },
         { label: '提醒设置', click: () => showSettings() },
         { label: summary, enabled: false },
         { type: 'separator' },
-        { label: '退出', click: () => { quitting = true; app.quit(); } },
+        { label: '退出应用（停止提醒）', click: () => requestQuit() },
       ]));
     };
     refreshMenu();
@@ -126,7 +184,7 @@ if (!gotLock) {
   }
 
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
-  const allowedOperations = new Set(['listCards', 'getCard', 'latestSync', 'latestCompleteSync',
+  const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
     'snooze', 'addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed',
     'scheduleSnooze', 'clearSnooze', 'syncCards']);
   const mutatingOperations = new Set(['addManualCard', 'updateManualCard', 'markManualUsed',
@@ -137,7 +195,8 @@ if (!gotLock) {
     }
     if (op === 'syncCards' && scheduler) return scheduler.sync('manual');
     const result = await coreRequest(op, args);
-    if (mutatingOperations.has(op)) scheduler?.check('card-change');
+    if (op === 'manageSnapshot') return { ...result, syncing: scheduler?.isSyncing() === true };
+    if (mutatingOperations.has(op)) { stateChanged(); scheduler?.check('card-change'); }
     return result;
   });
   ipcMain.handle('core:status', (event) => {
@@ -155,9 +214,9 @@ if (!gotLock) {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
     showSettings();
   });
-  ipcMain.handle('settings:read', (event) => {
+  ipcMain.handle('settings:read', async (event) => {
     checkSettingsPage(event);
-    return readSettings(currentConfigPath());
+    return { ...await readSettings(currentConfigPath()), version: app.getVersion() };
   });
   ipcMain.handle('settings:listenerStatus', (event) => {
     checkSettingsPage(event);
@@ -171,6 +230,17 @@ if (!gotLock) {
     checkSettingsPage(event);
     const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
     return probeCodex(config.codexScript);
+  });
+  ipcMain.handle('settings:repairCodex', async (event) => {
+    checkSettingsPage(event);
+    const selection = await dialog.showOpenDialog(settingsWindow, { title: '重新选择已登录的 Codex CLI',
+      properties: ['openFile'], filters: process.platform === 'win32'
+        ? [{ name: 'Codex CLI', extensions: ['js', 'exe'] }, { name: '所有文件', extensions: ['*'] }] : [] });
+    if (selection.canceled) return null;
+    const result = await repairCodexPath(currentConfigPath(), selection.filePaths[0]);
+    scheduler?.sync('connection-repaired').catch((error) => console.warn(`[scheduler] ${error.message}`));
+    stateChanged();
+    return result;
   });
   ipcMain.handle('settings:checkUpdates', async (event) => {
     checkSettingsPage(event);
@@ -190,7 +260,13 @@ if (!gotLock) {
     if (settings.feishuEnabled) callbackListener?.start().catch((error) => console.warn(`[feishu] ${error.message}`));
     else callbackListener?.stop();
     scheduler?.check('settings-change');
+    settingsDraft = { dirty: false, working: false };
+    stateChanged();
     return settings;
+  });
+  ipcMain.handle('settings:draft', (event, state) => {
+    checkSettingsPage(event);
+    settingsDraft = { dirty: state?.dirty === true, working: state?.working === true };
   });
   ipcMain.handle('settings:close', (event) => {
     checkSettingsPage(event);
@@ -242,7 +318,11 @@ if (!gotLock) {
     const configPath = process.env.CODEX_RESET_MONITOR_CONFIG_PATH;
     await initializeConfig({ codexScript: options?.codexScript, configPath,
       examplePath: join(projectRoot, 'config.example.json') });
-    await setAutoStart(options?.autoStartEnabled === true);
+    try { await setAutoStart(options?.autoStartEnabled === true); }
+    catch (error) {
+      await dialog.showMessageBox(setupWindow, { type: 'warning', message: 'Codex 已连接，但登录自启设置失败',
+        detail: `${error.message}\n可以先使用应用，再到提醒设置中重新启用。` });
+    }
     setTimeout(() => {
       startRuntime().then(() => { if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close(); })
         .catch((error) => dialog.showErrorBox('启动失败', error.message));
@@ -252,17 +332,20 @@ if (!gotLock) {
 
   async function startRuntime() {
     if (scheduler) return;
-    scheduler = createScheduler({ coreRequest });
-    reminders = createReminderManager({ coreRequest, onScheduleChanged: scheduler.reschedule });
+    scheduler = createScheduler({ coreRequest, onChanged: stateChanged });
+    const onChanged = () => { stateChanged(); scheduler.reschedule(); };
+    reminders = createReminderManager({ coreRequest, onScheduleChanged: onChanged });
     setDesktopPresenter(reminders.present);
-    const refreshMenu = createTray();
-    showManage();
-    trayRefreshTimer = setInterval(refreshMenu, 60_000);
+    refreshTray = createTray();
+    const background = process.argv.includes('--background') || (process.platform === 'darwin'
+      && app.getLoginItemSettings().wasOpenedAtLogin);
+    if (!background || setupWindow) showManage();
+    trayRefreshTimer = setInterval(refreshTray, 60_000);
     scheduler.start();
     const { databasePath } = await import('../core/store.mjs');
     callbackListener = createCallbackListener({
       configPath: process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(projectRoot, 'config.json'),
-      databasePath, coreRequest, onChanged: scheduler.reschedule,
+      databasePath, coreRequest, onChanged,
     });
     callbackListener.start().catch((error) => console.warn(`[feishu] ${error.message}`));
   }
@@ -308,6 +391,7 @@ if (!gotLock) {
     callbackListener?.stop();
     reminders?.closeAll();
     clearInterval(trayRefreshTimer);
+    clearTimeout(stateTimer);
   });
   app.on('window-all-closed', () => { /* stay in tray */ });
   app.on('activate', () => {

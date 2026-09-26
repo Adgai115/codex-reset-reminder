@@ -2,197 +2,99 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <title>Codex 重置卡提醒</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light dark; --bg: #f5f7fb; --surface: #fff; --ink: #202f43; --muted: #607089;
+    --line: #dce3ed; --accent: #245bcc; --tint: #edf3ff; --danger: #b84221; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#171c25; --surface:#202734; --ink:#e2e9f4;
+    --muted:#a5b3c8; --line:#3b475a; --accent:#91b4ff; --tint:#293852; --danger:#ffb49e; } }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0;
-    background: Canvas; color: CanvasText; font-size: 14px; }
-  header { padding: 14px 20px; border-bottom: 1px solid graytext; display: flex;
-    justify-content: space-between; align-items: center; }
-  header h1 { font-size: 16px; margin: 0; }
-  #sync-status { opacity: .75; font-size: 12px; }
-  main { padding: 12px 20px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, graytext 35%, transparent); }
-  th { font-weight: 600; opacity: .8; }
-  tr:hover td { background: color-mix(in srgb, highlight 8%, transparent); }
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
-    background: color-mix(in srgb, highlight 15%, transparent); }
-  .badge.warn { background: color-mix(in srgb, crimson 18%, transparent); }
-  .empty { padding: 40px; text-align: center; opacity: .6; }
-  #mode { font-size: 11px; opacity: .5; }
-  button { cursor: pointer; padding: 6px 10px; margin-left: 4px; }
-  button:disabled { opacity: .6; cursor: wait; }
-  #notice { min-height: 22px; color: #197449; }
-  #notice.error { color: #b42318; }
-  dialog { border: 1px solid #cbd5e1; border-radius: 12px; padding: 22px; width: 380px; }
-  dialog::backdrop { background: #1b263780; }
-  dialog label { display: block; margin: 12px 0; }
-  dialog input, dialog select { display: block; width: 100%; padding: 8px; margin-top: 5px; }
-  .actions { white-space: nowrap; }
-  .actions button { font-size: 12px; padding: 4px 6px; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; }
+  header { padding:24px 26px 16px; display:flex; justify-content:space-between; gap:18px; align-items:start; }
+  h1 { font-size:23px; margin:0 0 5px; letter-spacing:-.5px; }
+  h2 { font-size:20px; margin:0 0 16px; }
+  p { margin:4px 0; }
+  #sync-status { color:var(--muted); font-size:12px; max-width:560px; }
+  .toolbar { display:flex; gap:8px; flex-shrink:0; }
+  main { padding:0 26px 24px; }
+  button, input, select { font:inherit; border:1px solid var(--line); border-radius:7px; padding:8px 12px; background:var(--surface); color:var(--ink); }
+  button { cursor:pointer; transition:background .15s, border-color .15s; }
+  button:hover:not(:disabled) { background:var(--tint); border-color:var(--accent); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:#245bcc; color:white; border-color:#245bcc; }
+  button.primary:hover:not(:disabled) { background:#194dab; }
+  .filterbar { display:flex; justify-content:space-between; align-items:center; padding:10px 0 15px; gap:16px; }
+  .filters { display:flex; gap:5px; }
+  .filters button { background:transparent; border-color:transparent; }
+  .filters button[aria-pressed=true] { background:var(--surface); border-color:var(--line); font-weight:600; }
+  #channel-status { color:var(--muted); font-size:12px; }
+  #notice { min-height:30px; padding-bottom:8px; color:var(--accent); overflow-wrap:anywhere; }
+  .error, #notice.error { color:var(--danger); }
+  .table-wrap { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:auto; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  th, td { text-align:left; padding:14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; font-weight:500; padding-top:11px; padding-bottom:11px; }
+  tr:last-child td { border-bottom:0; }
+  th:nth-child(1) { width:34%; } th:nth-child(2) { width:21%; } th:nth-child(3) { width:19%; } th:nth-child(4) { width:26%; }
+  td { overflow-wrap:anywhere; }
+  .card-name { font-weight:600; }
+  .sub { color:var(--muted); font-size:12px; margin-top:6px; }
+  .identity { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  .time { font-variant-numeric:tabular-nums; font-size:13px; }
+  .badge { display:inline-block; padding:2px 7px; border-radius:4px; background:var(--tint); color:var(--accent); font-size:12px; }
+  .badge.urgent { color:var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
+  .badge.muted { color:var(--muted); background:var(--bg); }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { font-size:12px; padding:4px 7px; }
+  .empty { padding:44px 20px; text-align:center; color:var(--muted); }
+  .footnote { margin-top:14px; color:var(--muted); font-size:12px; }
+  dialog { border:1px solid var(--line); border-radius:12px; padding:24px; width:420px; max-width:90vw; color:var(--ink); background:var(--surface); }
+  dialog::backdrop { background:#101d376b; }
+  dialog label { display:block; margin:14px 0; }
+  dialog input, dialog select { display:block; width:100%; margin-top:6px; }
+  dialog footer { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
+  dialog .error { min-height:22px; font-size:13px; }
+  [hidden] { display:none !important; }
+  @media (max-width:850px) { header { flex-wrap:wrap; } th,td { padding:10px; } }
+  @media (prefers-reduced-motion:reduce) { button { transition:none; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>卡片管理 <span id="mode"></span></h1>
-  <div>
-    <span id="sync-status">加载中…</span>
-    <button id="settings">提醒设置</button>
-    <button id="add">新增手动卡</button>
-    <button id="sync">立即同步 Codex</button>
-  </div>
+  <div><h1>重置卡管理</h1><p id="sync-status" role="status">正在读取本地卡片…</p></div>
+  <div class="toolbar"><button id="settings">提醒设置</button><button id="sync" class="primary">立即同步 Codex</button></div>
 </header>
 <main>
+  <div class="filterbar">
+    <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="history-filter" aria-pressed="false">历史卡</button></div>
+    <span id="channel-status"></span><button id="add">新增手动卡</button>
+  </div>
   <div id="notice" role="status" aria-live="polite"></div>
-  <table id="cards">
-    <thead><tr><th>名称</th><th>编号</th><th>到期时间</th><th>状态</th><th>稍后提醒</th><th>操作</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div id="empty" class="empty" hidden>没有卡片。可以新增手动卡，或同步 Codex。</div>
+  <div class="table-wrap">
+    <table id="cards"><thead><tr><th>卡片</th><th>到期时间 / 本地</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <div id="empty" class="empty" hidden></div>
+  </div>
+  <p class="footnote">提前 7 / 3 / 1 天提醒；延期只改变提醒时间。收起到托盘后仍会提醒，退出应用后停止。</p>
 </main>
-<dialog id="card-dialog"><form id="card-form">
+<dialog id="card-dialog" aria-labelledby="dialog-title"><form id="card-form">
   <h2 id="dialog-title">新增手动卡</h2>
+  <p class="sub">手动卡保存在本机，用于补充未自动读取的到期提醒。</p>
   <label>卡片名称<input id="card-title" required maxlength="120"></label>
   <label>到期时间（本地）<input id="card-expiry" type="datetime-local" required></label>
-  <button type="button" id="cancel-card">取消</button><button>保存</button>
+  <p id="card-error" class="error" role="alert"></p>
+  <footer><button type="button" id="cancel-card">取消</button><button class="primary" id="save-card">保存</button></footer>
 </form></dialog>
-<dialog id="snooze-dialog"><form id="snooze-form">
-  <h2>稍后提醒</h2><p id="snooze-title"></p>
-  <label>提醒时间<select id="snooze-option"><option value="1d">1 天后</option><option value="3d">3 天后</option><option value="tomorrow10">明天 10:00</option></select></label>
-  <button type="button" id="cancel-snooze">取消</button><button>确认延期</button>
+<dialog id="snooze-dialog" aria-labelledby="snooze-heading"><form id="snooze-form">
+  <h2 id="snooze-heading">稍后提醒</h2><p id="snooze-title"></p>
+  <label>提醒时间<select id="snooze-option"></select></label>
+  <p class="sub">仅显示到期前可用的选项；延期期间经过的固定节点不会重复提醒。</p>
+  <p id="snooze-error" class="error" role="alert"></p>
+  <footer><button type="button" id="cancel-snooze">取消</button><button class="primary" id="save-snooze">确认延期</button></footer>
 </form></dialog>
-<script>
-  const $ = (id) => document.getElementById(id);
-  const tbody = document.querySelector('#cards tbody');
-  let editing = null;
-  let snoozing = null;
-  let busy = false;
-  const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : '—';
-  const addText = (parent, tag, content, className = '') => {
-    const element = document.createElement(tag);
-    element.textContent = content;
-    if (className) element.className = className;
-    parent.appendChild(element);
-    return element;
-  };
-  function notice(message, error = false) {
-    $('notice').textContent = message;
-    $('notice').classList.toggle('error', error);
-  }
-  async function action(op, args, success) {
-    if (busy) return null;
-    busy = true;
-    try {
-      const result = await window.api.core(op, args);
-      await load();
-      notice(success);
-      return result;
-    } catch (error) { notice(error.message, true); return null; }
-    finally { busy = false; }
-  }
-  function addButton(parent, label, callback) {
-    addText(parent, 'button', label).addEventListener('click', callback);
-  }
-  async function load() {
-    if (!window.api) throw new Error('应用桥接未加载');
-    const [status, cards, latest, confirmed] = await Promise.all([
-      window.api.coreStatus(), window.api.core('listCards', { includeInactive: true }),
-      window.api.core('latestSync'), window.api.core('latestCompleteSync'),
-    ]);
-    $('mode').textContent = status.mode === 'in-process' ? '（内置 core）' : '（兼容模式）';
-    $('sync-status').textContent = latest
-      ? latest.outcome === 'complete'
-        ? `上次核对：${fmt(latest.checkedAt)} · ${latest.availableCount} 张可用`
-        : `${latest.outcome === 'failed' ? '上次同步失败' : '详情不完整'} · ${confirmed
-          ? `上次确认 ${confirmed.availableCount} 张（${fmt(confirmed.checkedAt)}）` : '尚无确认数据'}`
-      : '尚未同步';
-    tbody.replaceChildren();
-    for (const card of cards) {
-      const snooze = card.status === 'available' ? await window.api.core('snooze', { cardId: card.id }) : null;
-      const row = document.createElement('tr');
-      addText(row, 'td', card.title);
-      const idCell = addText(row, 'td', card.id.length > 24 ? `${card.id.slice(0, 24)}…` : card.id);
-      idCell.title = card.id;
-      addText(row, 'td', fmt(card.expiresAt));
-      const days = Math.max(0, Math.ceil((card.expiresAt - Date.now() / 1000) / 86400));
-      addText(addText(row, 'td', ''), 'span', card.status === 'available' ? `可用 · ${days} 天` :
-        card.status === 'used' ? '已使用' : '不可用',
-      `badge ${card.status === 'available' && days <= 3 ? 'warn' : ''}`);
-      addText(row, 'td', snooze?.expiresAt === card.expiresAt ? fmt(snooze.targetAt) : '—');
-      const buttons = addText(row, 'td', '', 'actions');
-      if (card.status === 'available') {
-        addButton(buttons, '稍后提醒', () => {
-          snoozing = card;
-          $('snooze-title').textContent = card.title;
-          $('snooze-dialog').showModal();
-        });
-        if (snooze?.expiresAt === card.expiresAt) {
-          addButton(buttons, '取消延期', () => action('clearSnooze', { cardId: card.id }, '已取消延期提醒'));
-        }
-        if (card.source === 'manual') {
-          addButton(buttons, '编辑', () => openCardDialog(card));
-          addButton(buttons, '已使用', () => {
-            if (confirm(`确认将“${card.title}”标记为已使用？`))
-              action('markManualUsed', { cardId: card.id }, '手动卡已标记为已使用');
-          });
-        } else if (!card.reportedUsedAt) {
-          addButton(buttons, '反馈已使用', () => {
-            if (confirm('这只记录使用反馈；下一次同步会核验 Codex 可用数量。继续吗？'))
-              action('reportCardUsed', { cardId: card.id }, '已记录反馈，等待 Codex 核验');
-          });
-        }
-      }
-      tbody.appendChild(row);
-    }
-    $('empty').hidden = cards.length > 0;
-    $('cards').hidden = cards.length === 0;
-  }
-  function openCardDialog(card = null) {
-    editing = card;
-    $('dialog-title').textContent = card ? '编辑手动卡' : '新增手动卡';
-    $('card-title').value = card?.title ?? '';
-    if (card) {
-      const date = new Date(card.expiresAt * 1000);
-      $('card-expiry').value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    } else $('card-expiry').value = '';
-    $('card-dialog').showModal();
-  }
-  $('add').addEventListener('click', () => openCardDialog());
-  $('settings').addEventListener('click', () => window.api.openSettings()
-    .catch((error) => notice(error.message, true)));
-  $('cancel-card').addEventListener('click', () => $('card-dialog').close());
-  $('cancel-snooze').addEventListener('click', () => $('snooze-dialog').close());
-  $('card-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const expiresAt = Math.floor(new Date($('card-expiry').value).getTime() / 1000);
-    const result = await action(editing ? 'updateManualCard' : 'addManualCard',
-      { cardId: editing?.id, title: $('card-title').value, expiresAt },
-      editing ? '手动卡已更新' : '手动卡已添加');
-    if (result) $('card-dialog').close();
-  });
-  $('snooze-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const result = await action('scheduleSnooze',
-      { cardId: snoozing.id, option: $('snooze-option').value }, '已安排稍后提醒');
-    if (result) $('snooze-dialog').close();
-  });
-  $('sync').addEventListener('click', async () => {
-    if (busy) return;
-    busy = true;
-    $('sync').disabled = true;
-    $('sync').textContent = '同步中…';
-    notice('正在读取 Codex Usage…');
-    try {
-      const result = await window.api.core('syncCards');
-      await load();
-      notice(`同步完成：${result.availableCount} 张可用${result.complete ? '' : '（详情不完整）'}`);
-    } catch (error) { notice(`同步失败：${error.message}`, true); await load(); }
-    finally { busy = false; $('sync').disabled = false; $('sync').textContent = '立即同步 Codex'; }
-  });
-  load().catch((error) => { notice(`初始化失败：${error.message}`, true); $('sync-status').textContent = '读取失败'; });
-</script>
+<script type="module" src="./app.mjs"></script>
 </body>
 </html>

@@ -1,10 +1,10 @@
 // Electron 主进程和 Node sidecar 共用同一组数据库操作。
 import * as store from '../core/store.mjs';
-import { planSnooze } from '../core/later.mjs';
+import { getSnoozeOptions, planSnooze } from '../core/later.mjs';
 import { syncCards } from '../sync.mjs';
 import { runReminders } from '../remind.mjs';
 import { preflightSync } from '../preflight-sync.mjs';
-import { planNextCheck } from '../plan-next.mjs';
+import { planCardNextCheck, planNextCheck } from '../plan-next.mjs';
 import { enabledChannels, quietHours } from '../core/reminder-policy.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
 import { readFile } from 'node:fs/promises';
@@ -32,6 +32,21 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   const db = store.openStore();
   try {
     switch (op) {
+      case 'manageSnapshot': {
+        // 一次读取列表与提醒计划，界面沿用核心规则，不另算一套到期节点。
+        const config = JSON.parse(await readFile(configPath(), 'utf8'));
+        const channels = enabledChannels(config);
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const confirmed = store.latestCompleteSync(db);
+        const options = { channels, quiet: quietHours(config), nowSeconds,
+          completeSyncAt: confirmed?.checkedAt ?? 0 };
+        return { channels, latest: store.latestSync(db), confirmed,
+          cards: store.listCards(db, true).map((card) => ({ ...card,
+            snooze: store.getSnooze(db, card.id),
+            snoozeOptions: getSnoozeOptions(card, nowSeconds),
+            plan: planCardNextCheck(db, card, options),
+          })) };
+      }
       case 'listCards': return store.listCards(db, args.includeInactive === true);
       case 'getCard': return store.getCard(db, value(args.cardId));
       case 'latestSync': return store.latestSync(db);

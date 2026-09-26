@@ -42,6 +42,11 @@
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
+  let busy = false;
+  function working(value) {
+    busy = value;
+    for (const id of ['path', 'browse', 'probe', 'autostart', 'connect']) $(id).disabled = value;
+  }
   window.api.setupDiscover().then((result) => {
     $('path').value = result.codexScript || '';
     $('path').placeholder = result.codexScript ? '' : '未自动找到，请浏览选择';
@@ -49,18 +54,27 @@
   }).catch((error) => { $('status').textContent = error.message; });
   $('path').addEventListener('input', () => { $('probe-status').textContent = '路径已修改，尚未检查连接。'; });
   $('probe').addEventListener('click', async () => {
-    $('probe').disabled = true;
+    if (busy) return;
+    working(true);
     $('probe-status').textContent = '正在只读检查 Codex Usage，可能需要几十秒…';
     try { $('probe-status').textContent = (await window.api.setupProbeCodex($('path').value)).message; }
     catch (error) { $('probe-status').textContent = `检查失败：${error.message}`; }
-    finally { $('probe').disabled = false; }
+    finally { working(false); }
   });
   $('browse').addEventListener('click', async () => {
-    try { const path = await window.api.setupBrowse(); if (path) $('path').value = path; }
+    if (busy) return;
+    working(true);
+    try {
+      const path = await window.api.setupBrowse();
+      if (path) { $('path').value = path; $('probe-status').textContent = '路径已修改，尚未检查连接。'; }
+    }
     catch (error) { $('status').textContent = error.message; }
+    finally { working(false); }
   });
   $('connect').addEventListener('click', async () => {
-    $('connect').disabled = true;
+    if (busy) return;
+    if (!$('path').value.trim()) { $('status').textContent = '请先选择已经安装并登录的 Codex CLI。'; $('path').focus(); return; }
+    working(true);
     $('connect').textContent = '连接中…';
     $('status').textContent = '正在读取 Codex Usage，首次连接可能需要几十秒。';
     try {
@@ -69,7 +83,7 @@
       $('status').textContent = '连接成功，正在打开卡片管理。';
     } catch (error) {
       $('status').textContent = `连接失败：${error.message}`;
-      $('connect').disabled = false;
+      working(false);
       $('connect').textContent = '验证连接并开始';
     }
   });

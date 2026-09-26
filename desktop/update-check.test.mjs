@@ -21,3 +21,14 @@ test('update check includes prereleases and only opens a fixed repository URL', 
     'https://github.com/Adgai115/codex-reset-reminder/releases/tag/v2.0.0-beta.2');
   assert.throws(() => releasePageFor('https://other.example'));
 });
+
+test('正式版用户不会被提示安装测试版，领先公开版本时说明实际版本', async () => {
+  const fetcher = async () => ({ ok: true, json: async () => [
+    { tag_name: 'v3.0.0-beta.1', prerelease: true }, { tag_name: 'v2.0.0' },
+  ] });
+  const result = await checkForUpdates('2.0.0', { fetcher });
+  assert.equal(result.state, 'current');
+  assert.equal(result.latestVersion, 'v2.0.0');
+  const ahead = await checkForUpdates('2.0.1', { fetcher });
+  assert.match(ahead.message, /最新公开版本为 v2.0.0/);
+});

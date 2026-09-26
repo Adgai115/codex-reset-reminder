@@ -35,6 +35,11 @@ async function createSidecarHandler() {
   let ready = null;
   let nextId = 1;
   const pending = new Map();
+  app.once('will-quit', () => {
+    // 托盘退出时同步结束兼容进程，不让后台继续执行提醒。
+    child?.stdin.end();
+    child?.kill();
+  });
 
   function ensureWorker() {
     if (child) return ready;

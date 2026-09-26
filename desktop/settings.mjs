@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { callFeishuCli } from '../core/feishu.mjs';
 import { quietHours } from '../core/reminder-policy.mjs';
 import { autoStartEnabled, setAutoStart } from './autostart.mjs';
+import { commitPreferences } from './preference-commit.mjs';
 
 async function readConfig(path) { return JSON.parse(await readFile(path, 'utf8')); }
 async function writeConfig(path, config) {
@@ -30,7 +31,7 @@ export function discoverLarkScript() {
   return '';
 }
 
-export async function readSettings(configPath) {
+export async function readSettings(configPath, { discoverLark = true } = {}) {
   const config = await readConfig(configPath);
   return {
     autoStartEnabled: autoStartEnabled(),
@@ -39,7 +40,7 @@ export async function readSettings(configPath) {
     feishuConnected: Boolean(config.feishu?.profile && config.feishu?.userId && config.larkCliScript),
     appId: config.feishu?.appId || '',
     recipientId: config.feishu?.recipientId || config.feishu?.userId || '',
-    larkCliScript: config.larkCliScript || discoverLarkScript(),
+    larkCliScript: config.larkCliScript || (discoverLark ? discoverLarkScript() : ''),
     quietEnabled: config.reminders?.quietHours?.enabled === true,
     quietStart: config.reminders?.quietHours?.start || '22:00',
     quietEnd: config.reminders?.quietHours?.end || '09:00',
@@ -65,9 +66,9 @@ export async function saveSettings(configPath, input) {
     preflightSync: { enabled: input.preflightEnabled === true, retryMinutes },
   };
   quietHours(config);
-  await writeConfig(configPath, config);
-  await setAutoStart(input.autoStartEnabled === true);
-  return readSettings(configPath);
+  await commitPreferences({ previousAutoStart: autoStartEnabled(), nextAutoStart: input.autoStartEnabled === true,
+    setAutoStart, write: () => writeConfig(configPath, config) });
+  return readSettings(configPath, { discoverLark: false });
 }
 
 async function saveCliProfile(nodePath, script, appId, secret, profile) {

@@ -1,24 +1,35 @@
 // Preload must be CommonJS: Electron's sandbox does not support ESM preloads.
 const { contextBridge, ipcRenderer } = require('electron');
+const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args).catch((error) => {
+  // Electron 自动添加的 IPC 包装信息不应出现在用户提示里。
+  throw new Error(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''));
+});
 
 contextBridge.exposeInMainWorld('api', {
-  core: (op, args) => ipcRenderer.invoke('core', op, args),
-  coreStatus: () => ipcRenderer.invoke('core:status'),
+  core: (op, args) => invoke('core', op, args),
+  coreStatus: () => invoke('core:status'),
+  onStateChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('state:changed', listener);
+    return () => ipcRenderer.removeListener('state:changed', listener);
+  },
   onReminderData: (callback) => ipcRenderer.on('reminder:data', (_event, payload) => callback(payload)),
-  reminderAction: (action, option) => ipcRenderer.invoke('reminder:act', action, option),
-  setupDiscover: () => ipcRenderer.invoke('setup:discover'),
-  setupProbeCodex: (path) => ipcRenderer.invoke('setup:probeCodex', path),
-  setupBrowse: () => ipcRenderer.invoke('setup:browse'),
-  setupSave: (options) => ipcRenderer.invoke('setup:save', options),
-  openSettings: () => ipcRenderer.invoke('settings:open'),
-  settingsRead: () => ipcRenderer.invoke('settings:read'),
-  listenerStatus: () => ipcRenderer.invoke('settings:listenerStatus'),
-  diagnoseLocal: () => ipcRenderer.invoke('settings:diagnoseLocal'),
-  probeCodex: () => ipcRenderer.invoke('settings:probeCodex'),
-  checkUpdates: () => ipcRenderer.invoke('settings:checkUpdates'),
-  openUpdate: () => ipcRenderer.invoke('settings:openUpdate'),
-  settingsSave: (settings) => ipcRenderer.invoke('settings:save', settings),
-  settingsClose: () => ipcRenderer.invoke('settings:close'),
-  feishuConnect: (settings) => ipcRenderer.invoke('feishu:connect', settings),
-  testDesktopReminder: () => ipcRenderer.invoke('settings:testDesktop'),
+  reminderAction: (action, option) => invoke('reminder:act', action, option),
+  setupDiscover: () => invoke('setup:discover'),
+  setupProbeCodex: (path) => invoke('setup:probeCodex', path),
+  setupBrowse: () => invoke('setup:browse'),
+  setupSave: (options) => invoke('setup:save', options),
+  openSettings: () => invoke('settings:open'),
+  settingsRead: () => invoke('settings:read'),
+  listenerStatus: () => invoke('settings:listenerStatus'),
+  diagnoseLocal: () => invoke('settings:diagnoseLocal'),
+  probeCodex: () => invoke('settings:probeCodex'),
+  repairCodex: () => invoke('settings:repairCodex'),
+  checkUpdates: () => invoke('settings:checkUpdates'),
+  openUpdate: () => invoke('settings:openUpdate'),
+  settingsSave: (settings) => invoke('settings:save', settings),
+  settingsDraft: (state) => invoke('settings:draft', state),
+  settingsClose: () => invoke('settings:close'),
+  feishuConnect: (settings) => invoke('feishu:connect', settings),
+  testDesktopReminder: () => invoke('settings:testDesktop'),
 });

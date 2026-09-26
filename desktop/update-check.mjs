@@ -32,15 +32,19 @@ export async function checkForUpdates(currentVersion, { fetcher = fetch } = {}) 
   if (!response.ok) throw new Error(`GitHub 更新检查失败（HTTP ${response.status}）`);
   const releases = await response.json();
   if (!Array.isArray(releases)) throw new Error('GitHub 返回的版本列表无效');
-  const versions = releases.filter((item) => !item.draft && parseVersion(item.tag_name));
+  const includePrerelease = Boolean(parseVersion(currentVersion)?.pre.length);
+  const versions = releases.filter((item) => !item.draft && parseVersion(item.tag_name)
+    && (includePrerelease || (!item.prerelease && !parseVersion(item.tag_name).pre.length)));
   versions.sort((a, b) => compareVersions(b.tag_name, a.tag_name));
   const latest = versions[0];
   if (!latest) return { state: 'none', currentVersion, message: '暂时没有公开发布的版本。' };
-  const newer = compareVersions(latest.tag_name, currentVersion) > 0;
+  const difference = compareVersions(latest.tag_name, currentVersion);
+  const newer = difference > 0;
   return { state: newer ? 'available' : 'current', currentVersion,
     latestVersion: latest.tag_name,
     message: newer ? `发现新版本 ${latest.tag_name}，可前往 GitHub 下载。`
-      : `当前已是最新公开版本（${currentVersion}）。` };
+      : difference < 0 ? `当前版本 ${currentVersion}，最新公开版本为 ${latest.tag_name}，无需更新。`
+        : `当前已是最新公开版本（${currentVersion}）。` };
 }
 
 export function releasePageFor(tag) {

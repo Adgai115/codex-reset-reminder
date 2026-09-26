@@ -21,7 +21,8 @@ async function appDirectory() {
 
 const appRoot = await appDirectory();
 for (const name of ['desktop/main.mjs', 'desktop/diagnostics.mjs', 'core/store.mjs',
-  'ui/manage/index.html', 'ui/setup/index.html', 'config.example.json']) {
+  'ui/manage/index.html', 'ui/manage/app.mjs', 'ui/manage/view-model.mjs',
+  'desktop/cli-repair.mjs', 'ui/setup/index.html', 'config.example.json']) {
   assert.ok(existsSync(join(appRoot, name)), `安装包缺少 ${name}`);
 }
 for (const name of ['config.json', '.state', '.env', 'data.db']) {

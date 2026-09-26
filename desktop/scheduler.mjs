@@ -3,12 +3,13 @@ import { powerMonitor } from 'electron';
 const hourMs = 60 * 60 * 1000;
 const maxTimeoutMs = 2_147_483_647;
 
-export function createScheduler({ coreRequest, onResult = () => {} }) {
+export function createScheduler({ coreRequest, onResult = () => {}, onChanged = () => {} }) {
   let running = false;
   let hourlyTimer = null;
   let dailyTimer = null;
   let exactTimer = null;
   let queue = Promise.resolve();
+  let syncPromise = null;
 
   function enqueue(task) {
     const result = queue.catch(() => {}).then(task);
@@ -39,19 +40,21 @@ export function createScheduler({ coreRequest, onResult = () => {} }) {
       catch (error) { console.warn(`[scheduler] 提醒前核对失败：${error.message}`); }
       const result = await coreRequest('runReminders');
       onResult(result, reason);
-    } finally { await reschedule(); }
+    } finally { await reschedule(); onChanged(); }
   }
 
   function check(reason = 'manual') { return enqueue(() => performCheck(reason)); }
 
   function sync(reason = 'manual') {
+    if (syncPromise) return syncPromise;
     const result = enqueue(async () => {
-      const synced = await coreRequest('syncCards');
-      await reschedule();
-      return synced;
+      try { return await coreRequest('syncCards'); }
+      finally { await reschedule(); }
     });
-    result.then(() => check(`after-${reason}`), () => {});
-    return result;
+    syncPromise = result.finally(() => { syncPromise = null; onChanged(); });
+    onChanged();
+    syncPromise.then(() => check(`after-${reason}`), () => check(`after-${reason}-failed`)).catch(() => {});
+    return syncPromise;
   }
 
   function scheduleDaily() {
@@ -73,11 +76,7 @@ export function createScheduler({ coreRequest, onResult = () => {} }) {
     powerMonitor.on('resume', resume);
     hourlyTimer = setInterval(() => check('hourly'), hourMs);
     scheduleDaily();
-    enqueue(async () => {
-      try { await coreRequest('syncCards'); }
-      catch (error) { console.warn(`[scheduler] 启动同步失败，继续使用本地缓存：${error.message}`); }
-      await performCheck('startup');
-    });
+    sync('startup').catch((error) => console.warn(`[scheduler] 启动同步失败，继续使用本地缓存：${error.message}`));
   }
   function stop() {
     running = false;
@@ -86,5 +85,5 @@ export function createScheduler({ coreRequest, onResult = () => {} }) {
     clearTimeout(exactTimer);
     powerMonitor.removeListener('resume', resume);
   }
-  return { start, stop, check, sync, reschedule: () => enqueue(reschedule) };
+  return { start, stop, check, sync, isSyncing: () => Boolean(syncPromise), reschedule: () => enqueue(reschedule) };
 }
