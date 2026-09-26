@@ -8,7 +8,8 @@ import { coreRequest, coreStatus, setDesktopPresenter } from './core-host.mjs';
 import { createReminderManager } from './reminder-window.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createCallbackListener } from './callback-listener.mjs';
-import { discoverCodexScript, initializeConfig, offerLegacyMigration } from './first-run.mjs';
+import { discoverCodexScript, ensureLegacyMigrationReady, initializeConfig,
+  offerLegacyMigration } from './first-run.mjs';
 import { readSettings, saveSettings, connectFeishu } from './settings.mjs';
 import { setAutoStart } from './autostart.mjs';
 
@@ -153,6 +154,10 @@ if (!gotLock) {
     checkSettingsPage(event);
     return readSettings(currentConfigPath());
   });
+  ipcMain.handle('settings:listenerStatus', (event) => {
+    checkSettingsPage(event);
+    return callbackListener?.status() || { state: 'starting', lastError: null, lastEventAt: null };
+  });
   ipcMain.handle('settings:save', async (event, input) => {
     checkSettingsPage(event);
     const settings = await saveSettings(currentConfigPath(), input);
@@ -234,17 +239,33 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     if (app.isPackaged) {
-      process.env.CODEX_RESET_MONITOR_DATA_DIR = app.getPath('userData');
-      process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(app.getPath('userData'), 'config.json');
+      const userData = app.getPath('userData');
+      process.env.CODEX_RESET_MONITOR_DATA_DIR = userData;
+      process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(userData, 'config.json');
       process.env.CODEX_RESET_MONITOR_NODE_PATH = join(process.resourcesPath, 'vendor-node',
         process.platform === 'win32' ? 'node.exe' : 'node');
+      let migrated = false;
       if (!existsSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH)
+        && !existsSync(join(userData, 'migration.json'))
         && process.env.CODEX_RESET_MONITOR_SKIP_MIGRATION !== '1') {
         try {
-          const migrated = await offerLegacyMigration(app.getPath('userData'));
-          if (migrated) await setAutoStart(true);
+          const migration = await offerLegacyMigration(userData);
+          if (migration === 'declined') { app.quit(); return; }
+          migrated = migration === 'migrated';
         }
-        catch (error) { await dialog.showMessageBox({ type: 'error', message: `旧版迁移失败：${error.message}` }); }
+        catch (error) {
+          await dialog.showMessageBox({ type: 'error', message: `旧版迁移失败：${error.message}` });
+          app.quit();
+          return;
+        }
+      }
+      try {
+        if (!await ensureLegacyMigrationReady(userData)) { app.quit(); return; }
+        if (migrated) await setAutoStart(true);
+      } catch (error) {
+        await dialog.showMessageBox({ type: 'error', message: `旧版迁移未完成：${error.message}` });
+        app.quit();
+        return;
       }
       if (!existsSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH)) { showSetup(); return; }
     }

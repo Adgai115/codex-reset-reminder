@@ -6,7 +6,7 @@
 
 安装前请在本机安装并登录 [Codex CLI](https://github.com/openai/codex)，确保 `codex` 命令可以运行。桌面安装包内含 Node.js 24 sidecar，日常读取优先使用 Electron 内置的 `node:sqlite`；不需要另外安装 Node。开发源码和旧版 PowerShell 工具仍需 Node.js 24。
 
-首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。应用启动时和每天 08:30 同步一次；同步失败时继续检查已缓存的卡片。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置，并停用旧计划任务，避免重复提醒。选择暂不迁移会进入全新配置流程，不修改旧版。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
+首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。应用启动时和每天 08:30 同步一次；同步失败时继续检查已缓存的卡片。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置。数据复制后会核实旧任务已停用；若停用失败，新版不会启动提醒，重启后可继续检查。选择暂不迁移会退出应用，旧版保持运行。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
 
 卡片管理可以新增、编辑、标记手动卡已使用，记录正式卡的使用反馈，设置或取消延期，以及手动同步 Codex。提醒设置可以开关桌面与飞书渠道、免打扰、提醒前核对、登录自启，并测试桌面弹窗。飞书连接需另行安装本机 `lark-cli`，在设置页输入 App ID、接收人 ID、`lark-cli` 脚本路径和 App Secret；应用先发送测试私聊，成功后才保存连接。密钥由本机 `lark-cli` 保管，不写入应用配置。连接完成后字段锁定；“重新连接”需要二次确认。微信渠道本版不启用。
 
@@ -25,7 +25,7 @@ npm run probe:sqlite
 npm run dist
 ```
 
-`npm run dist` 会先把当前平台的 Node.js 24 复制为 sidecar，再用 electron-builder 构建本平台安装包。开发模式运行 `npm start`。GitHub Actions 的 Windows、macOS、Linux matrix 会先跑测试与 Electron SQLite 探针，再分别构建安装包；推送 `v*` tag 后，三个平台全部通过才创建 Release。当前只在 Windows 本机完成了 Electron 界面与目录包实测；macOS 和 Linux 安装包仍以 CI 结果为准。
+`npm run dist` 会先把当前平台的 Node.js 24 复制为 sidecar，再用 electron-builder 构建本平台安装包。开发模式运行 `npm start`。GitHub Actions 的 Windows、macOS、Linux matrix 会先跑测试与 Electron SQLite 探针，再分别构建安装包，并用隔离的演示卡启动安装包，检查卡片管理与设置窗口；推送 `v*` tag 后，三个平台全部通过才创建 Release。当前只在 Windows 本机完成了 Electron 界面与目录包实测；macOS 和 Linux 安装包仍以 CI 结果为准。
 
 ### Windows PowerShell 旧版
 

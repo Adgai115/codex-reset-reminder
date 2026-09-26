@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   setupSave: (options) => ipcRenderer.invoke('setup:save', options),
   openSettings: () => ipcRenderer.invoke('settings:open'),
   settingsRead: () => ipcRenderer.invoke('settings:read'),
+  listenerStatus: () => ipcRenderer.invoke('settings:listenerStatus'),
   settingsSave: (settings) => ipcRenderer.invoke('settings:save', settings),
   settingsClose: () => ipcRenderer.invoke('settings:close'),
   feishuConnect: (settings) => ipcRenderer.invoke('feishu:connect', settings),

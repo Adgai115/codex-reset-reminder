@@ -24,6 +24,7 @@
   button:disabled { opacity: .5; cursor: wait; }
   footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0; }
   #status { min-height: 20px; color: #b42318; margin-top: 11px; }
+  #listener-state { display: block; margin-top: 7px; }
 </style>
 </head>
 <body>
@@ -34,6 +35,7 @@
     <label class="line"><input id="desktop" type="checkbox">Windows / macOS / Linux 桌面弹窗</label>
     <label class="line"><input id="feishu" type="checkbox">飞书机器人私聊</label>
     <small id="feishu-state">正在读取连接状态…</small>
+    <small id="listener-state" aria-live="polite">正在读取按钮监听状态…</small>
   </section>
   <section><h2>飞书连接</h2>
     <label class="field">App ID<input id="app-id" placeholder="cli_…"></label>
@@ -57,11 +59,33 @@
   let connected = false;
   let unlocked = true;
   let saving = false;
+  let listener = null;
+  function listenerState() {
+    let label;
+    if (!connected) label = '按钮监听：尚未配置机器人';
+    else if (!$('feishu').checked) label = '按钮监听：飞书渠道已关闭';
+    else if (!listener) label = '按钮监听：正在读取状态…';
+    else if (listener.state === 'listening') label = listener.lastEventAt
+      ? `按钮监听运行中 · 最近收到交互：${new Date(listener.lastEventAt).toLocaleString('zh-CN', { hour12: false })}`
+      : '按钮监听运行中 · 尚未收到交互事件';
+    else if (listener.state === 'occupied') label = '按钮监听被其他进程占用，当前程序不会处理飞书按钮';
+    else if (listener.state === 'retrying') label = `按钮监听重试中：${listener.lastError || '请检查飞书 CLI'}`;
+    else if (listener.state === 'unconfigured') label = '按钮监听：机器人配置不完整';
+    else if (listener.state === 'disabled') label = '按钮监听：当前未运行';
+    else label = '按钮监听：正在启动…';
+    $('listener-state').textContent = label;
+  }
+  async function refreshListenerState() {
+    try { listener = await window.api.listenerStatus(); }
+    catch (error) { listener = { state: 'retrying', lastError: error.message }; }
+    listenerState();
+  }
   function connectionState() {
     for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked;
     $('connect').disabled = !unlocked || saving;
     $('reconnect').disabled = !connected || unlocked || saving;
-    $('feishu-state').textContent = connected ? '机器人已连接。更换应用或接收人需要先点击“重新连接”。' : '尚未连接，可只使用本地弹窗。';
+    $('feishu-state').textContent = connected ? '机器人配置已保存。更换应用或接收人需要先点击“重新连接”。' : '尚未连接，可只使用本地弹窗。';
+    listenerState();
   }
   function fill(settings) {
     connected = settings.feishuConnected;
@@ -81,6 +105,9 @@
     connectionState();
   }
   window.api.settingsRead().then(fill).catch((error) => { $('status').textContent = error.message; });
+  refreshListenerState();
+  setInterval(refreshListenerState, 5000);
+  $('feishu').addEventListener('change', connectionState);
   $('reconnect').addEventListener('click', () => {
     if (!confirm('重新连接会更换飞书机器人配置。确认继续？')) return;
     unlocked = true;
@@ -97,6 +124,7 @@
       });
       fill(settings);
       $('status').textContent = '连接成功，测试私聊已发送。';
+      setTimeout(refreshListenerState, 1000);
     } catch (error) { $('status').textContent = error.message; }
     finally { saving = false; connectionState(); }
   });

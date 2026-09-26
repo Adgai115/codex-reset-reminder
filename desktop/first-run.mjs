@@ -4,9 +4,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { app, dialog } from 'electron';
 import { callAppServer } from '../check.mjs';
-
-const legacyTasks = ['CodexResetCardSync', 'CodexResetCardExpiryReminder',
-  'CodexResetCardNextReminder', 'CodexResetCardFeishuActions'];
+import { stopLegacyTasks } from './legacy-tasks.mjs';
 
 function nodeRuntime() {
   return app.isPackaged
@@ -48,29 +46,41 @@ export function findLegacyInstall() {
 export async function migrateLegacy(root, userData) {
   const oldDb = join(root, '.state', 'data.db');
   const oldConfig = join(root, 'config.json');
-  if (!existsSync(oldDb) || !existsSync(oldConfig)) throw new Error('旧版数据库或配置不存在');
   await mkdir(userData, { recursive: true });
   const targetDb = join(userData, 'data.db');
-  if (existsSync(targetDb)) throw new Error('新数据目录已有数据库，已停止迁移以防覆盖');
-  const backup = spawnSync(nodeRuntime(), [join(import.meta.dirname, 'backup-db.mjs'), oldDb, targetDb],
-    { encoding: 'utf8', timeout: 30000, windowsHide: true });
-  if (backup.status !== 0) {
-    await unlink(targetDb).catch((error) => { if (error.code !== 'ENOENT') throw error; });
-    throw new Error(`数据库备份失败：${backup.error?.message || backup.stderr?.trim() || backup.status}`);
+  const targetConfig = join(userData, 'config.json');
+  const marker = join(userData, 'migration.json');
+  if ((!existsSync(targetDb) && !existsSync(oldDb))
+    || (!existsSync(targetConfig) && !existsSync(oldConfig))) {
+    throw new Error('迁移来源或目标数据不完整');
   }
-  const config = JSON.parse(await readFile(oldConfig, 'utf8'));
-  if (config.wechat) config.wechat.enabled = false; // 微信渠道暂未移植到桌面版。
-  await writeFile(join(userData, 'config.json'), `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx' });
-  const taskFailures = [];
-  for (const name of legacyTasks) {
-    const result = spawnSync('schtasks.exe', ['/Change', '/TN', name, '/Disable'],
-      { encoding: 'utf8', timeout: 7000, windowsHide: true });
-    if (result.status !== 0) taskFailures.push(name);
+  let previous = null;
+  if (existsSync(marker)) previous = JSON.parse(await readFile(marker, 'utf8'));
+  if (previous && previous.source !== root) throw new Error('迁移来源与已有记录不一致');
+  if (!previous && (existsSync(targetDb) || existsSync(targetConfig))) {
+    throw new Error('新数据目录已有数据，已停止迁移以防覆盖');
   }
-  spawnSync('schtasks.exe', ['/End', '/TN', 'CodexResetCardFeishuActions'],
-    { encoding: 'utf8', timeout: 7000, windowsHide: true });
-  await writeFile(join(userData, 'migration.json'), JSON.stringify({ source: root,
-    migratedAt: new Date().toISOString(), taskFailures }, null, 2));
+  if (!previous) {
+    await writeFile(marker, JSON.stringify({ source: root, phase: 'pending', taskFailures: [] }, null, 2),
+      { flag: 'wx' });
+  }
+  if (!existsSync(targetDb)) {
+    const backup = spawnSync(nodeRuntime(), [join(import.meta.dirname, 'backup-db.mjs'), oldDb, targetDb],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true });
+    if (backup.status !== 0) {
+      await unlink(targetDb).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+      throw new Error(`数据库备份失败：${backup.error?.message || backup.stderr?.trim() || backup.status}`);
+    }
+  }
+  if (!existsSync(targetConfig)) {
+    const config = JSON.parse(await readFile(oldConfig, 'utf8'));
+    if (config.wechat) config.wechat.enabled = false; // 微信渠道暂未移植到桌面版。
+    await writeFile(targetConfig, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx' });
+  }
+  const taskFailures = stopLegacyTasks();
+  await writeFile(marker, JSON.stringify({ source: root,
+    phase: taskFailures.length ? 'pending' : 'complete',
+    migratedAt: taskFailures.length ? null : new Date().toISOString(), taskFailures }, null, 2));
   return { taskFailures };
 }
 
@@ -92,18 +102,33 @@ export async function initializeConfig({ codexScript, configPath, examplePath })
 
 export async function offerLegacyMigration(userData) {
   const root = findLegacyInstall();
-  if (!root) return false;
+  if (!root) return 'none';
   const { response } = await dialog.showMessageBox({
     type: 'question', title: '迁移 Windows 旧版数据',
     message: '检测到旧版 Codex 重置卡提醒',
     detail: `位置：${root}\n\n迁移会复制卡片、提醒记录和飞书配置，并停用旧计划任务，避免重复提醒。`,
-    buttons: ['迁移并停用旧任务', '暂不迁移'], defaultId: 0, cancelId: 1,
+    buttons: ['迁移并停用旧任务', '暂不迁移（退出）'], defaultId: 0, cancelId: 1,
   });
-  if (response !== 0) return false;
-  const result = await migrateLegacy(root, userData);
-  if (result.taskFailures.length) {
-    await dialog.showMessageBox({ type: 'warning', title: '旧版任务未全部停用',
-      message: `请手动停用：${result.taskFailures.join('、')}`, buttons: ['知道了'] });
+  if (response !== 0) return 'declined';
+  await migrateLegacy(root, userData);
+  return 'migrated';
+}
+
+export async function ensureLegacyMigrationReady(userData) {
+  if (process.platform !== 'win32' || process.env.CODEX_RESET_MONITOR_SKIP_MIGRATION === '1') return true;
+  const marker = join(userData, 'migration.json');
+  while (true) {
+    // 旧任务也可能在新版配置已存在后重新启用，因此每次启动都确认一次。
+    const taskFailures = existsSync(marker)
+      ? (await migrateLegacy(JSON.parse(await readFile(marker, 'utf8')).source, userData)).taskFailures
+      : stopLegacyTasks();
+    if (!taskFailures.length) return true;
+    const { response } = await dialog.showMessageBox({
+      type: 'warning', title: '旧版提醒任务仍在运行',
+      message: '旧版计划任务尚未停用，暂不能启动新版提醒',
+      detail: `请先停用这些旧任务：${taskFailures.join('、')}。\n重启应用后会重新检查，避免重复提醒。`,
+      buttons: ['重试停用旧任务', '退出应用'], defaultId: 0, cancelId: 1,
+    });
+    if (response !== 0) return false;
   }
-  return true;
 }

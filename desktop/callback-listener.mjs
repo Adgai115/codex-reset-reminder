@@ -11,7 +11,11 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
   let child = null;
   let lease = null;
   let loop = null;
+  let health = { state: 'starting', lastError: null, lastEventAt: null };
   const readConfig = async () => JSON.parse(await readFile(configPath, 'utf8'));
+  const setHealth = (state, error = null) => {
+    health = { ...health, state, lastError: error ? String(error).slice(0, 180) : null };
+  };
 
   async function consume(config) {
     const command = larkCommand(config);
@@ -22,6 +26,7 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
       env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
         LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' },
     });
+    child.once('spawn', () => setHealth('listening'));
     child.stderr.resume();
     const lines = readline.createInterface({ input: child.stdout });
     let queue = Promise.resolve();
@@ -33,16 +38,19 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
           const current = await readConfig();
           if (!current.feishu?.enabled) return;
           const outcome = await coreRequest('handleCardAction', { event, config: current });
+          health = { ...health, lastEventAt: Date.now() };
           if (!['ignored', 'duplicate', 'unauthorized'].includes(outcome)) await onChanged();
         } catch (error) { console.warn(`[feishu] 卡片操作失败：${error.message}`); }
       });
     });
     try {
-      await new Promise((resolve, reject) => {
+      const code = await new Promise((resolve, reject) => {
         child.once('close', resolve);
         child.once('error', reject);
       });
       await queue;
+      if (!stopped && code !== 0) throw new Error(`飞书 CLI 监听退出，代码 ${code}`);
+      if (!stopped) setHealth('starting');
     } finally { lines.close(); child = null; }
   }
 
@@ -52,9 +60,11 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
       await loop;
     }
     const config = await readConfig();
-    if (!config.feishu?.enabled || config.feishu.as !== 'bot' || !config.feishu.userId) return;
+    if (!config.feishu?.enabled) { setHealth('disabled'); return; }
+    if (config.feishu.as !== 'bot' || !config.feishu.userId) { setHealth('unconfigured'); return; }
+    setHealth('starting');
     lease = await acquireListenerLease(databasePath);
-    if (!lease) { console.log('[feishu] 旧版监听已占用，Electron 跳过监听'); return; }
+    if (!lease) { setHealth('occupied'); console.log('[feishu] 已有监听占用，Electron 跳过监听'); return; }
     stopped = false;
     loop = (async () => {
       while (!stopped) {
@@ -62,22 +72,28 @@ export function createCallbackListener({ configPath, databasePath, coreRequest, 
           const current = await readConfig();
           if (!current.feishu?.enabled) break;
           await consume(current);
-        } catch (error) { console.warn(`[feishu] 监听重试：${error.message}`); }
+        } catch (error) {
+          setHealth('retrying', error.message);
+          console.warn(`[feishu] 监听重试：${error.message}`);
+        }
         if (!stopped) await wait(5000);
       }
       lease?.close();
       lease = null;
       loop = null;
+      if (stopped) setHealth('disabled');
     })();
   }
   function stop() {
     stopped = true;
+    setHealth('disabled');
     child?.kill();
+    return loop || Promise.resolve();
   }
   async function refresh() {
     stop();
     if (loop) await loop;
     return start();
   }
-  return { start, stop, refresh };
+  return { start, stop, refresh, status: () => ({ ...health }) };
 }

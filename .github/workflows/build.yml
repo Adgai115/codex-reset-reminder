@@ -36,6 +36,12 @@ jobs:
       - run: npx electron-builder ${{ matrix.target }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke packaged UI (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-packaged.mjs
+      - name: Smoke packaged UI
+        if: runner.os != 'Linux'
+        run: node scripts/smoke-packaged.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: codex-reset-reminder-${{ matrix.artifact }}
