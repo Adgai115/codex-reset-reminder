@@ -126,7 +126,12 @@ try {
   const deadline = Date.now() + 45000;
   if (setupOnly) {
     const setup = await page(port, '/ui/setup/index.html', child, deadline);
-    const setupState = await evaluate(setup, `({bridge: Boolean(window.api), title: document.title})`);
+    let setupState;
+    do {
+      setupState = await evaluate(setup, `({bridge: Boolean(window.api), title: document.title})`);
+      if (setupState.bridge && setupState.title?.includes('安装与连接')) break;
+      await sleep(200);
+    } while (Date.now() < deadline);
     assert.ok(setupState.bridge, '首次安装窗口 preload 没有加载');
     assert.match(setupState.title, /安装与连接/);
     console.log('首次安装窗口已加载，检查 Codex 诊断按钮');
@@ -203,7 +208,8 @@ try {
   process.exitCode = 1;
 } finally {
   await stopTree(child);
-  await rm(profile, { recursive: true, force: true });
+  try { await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 }); }
+  catch (error) { console.error(`清理测试数据失败：${error.message}`); process.exitCode = 1; }
 }
 // Electron 的渲染子进程可能继承测试脚本的管道；完成清理后直接退出。
 process.exit(process.exitCode || 0);
