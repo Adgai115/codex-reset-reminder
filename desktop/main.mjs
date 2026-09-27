@@ -1,6 +1,6 @@
 // Electron main process: single instance, tray + manage window. The app is
 // the cross-platform replacement for main-tray.ps1 / manage.ps1.
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, powerMonitor } from 'electron';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -76,7 +76,7 @@ if (!gotLock) {
 
   function createManageWindow() {
     const window = new BrowserWindow({
-      width: 1000, height: 650, minWidth: 800, minHeight: 480, show: false,
+      width: 1180, height: 680, minWidth: 800, minHeight: 480, show: false,
       title: 'Codex 重置卡提醒',
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       autoHideMenuBar: true,
@@ -201,7 +201,7 @@ if (!gotLock) {
       if (result.state === 'verified') scheduler?.check('account-confirmed');
       return result;
     }
-    if (op === 'manageSnapshot') return { ...result, syncing: scheduler?.isSyncing() === true,
+    if (op === 'manageSnapshot') return { ...result, ...scheduler?.syncState(),
       retrying: scheduler?.isRetrying() === true };
     if (mutatingOperations.has(op)) { stateChanged(); scheduler?.check('card-change'); }
     return result;
@@ -339,7 +339,7 @@ if (!gotLock) {
 
   async function startRuntime() {
     if (scheduler) return;
-    scheduler = createScheduler({ coreRequest, onResult: () => stateChanged(),
+    scheduler = createScheduler({ coreRequest, powerMonitor, onResult: () => stateChanged(),
       onChanged: stateChanged });
     const onChanged = () => { stateChanged(); scheduler.reschedule(); };
     reminders = createReminderManager({ coreRequest, onScheduleChanged: onChanged });

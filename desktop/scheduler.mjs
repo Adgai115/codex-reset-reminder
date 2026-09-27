@@ -1,16 +1,24 @@
-import { powerMonitor } from 'electron';
+import { createAutoSync } from './auto-sync.mjs';
 
 const hourMs = 60 * 60 * 1000;
 const maxTimeoutMs = 2_147_483_647;
 
-export function createScheduler({ coreRequest, onResult = () => {}, onChanged = () => {} }) {
+export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}, onChanged = () => {} }) {
   let running = false;
   let hourlyTimer = null;
-  let dailyTimer = null;
   let exactTimer = null;
   let queue = Promise.resolve();
-  let syncPromise = null;
   const retrying = new Map();
+  const automatic = createAutoSync({
+    run: () => enqueue(async () => {
+      if (!running) return null;
+      try { return await coreRequest('syncCards'); }
+      finally { await reschedule(); }
+    }),
+    onChanged,
+    onSettled: (reason) => { check(`after-${reason}`).catch(() => {}); },
+    onError: (error) => console.warn(`[scheduler] 自动同步暂不可用，将自动重试：${error.message}`),
+  });
 
   function enqueue(task) {
     const result = queue.catch(() => {}).then(task);
@@ -24,9 +32,9 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
     if (!running) return;
     clearTimeout(exactTimer);
     const plan = await coreRequest('planNextCheck');
-    if (!plan.nextAt) return;
+    if (!running || !plan.nextAt) return;
     const delay = Math.min(maxTimeoutMs, Math.max(1000, plan.nextAt * 1000 - Date.now() + 1000));
-    exactTimer = setTimeout(() => { check('exact'); }, delay);
+    exactTimer = setTimeout(() => { check('exact').catch(() => {}); }, delay);
   }
 
   async function performCheck(reason, options = {}) {
@@ -61,46 +69,22 @@ export function createScheduler({ coreRequest, onResult = () => {}, onChanged = 
     return pending;
   }
 
-  function sync(reason = 'manual') {
-    if (syncPromise) return syncPromise;
-    const result = enqueue(async () => {
-      try { return await coreRequest('syncCards'); }
-      finally { await reschedule(); }
-    });
-    syncPromise = result.finally(() => { syncPromise = null; onChanged(); });
-    onChanged();
-    syncPromise.then(() => check(`after-${reason}`), () => check(`after-${reason}-failed`)).catch(() => {});
-    return syncPromise;
-  }
-
-  function scheduleDaily() {
-    if (!running) return;
-    const next = new Date();
-    next.setHours(8, 30, 0, 0);
-    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
-    dailyTimer = setTimeout(async () => {
-      try { await sync('daily'); }
-      catch (error) { console.warn(`[scheduler] 每日同步失败：${error.message}`); }
-      finally { scheduleDaily(); }
-    }, next.getTime() - Date.now());
-  }
-
-  const resume = () => { check('resume'); };
+  const resume = () => { automatic.wake(); check('resume').catch(() => {}); };
   function start() {
     if (running) return;
     running = true;
     powerMonitor.on('resume', resume);
-    hourlyTimer = setInterval(() => check('hourly'), hourMs);
-    scheduleDaily();
-    sync('startup').catch((error) => console.warn(`[scheduler] 启动同步失败，继续使用本地缓存：${error.message}`));
+    hourlyTimer = setInterval(() => check('hourly').catch(() => {}), hourMs);
+    automatic.start();
   }
   function stop() {
     running = false;
     clearInterval(hourlyTimer);
-    clearTimeout(dailyTimer);
+    automatic.stop();
     clearTimeout(exactTimer);
     powerMonitor.removeListener('resume', resume);
   }
-  return { start, stop, check, retry, sync, isSyncing: () => Boolean(syncPromise),
+  return { start, stop, check, retry, sync: automatic.sync, syncState: automatic.state,
+    isSyncing: () => automatic.state().syncing,
     isRetrying: () => retrying.size > 0, reschedule: () => enqueue(reschedule) };
 }
