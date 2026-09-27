@@ -16,29 +16,35 @@
   .row { display: flex; gap: 8px; }
   input { flex: 1; min-width: 0; border: 1px solid #cad5e2; border-radius: 7px; padding: 9px; font: inherit; }
   button { border: 1px solid #c8d3e2; background: white; border-radius: 7px; padding: 9px 14px;
-    font: inherit; cursor: pointer; }
+    font: inherit; cursor: pointer; white-space:nowrap; }
   button:disabled { opacity: .55; cursor: wait; }
   button.primary { background: #1458df; border-color: #1458df; color: white; }
   footer { margin-top: 20px; display: flex; justify-content: flex-end; }
-  #status { min-height: 22px; color: #b42318; margin-top: 12px; }
-  #probe-status { min-height: 20px; }
+  #status { color: #b42318; margin-top: 12px; }
+  #status:empty, #probe-status:empty { display:none; }
+  .help { margin-top:18px; color:#617189; font-size:12px; }
+  summary { cursor:pointer; white-space:nowrap; }
+  #discovery-status { margin-bottom:14px; }
+  :focus-visible { outline:2px solid #1458df; outline-offset:2px; }
   small { display: block; color: #75849a; margin-top: 10px; line-height: 1.5; }
 </style>
 </head>
 <body>
 <main>
   <h1>安装与连接</h1>
-  <p>先连接这台电脑已登录的 Codex CLI。连接完成后会打开卡片管理，提醒会在应用运行时自动检查。</p>
   <div class="card">
     <label for="path">Codex CLI 路径</label>
     <div class="row"><input id="path" placeholder="正在自动查找…" spellcheck="false"><button id="browse">浏览</button></div>
-    <small>请先安装并登录 Codex CLI。此处只读取 Usage 数据，不会使用重置卡。飞书私聊可稍后配置。</small>
-    <button id="probe" type="button">检查 Codex 连接</button>
-    <small id="probe-status" role="status" aria-live="polite">等待检查</small>
+    <small id="discovery-status" role="status"></small>
     <label style="margin-top:14px;font-weight:normal"><input id="autostart" type="checkbox" checked> 登录系统时自动启动</label>
   </div>
+  <details class="help" id="connection-help"><summary>连接帮助</summary>
+    <p>请先安装并登录 Codex CLI。连接时只读取用量，不会使用重置卡。</p>
+    <button id="probe" type="button">检查连接</button>
+    <small id="probe-status" role="status" aria-live="polite"></small>
+  </details>
   <div id="status" role="status" aria-live="polite"></div>
-  <footer><button id="connect" class="primary">验证连接并开始</button></footer>
+  <footer><button id="connect" class="primary">连接并开始</button></footer>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -50,13 +56,13 @@
   window.api.setupDiscover().then((result) => {
     $('path').value = result.codexScript || '';
     $('path').placeholder = result.codexScript ? '' : '未自动找到，请浏览选择';
-    $('probe-status').textContent = result.codexScript ? '已找到 Codex CLI，点击“检查 Codex 连接”读取 Usage。' : '未自动找到 Codex CLI，请浏览选择。';
+    $('discovery-status').textContent = result.codexScript ? '已找到 Codex' : '未找到 Codex，请选择路径';
   }).catch((error) => { $('status').textContent = error.message; });
-  $('path').addEventListener('input', () => { $('probe-status').textContent = '路径已修改，尚未检查连接。'; });
+  $('path').addEventListener('input', () => { $('discovery-status').textContent = ''; $('probe-status').textContent = ''; });
   $('probe').addEventListener('click', async () => {
     if (busy) return;
     working(true);
-    $('probe-status').textContent = '正在只读检查 Codex Usage，可能需要几十秒…';
+    $('probe-status').textContent = '检查中…';
     try { $('probe-status').textContent = (await window.api.setupProbeCodex($('path').value)).message; }
     catch (error) { $('probe-status').textContent = `检查失败：${error.message}`; }
     finally { working(false); }
@@ -66,25 +72,25 @@
     working(true);
     try {
       const path = await window.api.setupBrowse();
-      if (path) { $('path').value = path; $('probe-status').textContent = '路径已修改，尚未检查连接。'; }
+      if (path) { $('path').value = path; $('probe-status').textContent = ''; $('discovery-status').textContent = ''; }
     }
     catch (error) { $('status').textContent = error.message; }
     finally { working(false); }
   });
   $('connect').addEventListener('click', async () => {
     if (busy) return;
-    if (!$('path').value.trim()) { $('status').textContent = '请先选择已经安装并登录的 Codex CLI。'; $('path').focus(); return; }
+    if (!$('path').value.trim()) { $('status').textContent = '请选择 Codex 程序'; $('path').focus(); return; }
     working(true);
     $('connect').textContent = '连接中…';
-    $('status').textContent = '正在读取 Codex Usage，首次连接可能需要几十秒。';
+    $('status').textContent = '';
     try {
       await window.api.setupSave({ codexScript: $('path').value,
         autoStartEnabled: $('autostart').checked });
-      $('status').textContent = '连接成功，正在打开卡片管理。';
+      $('status').textContent = '已连接';
     } catch (error) {
       $('status').textContent = `连接失败：${error.message}`;
       working(false);
-      $('connect').textContent = '验证连接并开始';
+      $('connect').textContent = '连接并开始';
     }
   });
 </script>

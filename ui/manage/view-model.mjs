@@ -23,15 +23,15 @@ export function deliveryGroups(card) {
 }
 
 export function syncSummary(snapshot) {
-  if (snapshot.syncing) return '正在核对 Codex，列表显示已保存的卡片';
+  if (snapshot.syncing) return '同步中…';
   if (['mismatch', 'needsBinding', 'unavailable', 'unidentified'].includes(snapshot.account?.state))
-    return '账号待核实 · 卡片同步与提醒已暂停';
-  if (!snapshot.latest) return '等待首次自动同步';
+    return '提醒已暂停';
+  if (!snapshot.latest) return '等待同步';
   const stale = Date.now() / 1000 - snapshot.confirmed?.checkedAt > 86400 ? ' · 已超过 24 小时' : '';
-  const checked = snapshot.confirmed ? `最近完整同步 ${formatShortTime(snapshot.confirmed.checkedAt)}` : '尚无完整同步';
+  const checked = snapshot.confirmed ? `已同步 ${formatShortTime(snapshot.confirmed.checkedAt)}` : '尚未同步';
   return snapshot.latest.outcome === 'complete'
-    ? `${checked} · ${snapshot.latest.availableCount} 张可用${stale}`
-    : `${snapshot.latest.outcome === 'failed' ? '同步失败' : '详情不完整'} · ${checked}${stale}`;
+    ? `${checked}${stale}`
+    : `${snapshot.latest.outcome === 'failed' ? '同步失败 · 自动重试' : '同步不完整'}${stale}`;
 }
 
 export function automationSummary(snapshot) {
@@ -41,12 +41,12 @@ export function automationSummary(snapshot) {
 }
 
 export function accountSummary(account) {
-  if (account?.state === 'verified') return `缓存绑定 ${account.boundDisplay}`;
-  if (account?.state === 'needsBinding') return '首次升级：请确认旧卡片所属账号';
-  if (account?.state === 'mismatch') return '账号不一致 · 切回原账号后自动恢复';
-  if (account?.state === 'unidentified') return '账号无法辨认 · 查看登录提示';
-  if (account?.state === 'unavailable') return '账号暂不可用 · 将自动核对';
-  return '账号核对中 · 查看详情';
+  if (account?.state === 'verified') return account.boundDisplay;
+  if (account?.state === 'needsBinding') return '待确认账号';
+  if (account?.state === 'mismatch') return '账号不一致';
+  if (account?.state === 'unidentified') return '账号无法辨认';
+  if (account?.state === 'unavailable') return '账号暂不可用';
+  return '核对账号…';
 }
 
 const channelLabels = { desktop: '桌面', feishu: '飞书', wechat: '公众号' };

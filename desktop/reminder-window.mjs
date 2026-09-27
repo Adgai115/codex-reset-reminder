@@ -7,7 +7,7 @@ import { getSnoozeOptions } from '../core/later.mjs';
 const directory = dirname(fileURLToPath(import.meta.url));
 const reminderPage = join(directory, '..', 'ui', 'reminder', 'index.html');
 const width = 420;
-const height = 310;
+const height = 260;
 
 export function createReminderManager({ coreRequest, onScheduleChanged }) {
   const windows = new Map();

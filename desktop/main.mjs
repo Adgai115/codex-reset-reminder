@@ -60,7 +60,7 @@ if (!gotLock) {
     }
     if (!settingsDraft.dirty) return true;
     const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
-      message: '提醒设置尚未保存', detail: '关闭会放弃本次修改，已保存的提醒继续生效。',
+      message: '提醒设置尚未保存', detail: '关闭将放弃本次修改。',
       buttons: ['继续编辑', '放弃修改'], defaultId: 0, cancelId: 0 });
     return response === 1;
   }
@@ -97,7 +97,7 @@ if (!gotLock) {
       try {
         const { response } = await dialog.showMessageBox(window, { type: 'question', noLink: true,
           message: '关闭窗口后，是否继续提醒？',
-          detail: '收起到托盘会继续检查到期时间和飞书交互；退出应用会停止本机的全部提醒。',
+          detail: '收起后继续提醒；退出后停止提醒。',
           buttons: ['收起到托盘', '退出应用', '取消'], defaultId: 0, cancelId: 2 });
         if (response === 0) { settingsWindow?.hide(); window.hide(); }
         else if (response === 1) await requestQuit();
@@ -162,15 +162,17 @@ if (!gotLock) {
     tray.on('click', () => showManage());
     const refreshMenu = async () => {
       let summary = '状态不可用';
+      let detail = summary;
       try {
         const cards = (await coreRequest('listCards')).filter((card) => card.expiresAt > Date.now() / 1000);
         const latest = await coreRequest('latestSync');
         const count = cards.length;
         const next = cards[0];
-        summary = `${count} 张可用 · 最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'} · 上次核对：${latest ? new Date(latest.checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
-      } catch (error) { summary = `读取失败：${error.message}`; }
+        summary = `${count} 张可用`;
+        detail = `${summary}\n最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'}\n上次核对：${latest ? new Date(latest.checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
+      } catch (error) { summary = '读取失败'; detail = error.message; }
       if (quitting || tray.isDestroyed()) return;
-      tray.setToolTip(`Codex 重置卡提醒\n${summary}`);
+      tray.setToolTip(`Codex 重置卡提醒\n${detail}`);
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开卡片管理', click: () => showManage() },
         { label: '提醒设置', click: () => showSettings() },

@@ -28,7 +28,7 @@ test('自动化状态不把未知账号或失败同步显示为已恢复', () =>
   assert.match(syncSummary({ account: { state: 'unavailable' } }), /暂停/);
   assert.match(accountSummary({ state: 'mismatch' }), /账号不一致/);
   assert.match(automationSummary({ recovering: true, nextSyncAt: 100 }), /自动恢复连接.*下次/);
-  assert.match(syncSummary({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /同步失败.*最近完整同步/);
+  assert.match(syncSummary({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /同步失败/);
 });
 
 test('提醒说明使用核心的延期或补查结果，停用渠道时明确提示', () => {

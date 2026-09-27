@@ -299,11 +299,14 @@ try {
     } while (Date.now() < deadline);
     assert.ok(setupState.bridge, '首次安装窗口 preload 没有加载');
     assert.match(setupState.title, /安装与连接/);
+    assert.equal(await evaluate(setup, `document.querySelector('#connection-help').open`), false);
+    await screenshot(setup, 'setup-clean');
     console.log('首次安装窗口已加载，检查 Codex 诊断按钮');
     const probe = await evaluate(setup,
       `window.api.setupProbeCodex(${JSON.stringify(join(profile, 'missing-codex'))})`);
     assert.equal(probe.ok, false);
-    await evaluate(setup, `document.querySelector('#path').value = ${JSON.stringify(join(profile, 'missing-codex'))};
+    await evaluate(setup, `document.querySelector('#connection-help').open = true;
+      document.querySelector('#path').value = ${JSON.stringify(join(profile, 'missing-codex'))};
       document.querySelector('#probe').click(); true`);
     let probeText = '';
     while (Date.now() < deadline && !probeText.includes('未找到 Codex CLI')) {
@@ -328,7 +331,7 @@ try {
     } }));
     console.log('已恢复模拟账号与 Usage，等待后台的一分钟自动重试（不点击刷新）');
     await until(manage, `document.querySelector('#cards tbody').textContent.includes('CI 自动恢复卡')
-      && document.querySelector('#account-status').textContent.includes('缓存绑定')
+      && document.querySelector('#account-info').dataset.state === 'verified'
       && !document.querySelector('#sync').disabled`, '自动重新核对账号并同步官方卡', 75000);
     const recovered = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.equal(recovered.account.state, 'verified');
@@ -341,14 +344,14 @@ try {
     const manage = await page(port, '/ui/manage/index.html', child, deadline);
     await until(manage, `document.querySelector('#cards tbody')?.textContent.includes('CI 补发演示卡')
       && document.querySelector('#cards tbody')?.textContent.includes('桌面等待重试')`, '补发结果展示');
-    await until(manage, `document.querySelector('#account-status')?.textContent.includes('缓存绑定')`,
+    await until(manage, `document.querySelector('#account-info')?.dataset.state === 'verified'`,
       '模拟账号已核实');
     const initial = await evaluate(manage, `({
-      account: document.querySelector('#account-status').textContent,
+      account: document.querySelector('#account-info').dataset.state,
       retry: Array.from(document.querySelectorAll('#cards tbody button')).some(button => button.textContent === '重试失败渠道' && !button.disabled),
       error: document.querySelector('#cards tbody').textContent.includes('桌面弹窗失败')
     })`);
-    assert.match(initial.account, /缓存绑定/);
+    assert.equal(initial.account, 'verified');
     assert.equal(initial.retry, true);
     assert.equal(initial.error, true);
     await screenshot(manage, 'p0-waiting');
@@ -358,7 +361,8 @@ try {
     await screenshot(manage, 'p0-details');
     await rm(accountFile);
     await evaluate(manage, `document.querySelector('#check-account').click(); true`);
-    await until(manage, `document.querySelector('#notice').textContent.includes('无法读取 Codex 账号身份')`, '账号重新核对结果');
+    await until(manage, `document.querySelector('#account-info').dataset.state === 'unavailable'
+      && document.querySelector('#account-status').checkVisibility()`, '账号异常保留可见提示');
     assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道')`), false);
     await writeFile(accountFile, JSON.stringify(mockAccount));
@@ -381,8 +385,13 @@ try {
     assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道')`), false);
     await screenshot(manage, 'p0-results');
-    await triggerWindow(reminderTab, `document.querySelector('#close').click(); true`);
+    await triggerWindow(reminderTab, `(() => {
+      const option = document.querySelector('#option');
+      option.value = '1d'; option.dispatchEvent(new Event('change')); return true;
+    })()`);
     await untilClosed(port, '/ui/reminder/index.html');
+    assert.ok(await evaluate(manage, `(async () => Boolean((await window.api.core('snooze', { cardId: 'RateLimitResetCredit_ciRetry' }))?.targetAt))()`),
+      '提醒弹窗选择延期后应保存并关闭');
     assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs),
       '界面出现未处理脚本错误');
     console.log(`P0 界面检查通过：${process.platform}，结果、账号状态、加载态和失败渠道补发`);
@@ -398,7 +407,7 @@ try {
   assert.ok(cards.rows.some((row) => row.includes('CI 演示重置卡')), `卡片没有显示：${JSON.stringify(cards)}`);
   assert.ok(!cards.status?.includes('读取失败'), `卡片读取失败：${cards.status}`);
   const manage = await page(port, '/ui/manage/index.html', child, deadline);
-  await until(manage, `document.querySelector('#account-status').textContent.includes('缓存绑定')
+  await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'
     && !document.querySelector('#sync').disabled`, '模拟账号核对和启动同步结束');
   const visible = await evaluate(manage, `({
     expired: document.querySelector('#cards tbody').textContent.includes('CI 过期卡'),
@@ -409,6 +418,13 @@ try {
       || Array.from(document.querySelectorAll('#cards button')).some(button => button.textContent === '编辑')
   })`);
   assert.deepEqual(visible, { expired: false, nearDisabled: true, overflow: false, manual: false, addOrEdit: false });
+  assert.deepEqual(await evaluate(manage, `({
+    automationVisible: document.querySelector('#automation-status').checkVisibility(),
+    accountDetailVisible: document.querySelector('#account-detail').checkVisibility(),
+    footerCopy: Boolean(document.querySelector('.footnote')),
+    firstCardVisible: document.querySelector('.card-name').checkVisibility(),
+    expiryVisible: document.querySelector('td.time').checkVisibility()
+  })`), { automationVisible: false, accountDetailVisible: false, footerCopy: false, firstCardVisible: true, expiryVisible: true });
   const blocked = await evaluate(manage, `(async () => {
     const errors = [];
     for (const op of ['addManualCard', 'updateManualCard', 'markManualUsed']) {
@@ -466,17 +482,33 @@ try {
       if (!isDebuggerTimeout(error) || Date.now() >= deadline) throw error;
       continue;
     }
-    if (settings.listener?.includes('尚未配置机器人') && settings.connection?.includes('尚未连接')
+    if (settings.listener?.includes('尚未配置机器人') && settings.connection?.includes('未连接')
       && settings.diagnostics?.includes('Codex CLI 路径')) break;
     await sleep(300);
   } while (Date.now() < deadline);
   assert.ok(settings.bridge, '设置窗口 preload 没有加载');
   assert.match(settings.listener, /尚未配置机器人/);
-  assert.match(settings.connection, /尚未连接/);
+  assert.match(settings.connection, /未连接/);
   assert.match(settings.diagnostics, /Codex CLI 路径/);
   assert.ok(settings.updateButton, '检查更新入口未显示');
   console.log('设置窗口已显示，检查测试弹窗');
   const settingsTab = await page(port, '/ui/settings/index.html', child, deadline);
+  assert.deepEqual(await evaluate(settingsTab, `({
+    diagnosticsVisible: document.querySelector('#diagnostics').checkVisibility(),
+    listenerVisible: document.querySelector('#listener-state').checkVisibility(),
+    versionVisible: document.querySelector('#update-state').checkVisibility(),
+    channelsVisible: document.querySelector('#desktop').checkVisibility(),
+    quietVisible: document.querySelector('#quiet').checkVisibility(),
+    saveVisible: document.querySelector('#save').checkVisibility()
+  })`), { diagnosticsVisible: false, listenerVisible: false, versionVisible: false,
+    channelsVisible: true, quietVisible: true, saveVisible: true });
+  await screenshot(settingsTab, 'settings-clean');
+  await evaluate(settingsTab, `document.querySelector('#feishu-state').click(); true`);
+  assert.equal(await evaluate(settingsTab, `document.querySelector('#feishu-connection').open`), true, '连接状态入口应展开对应设置');
+  await evaluate(settingsTab, `document.querySelector('#feishu-connection').open = false;
+    document.querySelector('#connection-diagnostics').open = true; true`);
+  assert.equal(await evaluate(settingsTab, `document.querySelector('#diagnostics').checkVisibility()`), true);
+  await evaluate(settingsTab, `document.querySelector('#connection-diagnostics').open = false; true`);
   const form = await evaluate(settingsTab, `(() => {
     document.querySelector('#quiet').checked = true;
     document.querySelector('#quiet').dispatchEvent(new Event('input', {bubbles:true}));
@@ -485,7 +517,7 @@ try {
     document.querySelector('#save').click();
     return { error: document.querySelector('#status').textContent, footerVisible: document.querySelector('footer').getBoundingClientRect().bottom <= window.innerHeight + 1 };
   })()`);
-  assert.match(form.error, /不能相同/);
+  assert.match(form.error, /不能为空或相同/);
   assert.equal(form.footerVisible, true);
   await evaluate(settingsTab, `document.querySelector('#quiet').checked = false;
     document.querySelector('#quiet').dispatchEvent(new Event('input', {bubbles:true})); true`);
@@ -503,11 +535,21 @@ try {
   do {
     reminder = await evaluate(reminderTab, `({name: document.querySelector('#name')?.textContent,
       expiry: document.querySelector('#expiry')?.textContent})`);
-    if (reminder.name?.includes('演示重置卡') && reminder.expiry?.includes('到期时间')) break;
+    if (reminder.name?.includes('演示重置卡') && reminder.expiry?.includes('到期')) break;
     await sleep(200);
   } while (Date.now() < deadline);
   assert.match(reminder.name, /演示重置卡/);
-  assert.match(reminder.expiry, /到期时间/);
+  assert.match(reminder.expiry, /到期/);
+  assert.deepEqual(await evaluate(reminderTab, `({
+    countVisible: document.querySelector('#count').checkVisibility(),
+    syncVisible: document.querySelector('#sync').checkVisibility(),
+    expiryVisible: document.querySelector('#expiry').checkVisibility(),
+    demoLabel: document.querySelector('#heading').textContent.includes('测试'),
+    extraConfirm: Boolean(document.querySelector('#later')),
+    footerFits: document.querySelector('footer').getBoundingClientRect().bottom <= window.innerHeight,
+    oneLineName: getComputedStyle(document.querySelector('#name')).whiteSpace === 'nowrap'
+  })`), { countVisible: false, syncVisible: false, expiryVisible: true, demoLabel: true,
+    extraConfirm: false, footerFits: true, oneLineName: true });
   await screenshot(reminderTab, 'reminder');
   console.log('演示提醒内容已显示，检查关闭弹窗与保存设置');
   // 关闭会销毁调用方页面；确认窗口消失，不把丢失 CDP 回执误判为应用卡住。

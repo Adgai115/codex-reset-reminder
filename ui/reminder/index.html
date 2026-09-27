@@ -12,14 +12,17 @@
     color: #9a410d; padding: 12px 15px; -webkit-app-region: drag; }
   header button { -webkit-app-region: no-drag; border: 0; background: transparent; color: inherit;
     cursor: pointer; font-size: 19px; }
-  main { padding: 12px 17px; flex: 1; min-height: 0; }
+  main { padding: 12px 17px; flex: 1; min-height: 0; overflow-y:auto; }
   .days { font-size: 25px; font-weight: 700; color: #eb5b13; }
-  #name { font-weight: 600; overflow-wrap: anywhere; margin: 7px 0; display: -webkit-box;
-    -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #name { font-weight:600; margin:7px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #expiry { font-variant-numeric:tabular-nums; white-space:nowrap; }
   .meta { color: #64748b; font-size: 12px; line-height: 1.65; }
-  #error { color: #b42318; min-height: 18px; font-size: 12px; overflow-wrap: anywhere; }
+  details { margin-top:8px; }
+  summary { cursor:pointer; }
+  #error { color: #b42318; font-size:12px; overflow-wrap:anywhere; }
+  #error:empty { display:none; }
   footer { display: flex; gap: 6px; padding: 0 17px 15px; }
-  button, select { font: inherit; }
+  button, select { font:inherit; white-space:nowrap; }
   footer button, select { border: 1px solid #cad3df; background: white; border-radius: 7px;
     padding: 7px 9px; cursor: pointer; }
   footer button:first-child { background: #ee641b; border-color: #ee641b; color: white; }
@@ -29,17 +32,17 @@
 </style>
 </head>
 <body>
-<header><strong>◉ Codex 重置卡即将到期</strong><button id="close" aria-label="关闭">×</button></header>
+<header><strong id="heading">Codex 重置卡</strong><button id="close" aria-label="关闭">×</button></header>
 <main>
   <div class="days" id="days">即将到期</div>
   <div id="name">加载中…</div>
-  <div class="meta"><div id="expiry"></div><div id="count"></div><div id="sync"></div></div>
+  <div id="expiry" class="meta"></div>
+  <details class="meta" id="reminder-details"><summary>详情</summary><div id="count"></div><div id="sync"></div></details>
   <div id="error" role="alert"></div>
 </main>
 <footer>
-  <button id="open">打开 Codex 网页</button>
+  <button id="open" title="打开 Codex 网页">打开 Codex</button>
   <select id="option" aria-label="稍后提醒时间"></select>
-  <button id="later">稍后提醒</button>
 </footer>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -48,22 +51,28 @@
   window.api.onReminderData((payload) => {
     const remainingDays = Math.max(0, Math.ceil((payload.expiresAt * 1000 - Date.now()) / 86400000));
     const hours = Math.ceil((payload.expiresAt * 1000 - Date.now()) / 3600000);
-    $('days').textContent = hours <= 0 ? '已到期' : hours < 24 ? `不足 ${Math.max(1, hours)} 小时` : `还有 ${remainingDays} 天`;
+    $('heading').textContent = payload.simulated ? 'Codex 测试提醒' : 'Codex 重置卡';
+    $('days').textContent = hours <= 0 ? '已到期' : hours < 24 ? `不足 ${Math.max(1, hours)} 小时` : `${remainingDays} 天后到期`;
     $('name').textContent = payload.cardName;
     $('name').title = payload.cardName;
-    $('expiry').textContent = `到期时间：${payload.expiresLocal}`;
+    $('expiry').textContent = `到期 ${payload.expiresLocal}`;
     $('count').textContent = Number.isInteger(payload.currentAvailableCount)
       ? `最近可用：${payload.currentAvailableCount} 张` : '可用数量：尚未核对';
-    $('sync').textContent = payload.simulated ? '这是测试提醒，不会修改真实卡片。' : payload.syncedAt
+    $('sync').textContent = payload.simulated ? '演示数据' : payload.syncedAt
       ? `上次核对：${new Date(payload.syncedAt * 1000).toLocaleString('zh-CN', { hour12: false })}` : '';
     $('option').replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
+    placeholder.textContent = '稍后提醒';
+    $('option').appendChild(placeholder);
     for (const choice of payload.snoozeOptions || []) {
       const option = document.createElement('option'); option.value = choice.option; option.textContent = choice.label;
       $('option').appendChild(option);
     }
-    hasOptions = $('option').options.length > 0;
-    $('option').disabled = $('later').disabled = !hasOptions;
-    if (!hasOptions) $('error').textContent = '已临近到期，无法延期到这些固定时间。';
+    hasOptions = $('option').options.length > 1;
+    $('option').disabled = !hasOptions;
+    if (!hasOptions) placeholder.textContent = '无法延期';
+    $('option').title = hasOptions ? '选择后立即生效' : '可选时间均已超过到期时间';
   });
   async function act(action, option) {
     if (busy) return;
@@ -74,12 +83,16 @@
     finally {
       busy = false;
       document.querySelectorAll('button, select').forEach((element) => { element.disabled = false; });
-      $('option').disabled = $('later').disabled = !hasOptions;
+      $('option').disabled = !hasOptions;
     }
   }
   $('close').addEventListener('click', () => act('dismiss'));
   $('open').addEventListener('click', () => act('open'));
-  $('later').addEventListener('click', () => act('snooze', $('option').value));
+  $('option').addEventListener('change', () => {
+    const option = $('option').value;
+    $('option').value = '';
+    act('snooze', option);
+  });
 </script>
 </body>
 </html>
