@@ -48,13 +48,28 @@ $syncLabel.SetBounds(26, 61, 780, 22)
 $syncLabel.ForeColor = [System.Drawing.Color]::FromArgb(98, 107, 124)
 $form.Controls.Add($syncLabel)
 
+$activeFilter = [System.Windows.Forms.RadioButton]::new()
+$activeFilter.SetBounds(26, 85, 120, 23)
+$activeFilter.Checked = $true
+$form.Controls.Add($activeFilter)
+$historyFilter = [System.Windows.Forms.RadioButton]::new()
+$historyFilter.SetBounds(149, 85, 125, 23)
+$form.Controls.Add($historyFilter)
+$sameNameHint = [System.Windows.Forms.Label]::new()
+$sameNameHint.Text = '同名卡请按编号和到期时间区分'
+$sameNameHint.SetBounds(294, 86, 300, 22)
+$sameNameHint.ForeColor = [System.Drawing.Color]::FromArgb(98, 107, 124)
+$form.Controls.Add($sameNameHint)
+$script:cardsSnapshot = @()
+
 $list = [System.Windows.Forms.ListView]::new()
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.GridLines = $false
 $list.MultiSelect = $false
+$list.ShowItemToolTips = $true
 $list.Anchor = 'Top,Bottom,Left,Right'
-$list.SetBounds(24, 100, 785, 245)
+$list.SetBounds(24, 112, 785, 233)
 $null = $list.Columns.Add('卡片名称', 175)
 $null = $list.Columns.Add('来源', 70)
 $null = $list.Columns.Add('到期时间', 170)
@@ -82,7 +97,9 @@ function Format-ReminderKind([string]$kind) {
 function Update-ReminderSelection {
     if ($list.SelectedItems.Count -eq 0) {
         $laterButton.Enabled = $false
-        $reminderLabel.Text = '选择卡片可查看下次提醒，并在这里调整提醒时间。'
+        $reminderLabel.Text = if ($list.Items.Count -eq 0) {
+            if ($historyFilter.Checked) { '暂无历史卡片。' } else { '暂无可用卡片；可立即同步 Codex。' }
+        } else { '选择卡片可查看下次提醒，并在这里调整提醒时间。' }
         return
     }
     $card = $list.SelectedItems[0].Tag
@@ -108,12 +125,19 @@ function Update-ReminderSelection {
     }
 }
 
-function Refresh-Cards {
+function Test-CardIsActive($card, [long]$now) {
+    return ($card.status -eq 'available' -and [long]$card.expiresAt -gt $now)
+}
+
+function Render-Cards {
     $selectedId = if ($list.SelectedItems.Count -gt 0) { [string]$list.SelectedItems[0].Tag.id } else { $null }
-    $response = Invoke-Cards -arguments @('list')
-    $script:cardListChannels = @($response.channels)
+    $now = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+    $activeCount = @($script:cardsSnapshot | Where-Object { Test-CardIsActive $_ $now }).Count
+    $activeFilter.Text = "可用卡 ($activeCount)"
+    $historyFilter.Text = "历史卡 ($($script:cardsSnapshot.Count - $activeCount))"
     $list.Items.Clear()
-    foreach ($card in $response.cards) {
+    foreach ($card in $script:cardsSnapshot) {
+        if ((Test-CardIsActive $card $now) -eq $historyFilter.Checked) { continue }
         $expiry = [DateTimeOffset]::FromUnixTimeSeconds([long]$card.expiresAt).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
         $item = [System.Windows.Forms.ListViewItem]::new([string]$card.title)
         $null = $item.SubItems.Add($(if ($card.source -eq 'codex') { 'Codex' } else { '手动' }))
@@ -121,19 +145,29 @@ function Refresh-Cards {
         $null = $item.SubItems.Add($(if ($card.status -eq 'available' -and $card.reportedUsedAt) { '待核实' }
             else { switch ($card.status) { 'available' { '可用' } 'used' { '已使用' } default { '不可用' } } }))
         $null = $item.SubItems.Add([string]$card.id)
+        $item.ToolTipText = "编号：$($card.id)"
         $item.Tag = $card
         $null = $list.Items.Add($item)
         if ($card.id -eq $selectedId) { $item.Selected = $true }
     }
+    Update-ReminderSelection
+}
+
+function Refresh-Cards {
+    $response = Invoke-Cards -arguments @('list')
+    $script:cardsSnapshot = @($response.cards)
+    $script:cardListChannels = @($response.channels)
+    Render-Cards
     $syncLabel.Text = if ($response.latestSync) {
         $time = [DateTimeOffset]::FromUnixTimeSeconds([long]$response.latestSync.checkedAt).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
         $count = if ($response.latestCompleteSync) { "  ·  最近同步可用 $($response.latestCompleteSync.availableCount) 张" } else { '' }
         "上次 Codex 同步：$time（$($response.latestSync.outcome)）$count"
     } else { '尚未同步 Codex；可点击“立即同步 Codex”。' }
-    Update-ReminderSelection
 }
 
 $list.Add_SelectedIndexChanged({ Update-ReminderSelection })
+$activeFilter.Add_CheckedChanged({ if ($activeFilter.Checked) { Render-Cards } })
+$historyFilter.Add_CheckedChanged({ if ($historyFilter.Checked) { Render-Cards } })
 
 $laterButton = [System.Windows.Forms.Button]::new()
 $laterButton.Text = '提醒时间'
@@ -194,6 +228,17 @@ $form.Controls.Add($syncStatusLabel)
 
 Refresh-Cards
 if ($SmokeTest) {
+    $expectedActive = @($script:cardsSnapshot | Where-Object {
+        Test-CardIsActive $_ ([DateTimeOffset]::Now.ToUnixTimeSeconds()) }).Count
+    if ($list.Items.Count -ne $expectedActive -or @($list.Items | Where-Object {
+        -not (Test-CardIsActive $_.Tag ([DateTimeOffset]::Now.ToUnixTimeSeconds())) }).Count -ne 0) {
+        throw '可用卡筛选结果不正确'
+    }
+    $historyFilter.Checked = $true
+    if ($list.Items.Count -ne ($script:cardsSnapshot.Count - $expectedActive) -or @($list.Items | Where-Object {
+        Test-CardIsActive $_.Tag ([DateTimeOffset]::Now.ToUnixTimeSeconds()) }).Count -ne 0) {
+        throw '历史卡筛选结果不正确'
+    }
     $form.Opacity = 0
     $form.Add_Shown({ $form.Close() })
 }
