@@ -27,7 +27,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   }
   if (op === 'runReminders') {
     let accountScopeId = null;
-    try { accountScopeId = await verifiedScope(); } catch { /* 手动卡仍可提醒。 */ }
+    try { accountScopeId = await verifiedScope(); } catch { /* 未核实账号时暂停卡片提醒。 */ }
     return runReminders({ configPath: configPath(), desktop, trackAttempts: true,
       ...args, allowCodex: Boolean(accountScopeId), accountScopeId });
   }
@@ -71,13 +71,13 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
             && (days === null || snooze.targetAt >= card.expiresAt - days * 86400);
         };
         return { channels, latest: store.latestSync(db), confirmed, account,
-          cards: store.listCards(db, true).filter((card) => card.source === 'manual'
-            || !boundScopeId || card.accountScopeId === boundScopeId).map((card) => {
+          cards: store.listCards(db, true).filter((card) => card.source === 'codex'
+            && (!boundScopeId || card.accountScopeId === boundScopeId)).map((card) => {
             const snooze = store.getSnooze(db, card.id);
             return { ...card, snooze,
               deliveryResults: store.listReminderResults(db, card.id).map((result) => {
                 const activeNode = nodeIsCurrent(card, snooze, result);
-                const accountReady = card.source === 'manual' || account.state === 'verified';
+                const accountReady = account.state === 'verified';
                 const retryOpen = activeNode && result.state === 'failed'
                   && result.attempts < maxReminderAttempts;
                 return { ...result,
@@ -97,9 +97,12 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
       case 'listCards': {
         const boundScopeId = store.getActiveAccountScope(db)?.scopeId ?? null;
         return store.listCards(db, args.includeInactive === true).filter((card) =>
-          card.source === 'manual' || !boundScopeId || card.accountScopeId === boundScopeId);
+          card.source === 'codex' && (!boundScopeId || card.accountScopeId === boundScopeId));
       }
-      case 'getCard': return store.getCard(db, value(args.cardId));
+      case 'getCard': {
+        const card = store.getCard(db, value(args.cardId));
+        return card?.source === 'codex' ? card : null;
+      }
       case 'latestSync': return store.latestSync(db);
       case 'latestCompleteSync': return store.latestCompleteSync(db);
       case 'dueUsageVerifications': return store.listDueUsageVerifications(db);
@@ -109,33 +112,22 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
           accountScopeId: store.getActiveAccountScope(db)?.scopeId ?? null });
       }
       case 'snooze': return store.getSnooze(db, value(args.cardId));
-      case 'addManualCard': return { id: store.addManualCard(db, {
-        title: value(args.title), expiresAt: args.expiresAt,
-      }) };
-      case 'updateManualCard': return { updated: store.updateManualCard(db, value(args.cardId), {
-        title: value(args.title), expiresAt: args.expiresAt,
-      }) };
-      case 'markManualUsed': {
-        const card = store.getCard(db, value(args.cardId));
-        if (card?.source !== 'manual' || card.status !== 'available') {
-          throw new Error('只有可用的手动卡片能直接标记已使用');
-        }
-        return { updated: store.markCardUsed(db, card.id) };
-      }
       case 'reportCardUsed': {
         requireCardInScope(value(args.cardId), await verifiedScope());
         return { card: store.reportCardUsed(db, value(args.cardId)) };
       }
       case 'scheduleSnooze': {
         const card = store.getCard(db, value(args.cardId));
-        if (card?.source === 'codex') requireCardInScope(card.id, await verifiedScope());
+        if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
+        requireCardInScope(card.id, await verifiedScope());
         const plan = planSnooze(card, value(args.option));
         store.scheduleSnooze(db, card.id, card.expiresAt, plan.targetAt);
         return plan;
       }
       case 'clearSnooze': {
         const card = store.getCard(db, value(args.cardId));
-        if (card?.source === 'codex') requireCardInScope(card.id, await verifiedScope());
+        if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
+        requireCardInScope(card.id, await verifiedScope());
         const snooze = card && store.getSnooze(db, card.id);
         if (card?.status !== 'available' || snooze?.expiresAt !== card.expiresAt) {
           throw new Error('这张卡片没有可取消的延期提醒');

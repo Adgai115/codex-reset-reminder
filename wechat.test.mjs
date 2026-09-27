@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-wechat-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const { addManualCard, deliveryExists, getSnooze, openStore, scheduleSnooze } = await import('./store.mjs');
+const { saveCodexSnapshot, deliveryExists, getSnooze, openStore, scheduleSnooze } = await import('./store.mjs');
 const { planNextCheck } = await import('./plan-next.mjs');
 const { runReminders } = await import('./remind.mjs');
 const { buildWechatTemplate } = await import('./wechat.mjs');
@@ -29,8 +29,10 @@ test('WeChat reminder deduplicates fixed and snoozed sends alongside desktop', a
   const now = Math.floor(Date.now() / 1000);
   const expiry = now + 7 * 86400;
   const db = openStore();
-  let id;
-  try { id = addManualCard(db, { title: '到期卡', expiresAt: expiry }); }
+  const id = 'wechat-test-credit';
+  try { saveCodexSnapshot(db, { availableCount: 1, credits: [
+    { id, title: '到期卡', status: 'available', expiresAt: expiry },
+  ] }, now); }
   finally { db.close(); }
   const calls = [];
   const handlers = { configPath, desktop: async () => calls.push('desktop'),

@@ -50,9 +50,9 @@ export function syncDescription(snapshot, now = Date.now() / 1000) {
   if (snapshot.account?.state === 'mismatch') return '当前 CLI 账号与缓存绑定账号不一致；Codex 卡同步和提醒已暂停。';
   if (snapshot.account?.state === 'needsBinding') return '现有 Codex 卡等待绑定原账号；绑定前暂停同步和提醒。';
   if (['unavailable', 'unidentified'].includes(snapshot.account?.state))
-    return '暂时无法核实 Codex 账号；Codex 卡同步和提醒已暂停，手动卡继续工作。';
+    return '暂时无法核实 Codex 账号；卡片同步和提醒已暂停，请检查连接后重新核对。';
   const { latest, confirmed } = snapshot;
-  if (!latest) return '尚未同步 Codex；手动卡可独立提醒。';
+  if (!latest) return '尚未同步 Codex；点击“立即同步 Codex”读取官方重置卡。';
   const checked = confirmed ? `上次完整核对 ${formatTime(confirmed.checkedAt)}` : '尚无完整核对记录';
   if (latest.outcome !== 'complete') return `${latest.outcome === 'failed' ? '同步失败' : '同步详情不完整'} · ${checked}。已保存的卡片继续提醒。`;
   const stale = now - latest.checkedAt > 86400 ? ' · 超过 24 小时未核对，建议立即同步' : '';

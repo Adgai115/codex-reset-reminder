@@ -154,7 +154,7 @@ test('overlapping checks claim one in-flight channel attempt', async () => {
   assert.equal(attempt().attempts, 1);
 });
 
-test('unverified Codex identity pauses only Codex cards', async () => {
+test('unverified Codex identity pauses reminders and legacy local records never send', async () => {
   seed(); config({ desktop: { enabled: true }, feishu: { enabled: false } });
   const db = openStore();
   let manualId;
@@ -163,8 +163,12 @@ test('unverified Codex identity pauses only Codex cards', async () => {
   const shown = [];
   await runReminders({ configPath, nowSeconds: now, trackAttempts: true,
     allowCodex: false, desktop: async (payload) => shown.push(payload.creditId) });
-  assert.deepEqual(shown, [manualId]);
+  assert.deepEqual(shown, []);
   assert.equal(attempt(), null);
+  await runReminders({ configPath, nowSeconds: now, trackAttempts: true,
+    desktop: async (payload) => shown.push(payload.creditId) });
+  assert.equal(shown.includes(manualId), false);
+  assert.equal(shown.length, 1);
 });
 
 process.on('exit', () => rmSync(directory, { recursive: true, force: true }));

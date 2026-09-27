@@ -3,7 +3,7 @@ import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
 import { patchFeishuCard, updateFeishuCard } from './feishu.mjs';
 import { getSnoozeOptions, planSnooze } from './later.mjs';
 import { claimCardActionEvent, completeCardActionEvent, getCard, getFeishuMessage,
-  getSnooze, latestCompleteSync, markCardUsed, openStore, recordFeishuMessage,
+  getSnooze, latestCompleteSync, openStore, recordFeishuMessage,
   reportCardUsed, scheduleSnooze, setFeishuMessageStatus } from './store.mjs';
 
 export function parseCardAction(event) {
@@ -67,6 +67,12 @@ export async function handleCardAction(event, config, { db = openStore(),
       }
     };
 
+    if (card && !isOfficialCodexCard(card)) {
+      setFeishuMessageStatus(db, message.messageId, 'unavailable');
+      await updateCard('unavailable', '这是一条旧版本地记录，不属于官方重置卡；卡片操作和提醒已停止。');
+      return 'retired_local';
+    }
+
     if (isOfficialCodexCard(card) && verifyCardAction) {
       try { await verifyCardAction(card); }
       catch {
@@ -82,9 +88,7 @@ export async function handleCardAction(event, config, { db = openStore(),
         try { statusInfo = await refreshStatus(); } catch { /* Keep the confirmed state. */ }
       }
       setFeishuMessageStatus(db, message.messageId, 'used');
-      await updateCard('used', isOfficialCodexCard(card)
-        ? 'Codex 已确认该卡不再可用，后续到期提醒已停止。'
-        : '手动卡片已在本地标记为已使用。', statusInfo);
+      await updateCard('used', 'Codex 已确认该卡不再可用，后续到期提醒已停止。', statusInfo);
       return parsed.action === 'refresh' ? 'refreshed' : 'already_used';
     }
     if (!card || card.expiresAt !== message.expiresAt || card.status !== 'available'
@@ -171,19 +175,11 @@ export async function handleCardAction(event, config, { db = openStore(),
         return 'already_pending';
       }
       if (!claimCardActionEvent(db, event.event_id, event.message_id, 'use')) return 'duplicate';
-      if (isOfficialCodexCard(card)) {
-        card = reportCardUsed(db, card.id);
-        setFeishuMessageStatus(db, message.messageId, 'pending_verification');
-        completeCardActionEvent(db, event.event_id, 'pending_verification');
-        await updateCard('pending_verification', '已记录使用反馈；未调用 Codex 用卡。最早 10 分钟后自动核实。');
-        return 'pending_verification';
-      }
-      markCardUsed(db, card.id);
-      card = getCard(db, card.id);
-      setFeishuMessageStatus(db, message.messageId, 'used');
-      completeCardActionEvent(db, event.event_id, 'used_local');
-      await updateCard('used', '手动卡片已在本地标记为已使用。');
-      return 'used_local';
+      card = reportCardUsed(db, card.id);
+      setFeishuMessageStatus(db, message.messageId, 'pending_verification');
+      completeCardActionEvent(db, event.event_id, 'pending_verification');
+      await updateCard('pending_verification', '已记录使用反馈；未调用 Codex 用卡。最早 10 分钟后自动核实。');
+      return 'pending_verification';
     }
 
     if (parsed.action === 'later') {

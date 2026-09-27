@@ -10,7 +10,7 @@
 
 首次启动先进入“安装与连接”：自动查找 Codex CLI，可手动浏览路径；验证 Usage 读取成功后才进入卡片管理。应用启动时和每天 08:30 同步一次；同步失败时继续检查已缓存的卡片。可选择登录系统时自动启动。Windows 机器若检测到旧版计划任务及 `.state\data.db`，会先询问是否迁移卡片、发送记录和飞书配置。数据复制后会核实旧任务已停用；若停用失败，新版不会启动提醒，重启后可继续检查。选择暂不迁移会退出应用，旧版保持运行。桌面版设置保存在系统的 Electron `userData` 目录；开发版仍读取仓库 `config.json` 和 `.state`，便于与旧版共存。
 
-卡片管理可以新增、编辑、标记手动卡已使用，记录正式卡的使用反馈，设置或取消延期，以及手动同步 Codex。提醒设置可以开关桌面与飞书渠道、免打扰、提醒前核对、登录自启，并测试桌面弹窗。飞书连接需另行安装本机 `lark-cli`，在设置页输入 App ID、接收人 ID、`lark-cli` 脚本路径和 App Secret；应用先发送测试私聊，成功后才保存连接。密钥由本机 `lark-cli` 保管，不写入应用配置。连接完成后字段锁定；“重新连接”需要二次确认。微信渠道本版不启用。
+重置卡由 Codex 官方发放。卡片管理只读取官方卡片的名称、编号和到期时间，支持记录使用反馈、设置或取消延期，以及手动同步 Codex；不提供新增卡片或编辑官方资料。旧版手动记录保留在数据库中，不再列入卡片管理或参与提醒。提醒设置可以开关桌面与飞书渠道、免打扰、提醒前核对、登录自启，并测试桌面弹窗。飞书连接需另行安装本机 `lark-cli`，在设置页输入 App ID、接收人 ID、`lark-cli` 脚本路径和 App Secret；应用先发送测试私聊，成功后才保存连接。密钥由本机 `lark-cli` 保管，不写入应用配置。连接完成后字段锁定；“重新连接”需要二次确认。微信渠道本版不启用。
 
 卡片管理默认显示未过期的可用卡；已使用、过期和失效的卡收在“历史卡”。每张卡显示核心计划计算的下一次提醒或补查状态。后台同步、飞书交互、设置保存后会刷新列表；同步失败会保留缓存，并明确显示最近完整核对时间。临近到期时不会提供越过有效期的延期选项。
 
@@ -112,7 +112,7 @@ pwsh -NoProfile -File .\setup-feishu.ps1
 
 `fieldMap` 的键必须与公众号模板中的字段键完全一致，值从 `cardName`、`cardId`、`expiresAt`、`remainingDays`、`availableCount` 中选。例如模板确有 `thing1` 和 `time2` 两个字段时可配置：`{"thing1":"cardName","time2":"expiresAt"}`。程序仅在微信接口返回成功时记录该渠道已发送；失败会由下次本地检查重试。微信 API 调用不使用 Codex 模型 Token；电脑关机或本机无法访问微信接口时无法即时发送。
 
-## 查看与手动维护卡片
+## 查看卡片与调整提醒
 
 打开主页面：
 
@@ -120,22 +120,19 @@ pwsh -NoProfile -File .\setup-feishu.ps1
 pwsh -NoProfile -File .\open-manage.ps1
 ```
 
-窗口可查看卡片、上次同步状态和下次提醒，并可调整提醒时间或立即同步 Codex。桌面提醒只打开 Codex 或安排稍后提醒；新飞书卡片的“立即使用”经二次确认后调用正式用卡接口。手动卡片仍可通过以下命令行维护：
+窗口可查看官方卡片、上次同步状态和下次提醒，并可调整提醒时间或立即同步 Codex。桌面提醒只打开 Codex 或安排稍后提醒；新飞书卡片的“立即使用”经二次确认后调用正式用卡接口。
 
 也可用命令行：
 
 ```powershell
 node .\cards.mjs list
-node .\cards.mjs add "备用重置卡" "2026-10-01T18:00"
-node .\cards.mjs edit "manual:..." "备用重置卡" "2026-10-02T18:00"
-node .\cards.mjs used "manual:..."
 node .\cards.mjs report-used "RateLimitResetCredit_..."
 node .\cards.mjs options "RateLimitResetCredit_..."
 node .\cards.mjs later "RateLimitResetCredit_..." 1d
 node .\cards.mjs unsnooze "RateLimitResetCredit_..."
 ```
 
-到期时间使用电脑的本地时区。手动卡片的编号由程序生成。
+到期时间使用电脑的本地时区，始终以 Codex 同步结果为准。旧版 `add`、`edit`、`used` 手动卡命令已停用；测试数据由隔离测试脚本准备。
 
 ## 检查与测试
 

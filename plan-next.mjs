@@ -24,7 +24,7 @@ export function planCardNextCheck(db, card, { channels = ['desktop'], quiet = nu
       nextKind = kind;
     }
   };
-  if (card.status === 'available' && card.expiresAt > nowSeconds) {
+  if (card.source === 'codex' && card.status === 'available' && card.expiresAt > nowSeconds) {
     const snooze = getSnooze(db, card.id);
     const activeSnooze = snooze?.expiresAt === card.expiresAt ? snooze : null;
     const currentDays = dueThreshold(card.expiresAt, nowSeconds);

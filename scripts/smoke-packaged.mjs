@@ -1,12 +1,14 @@
 // 在隔离的临时数据目录中启动已打包应用，检查真实渲染进程和 preload。
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createMockCodex } from './mock-codex.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -143,6 +145,9 @@ const setupOnly = process.argv.includes('--setup');
 const p0Only = process.argv.includes('--p0');
 const background = process.argv.includes('--background');
 const nativeDialogs = process.platform === 'win32' && process.argv.includes('--native-dialogs');
+const mockAccount = { account: { type: 'chatgpt', email: 'ci@example.invalid' }, requiresOpenaiAuth: true };
+const accountFile = join(profile, 'mock-account.json');
+const activeCardId = 'RateLimitResetCredit_ciActive';
 let child;
 let logs = '';
 async function clickNative(name) {
@@ -161,33 +166,51 @@ async function clickNative(name) {
 try {
   const appPath = await executable();
   assert.ok(existsSync(appPath), `安装包程序不存在：${appPath}`);
-  // 用隔离的假卡和不存在的 Codex 命令，保证测试不会消耗真实卡或发送消息。
+  // 使用隔离的官方卡响应与模拟 CLI；生产接口不提供创建卡片的测试后门。
   if (!setupOnly) {
     process.env.CODEX_RESET_MONITOR_DATA_DIR = profile;
-    const { openStore, addManualCard, recordReminderResult } = await import('../core/store.mjs');
+    const mockCli = await createMockCodex(profile);
+    await writeFile(accountFile, JSON.stringify(mockAccount));
+    const { openStore, addManualCard, bindAccountScope, markCardUsed,
+      recordReminderResult, saveCodexSnapshot } = await import('../core/store.mjs');
     const db = openStore();
     try {
       const now = Math.floor(Date.now() / 1000);
+      const scopeId = 'ci-fixture-scope';
+      bindAccountScope(db, { scopeId,
+        emailHash: createHash('sha256').update(`${scopeId}\0${mockAccount.account.email}`).digest('hex'),
+        workspaceHash: null, displayName: 'c***@example.invalid' });
       if (p0Only) {
         const expiresAt = now + 7 * 86400;
-        const cardId = addManualCard(db, { title: 'CI 补发演示卡', expiresAt });
+        const cardId = 'RateLimitResetCredit_ciRetry';
+        saveCodexSnapshot(db, { availableCount: 1, credits: [
+          { id: cardId, title: 'CI 补发演示卡', status: 'available', expiresAt },
+        ] }, now, scopeId);
         recordReminderResult(db, { cardId, expiresAt, nodeKind: 'fixed', nodeAt: now,
           thresholdDays: 7 }, 'desktop', { state: 'failed', attemptedAt: now,
           nextRetryAt: now + 3600, errorCode: 'send_failed',
           errorText: '桌面弹窗失败；请在提醒设置中测试桌面弹窗。' });
       } else {
-        addManualCard(db, { title: 'CI 演示重置卡', expiresAt: now + 10 * 86400 });
-        addManualCard(db, { title: 'CI 即将到期卡', expiresAt: now + 3600 });
-        const expired = addManualCard(db, { title: 'CI 过期卡', expiresAt: now + 60 });
-        db.prepare('UPDATE cards SET expires_at = ? WHERE id = ?').run(now - 60, expired);
+        const active = [
+          { id: activeCardId, title: 'CI 演示重置卡', status: 'available', expiresAt: now + 10 * 86400 },
+          { id: 'RateLimitResetCredit_ciNear', title: 'CI 即将到期卡', status: 'available', expiresAt: now + 3600 },
+        ];
+        saveCodexSnapshot(db, { availableCount: 4, credits: [...active,
+          { id: 'RateLimitResetCredit_ciExpired', title: 'CI 过期卡', status: 'available', expiresAt: now - 60 },
+          { id: 'RateLimitResetCredit_ciUsed', title: 'CI 已使用卡', status: 'available', expiresAt: now + 8 * 86400 },
+        ] }, now - 200, scopeId);
+        markCardUsed(db, 'RateLimitResetCredit_ciUsed');
+        saveCodexSnapshot(db, { availableCount: 2, credits: active }, now - 100, scopeId);
       }
+      addManualCard(db, { title: 'CI 旧手动记录', expiresAt: now + 86400 });
     }
     finally { db.close(); }
     const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
-    config.codexScript = join(profile, 'codex-does-not-exist');
+    config.codexScript = mockCli;
     config.desktop.enabled = p0Only;
     if (p0Only) config.reminders.quietHours.enabled = false;
     config.feishu.enabled = false;
+    if (config.wechat) config.wechat.enabled = false;
     await writeFile(join(profile, 'config.json'), JSON.stringify(config));
   }
   const port = await freePort();
@@ -253,18 +276,25 @@ try {
     const manage = await page(port, '/ui/manage/index.html', child, deadline);
     await until(manage, `document.querySelector('#cards tbody')?.textContent.includes('CI 补发演示卡')
       && document.querySelector('#cards tbody')?.textContent.includes('桌面等待重试')`, '补发结果展示');
-    await until(manage, `document.querySelector('#account-status')?.textContent.includes('无法读取 Codex 账号身份')`,
-      '账号不可核实提示');
+    await until(manage, `document.querySelector('#account-status')?.textContent.includes('缓存绑定')`,
+      '模拟账号已核实');
     const initial = await evaluate(manage, `({
       account: document.querySelector('#account-status').textContent,
       retry: Array.from(document.querySelectorAll('#cards tbody button')).some(button => button.textContent === '重试失败渠道' && !button.disabled),
       error: document.querySelector('#cards tbody').textContent.includes('桌面弹窗失败')
     })`);
-    assert.match(initial.account, /无法读取 Codex 账号身份/);
+    assert.match(initial.account, /缓存绑定/);
     assert.equal(initial.retry, true);
     assert.equal(initial.error, true);
+    await rm(accountFile);
     await evaluate(manage, `document.querySelector('#check-account').click(); true`);
     await until(manage, `document.querySelector('#notice').textContent.includes('无法读取 Codex 账号身份')`, '账号重新核对结果');
+    assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
+      .some(button => button.textContent === '重试失败渠道')`), false);
+    await writeFile(accountFile, JSON.stringify(mockAccount));
+    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    await until(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
+      .some(button => button.textContent === '重试失败渠道' && !button.disabled)`, '账号恢复后可重试');
     const progress = await evaluate(manage, `(() => {
       const button = Array.from(document.querySelectorAll('#cards tbody button'))
         .find(item => item.textContent === '重试失败渠道');
@@ -282,7 +312,7 @@ try {
     await triggerWindow(reminderTab, `document.querySelector('#close').click(); true`);
     await untilClosed(port, '/ui/reminder/index.html');
     assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs),
-      '新增界面出现未处理脚本错误');
+      '界面出现未处理脚本错误');
     console.log(`P0 界面检查通过：${process.platform}，结果、账号状态、加载态和失败渠道补发`);
   } else {
   let cards;
@@ -296,40 +326,46 @@ try {
   assert.ok(cards.rows.some((row) => row.includes('CI 演示重置卡')), `卡片没有显示：${JSON.stringify(cards)}`);
   assert.ok(!cards.status?.includes('读取失败'), `卡片读取失败：${cards.status}`);
   const manage = await page(port, '/ui/manage/index.html', child, deadline);
+  await until(manage, `document.querySelector('#account-status').textContent.includes('缓存绑定')
+    && !document.querySelector('#sync').disabled`, '模拟账号核对和启动同步结束');
   const visible = await evaluate(manage, `({
     expired: document.querySelector('#cards tbody').textContent.includes('CI 过期卡'),
     nearDisabled: Array.from(document.querySelectorAll('#cards tbody tr')).find(row => row.textContent.includes('CI 即将到期卡'))?.querySelector('button')?.disabled,
-    overflow: document.documentElement.scrollWidth > window.innerWidth
+    overflow: document.documentElement.scrollWidth > window.innerWidth,
+    manual: document.querySelector('#cards tbody').textContent.includes('CI 旧手动记录'),
+    addOrEdit: Boolean(document.querySelector('#add, #card-dialog'))
+      || Array.from(document.querySelectorAll('#cards button')).some(button => button.textContent === '编辑')
   })`);
-  assert.deepEqual(visible, { expired: false, nearDisabled: true, overflow: false });
-  // 实际点击表单，验证错误显示在模态框内，并且允许修正后保存。
-  await evaluate(manage, `document.querySelector('#add').click();
-    document.querySelector('#card-title').value = 'CI 表单卡';
-    document.querySelector('#card-expiry').value = '2020-01-01T10:00';
-    document.querySelector('#save-card').click(); true`);
-  assert.equal(await evaluate(manage, `document.querySelector('#card-dialog').open && document.querySelector('#card-error').textContent.includes('晚于现在')`), true);
-  await screenshot(manage, 'validation');
-  await evaluate(manage, `(() => {
-    const date = new Date(Date.now() + 10 * 86400000);
-    document.querySelector('#card-expiry').value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
-    document.querySelector('#save-card').click(); return true;
+  assert.deepEqual(visible, { expired: false, nearDisabled: true, overflow: false, manual: false, addOrEdit: false });
+  const blocked = await evaluate(manage, `(async () => {
+    const errors = [];
+    for (const op of ['addManualCard', 'updateManualCard', 'markManualUsed']) {
+      try { await window.api.core(op, { cardId: '${activeCardId}', title: '改写官方卡', expiresAt: 9999999999 }); }
+      catch (error) { errors.push(error.message); }
+    }
+    return errors;
   })()`);
-  await until(manage, `!document.querySelector('#card-dialog').open && document.querySelector('#cards tbody').textContent.includes('CI 表单卡')`, '新增手动卡');
+  assert.equal(blocked.length, 3);
+  assert.ok(blocked.every(message => message.includes('不允许的页面操作')));
+  await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody tr'))
+    .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('button').click(); true`);
+  assert.equal(await evaluate(manage, `document.querySelector('#snooze-dialog').open`), true);
+  await evaluate(manage, `document.querySelector('#snooze-option').value = '1d';
+    document.querySelector('#save-snooze').click(); true`);
+  await until(manage, `!document.querySelector('#snooze-dialog').open
+    && document.querySelector('#cards tbody').textContent.includes('取消延期')`, '官方卡延期');
   const flow = await evaluate(manage, `(async () => {
-    const added = await window.api.core('addManualCard', {
-      title: 'CI 交互卡', expiresAt: Math.floor(Date.now() / 1000) + 10 * 86400
-    });
-    const snooze = await window.api.core('scheduleSnooze', { cardId: added.id, option: '1d' });
-    const scheduled = await window.api.core('snooze', { cardId: added.id });
-    await window.api.core('clearSnooze', { cardId: added.id });
-    const cleared = await window.api.core('snooze', { cardId: added.id });
-    await window.api.core('markManualUsed', { cardId: added.id });
-    const card = await window.api.core('getCard', { cardId: added.id });
-    return { snooze: Boolean(snooze.targetAt && scheduled?.targetAt), cleared: !cleared,
-      status: card.status };
+    const before = await window.api.core('getCard', { cardId: '${activeCardId}' });
+    const scheduled = await window.api.core('snooze', { cardId: before.id });
+    await window.api.core('clearSnooze', { cardId: before.id });
+    const cleared = await window.api.core('snooze', { cardId: before.id });
+    await window.api.core('reportCardUsed', { cardId: before.id });
+    const card = await window.api.core('getCard', { cardId: before.id });
+    return { snooze: Boolean(scheduled?.targetAt), cleared: !cleared, status: card.status,
+      reported: Boolean(card.reportedUsedAt), unchanged: card.title === before.title && card.expiresAt === before.expiresAt };
   })()`);
-  assert.deepEqual(flow, { snooze: true, cleared: true, status: 'used' });
-  await until(manage, `document.querySelector('#history-filter').textContent.includes('2')`, '后台操作后列表自动刷新');
+  assert.deepEqual(flow, { snooze: true, cleared: true, status: 'available', reported: true, unchanged: true });
+  await until(manage, `document.querySelector('#cards tbody').textContent.includes('等待使用核验')`, '使用反馈后列表自动刷新');
   await evaluate(manage, `document.querySelector('#history-filter').click(); true`);
   assert.equal(await evaluate(manage, `document.querySelector('#cards tbody').textContent.includes('CI 过期卡') && document.querySelector('#cards tbody').textContent.includes('已使用')`), true);
   await evaluate(manage, `document.querySelector('#active-filter').click(); true`);
@@ -337,7 +373,7 @@ try {
   assert.equal(await evaluate(manage, `document.querySelector('#sync').click(); document.querySelector('#sync').textContent`), '同步中…');
   await until(manage, `!document.querySelector('#sync').disabled && document.querySelector('#notice').textContent.includes('同步失败')`, '同步失败后恢复按钮和缓存列表');
   await screenshot(manage, 'manage');
-  console.log('卡片管理、加卡、延期和已使用流程通过，检查设置窗口');
+  console.log('官方卡展示、移除新增编辑、延期和使用反馈通过，检查设置窗口');
   // 打开新窗口后，旧窗口可能失焦；直接检查新窗口是否出现。
   await triggerWindow(manage, 'window.api.openSettings(); true');
   console.log('已请求设置窗口，等待页面与本地诊断');
@@ -403,7 +439,7 @@ try {
   // 保存只修改隔离配置，系统自启开关保持读取值，不注册测试启动项。
   await triggerWindow(settingsTab, `document.querySelector('#save').click(); true`);
   await untilClosed(port, '/ui/settings/index.html');
-  assert.equal(await evaluate(manage, `Boolean(window.api) && document.querySelector('#cards tbody').textContent.includes('CI 表单卡')`), true);
+  assert.equal(await evaluate(manage, `Boolean(window.api) && document.querySelector('#cards tbody').textContent.includes('CI 演示重置卡')`), true);
   const saved = JSON.parse(await readFile(join(profile, 'config.json'), 'utf8'));
   assert.equal(saved.reminders.quietHours.enabled, false);
   assert.equal(saved.desktop.enabled, false);
@@ -422,7 +458,13 @@ try {
     console.log('Windows 原生确认、收起到托盘、恢复和退出通过');
   }
   assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs), '运行中出现未处理脚本错误');
-  console.log(`安装包交互检查通过：${process.platform}，加卡、延期、设置和桌面弹窗`);
+  console.log(`安装包交互检查通过：${process.platform}，官方卡、延期、设置和桌面弹窗`);
+  }
+  if (!setupOnly) {
+    const requests = (await readFile(join(profile, 'mock-requests.log'), 'utf8')).trim().split(/\r?\n/);
+    assert.ok(requests.includes('account/read'));
+    assert.ok(requests.every(method => ['initialize', 'account/read', 'account/rateLimits/read'].includes(method)),
+      '安装包测试调用了只读接口以外的方法');
   }
 } catch (error) {
   console.error(error);

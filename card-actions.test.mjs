@@ -189,7 +189,7 @@ test('refresh checks Codex without consuming and can patch an expired callback t
   assert.deepEqual(patched, { messageId: 'om_credit-a', state: 'used' });
 });
 
-test('manual card use only changes local state', async () => {
+test('old manual-card buttons retire the message without using or changing the card', async () => {
   reset([]);
   const db = openStore();
   let id;
@@ -198,13 +198,21 @@ test('manual card use only changes local state', async () => {
     recordFeishuMessage(db, { messageId: 'om_manual', cardId: id, expiresAt: expiry,
       thresholdDays: 7, recipientOpenId: 'ou_owner' });
   } finally { db.close(); }
-  assert.equal(await handleCardAction(event('manual-consume', 'consume', 'om_manual'), config,
-    { consume: async () => { throw new Error('manual card must not call Codex'); },
-      update: async () => ({}) }), 'ignored');
-  assert.equal(await handleCardAction(event('manual-use', 'use', 'om_manual'), config,
-    { update: async () => ({}) }), 'used_local');
+  let consumeCalls = 0;
+  for (const action of ['consume', 'use', 'later']) {
+    assert.equal(await handleCardAction(event(`manual-${action}`, action, 'om_manual'), config,
+      { consume: async () => { consumeCalls++; },
+        update: async (_config, _token, _card, _days, state, _unused, notice) => {
+          assert.equal(state, 'unavailable');
+          assert.match(notice, /不属于官方重置卡/);
+        } }), 'retired_local');
+  }
+  assert.equal(consumeCalls, 0);
   const check = openStore();
-  try { assert.equal(getCard(check, id).status, 'used'); }
+  try {
+    assert.equal(getCard(check, id).status, 'available');
+    assert.equal(getSnooze(check, id), null);
+  }
   finally { check.close(); }
 });
 

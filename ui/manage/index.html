@@ -86,23 +86,15 @@
 <main>
   <div class="filterbar">
     <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="history-filter" aria-pressed="false">历史卡</button></div>
-    <span id="channel-status"></span><button id="add">新增手动卡</button>
+    <span id="channel-status"></span>
   </div>
   <div id="notice" role="status" aria-live="polite"></div>
   <div class="table-wrap">
     <table id="cards"><thead><tr><th>卡片</th><th>到期时间 / 本地</th><th>状态</th><th>提醒发送</th><th>操作</th></tr></thead><tbody></tbody></table>
     <div id="empty" class="empty" hidden></div>
   </div>
-  <p class="footnote">提前 7 / 3 / 1 天提醒；延期只改变提醒时间。收起到托盘后仍会提醒，退出应用后停止。</p>
+  <p class="footnote">重置卡由 Codex 官方发放，名称和到期时间以同步结果为准。提前 7 / 3 / 1 天提醒，延期只改变提醒时间。收起到托盘后仍会提醒，退出应用后停止。</p>
 </main>
-<dialog id="card-dialog" aria-labelledby="dialog-title"><form id="card-form">
-  <h2 id="dialog-title">新增手动卡</h2>
-  <p class="sub">手动卡保存在本机，用于补充未自动读取的到期提醒。</p>
-  <label>卡片名称<input id="card-title" required maxlength="120"></label>
-  <label>到期时间（本地）<input id="card-expiry" type="datetime-local" required></label>
-  <p id="card-error" class="error" role="alert"></p>
-  <footer><button type="button" id="cancel-card">取消</button><button class="primary" id="save-card">保存</button></footer>
-</form></dialog>
 <dialog id="snooze-dialog" aria-labelledby="snooze-heading"><form id="snooze-form">
   <h2 id="snooze-heading">稍后提醒</h2><p id="snooze-title"></p>
   <label>提醒时间<select id="snooze-option"></select></label>

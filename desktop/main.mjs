@@ -185,11 +185,10 @@ if (!gotLock) {
 
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
-    'snooze', 'addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed',
+    'snooze', 'reportCardUsed',
     'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels',
     'checkAccount', 'confirmLegacyBinding']);
-  const mutatingOperations = new Set(['addManualCard', 'updateManualCard', 'markManualUsed',
-    'reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
+  const mutatingOperations = new Set(['reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
   ipcMain.handle('core', async (event, op, args) => {
     if (event.senderFrame?.url !== managePage || !allowedOperations.has(op)) {
       throw new Error('不允许的页面操作');

@@ -3,7 +3,6 @@ import { accountDescription, cardState, deliveryNodeLabel, deliveryResultLabel,
 
 const $ = (id) => document.getElementById(id);
 let snapshot = null;
-let editing = null;
 let snoozing = null;
 let busy = false;
 let loading = false;
@@ -113,7 +112,7 @@ function render() {
     const row = text(tbody, 'tr', '');
     const name = text(row, 'td', '');
     text(name, 'div', card.title, 'card-name');
-    const identity = text(name, 'small', `${card.source === 'manual' ? '手动' : 'Codex'} · ${card.id}`, 'sub identity');
+    const identity = text(name, 'small', `Codex · ${card.id}`, 'sub identity');
     identity.title = card.id;
     text(name, 'div', nextReminder(card, snapshot.channels), 'sub');
     text(row, 'td', formatTime(card.expiresAt), 'time');
@@ -123,20 +122,14 @@ function render() {
     renderDelivery(text(row, 'td', ''), card);
     const actions = text(text(row, 'td', ''), 'div', '', 'actions');
     if (!state.active) { text(actions, 'span', '无需处理', 'sub'); continue; }
-    const codexBlocked = card.source === 'codex' && snapshot.account?.state !== 'verified';
+    const codexBlocked = snapshot.account?.state !== 'verified';
     const later = button(actions, '稍后提醒', () => openSnooze(card),
       !card.snoozeOptions.length || codexBlocked);
     if (!card.snoozeOptions.length) later.title = '三个固定延期时间均已超过到期时间';
     if (codexBlocked) later.title = '先重新核对 Codex 账号';
     if (card.snooze?.expiresAt === card.expiresAt) button(actions, '取消延期',
       () => action('clearSnooze', { cardId: card.id }, '已取消延期，恢复固定提醒节点'), codexBlocked);
-    if (card.source === 'manual') {
-      button(actions, '编辑', () => openCardDialog(card));
-      button(actions, '标记已使用', () => {
-        if (confirm(`将“${card.title}”标记为已使用？\n这只更新手动卡，并停止它的后续提醒。`))
-          action('markManualUsed', { cardId: card.id }, '手动卡已标记为已使用');
-      });
-    } else if (!card.reportedUsedAt) {
+    if (!card.reportedUsedAt) {
       button(actions, '我已使用', () => {
         if (confirm('已在 Codex 中使用过这张卡？\n此操作只记录反馈，下一次同步会核验；不会在这里使用重置卡。'))
           action('reportCardUsed', { cardId: card.id }, '已记录反馈，等待 Codex 核验');
@@ -147,7 +140,7 @@ function render() {
   $('empty').hidden = cards.length > 0;
   $('empty').textContent = history ? '还没有已使用、过期或失效的卡片。' : snapshot.latest?.outcome === 'failed'
     ? '暂无可用的本地卡片。Codex 同步失败，请重试或在提醒设置中检查连接。'
-    : '暂无可用卡片。可以同步 Codex，或新增一张手动卡。';
+    : '暂无可用卡片。点击“立即同步 Codex”读取官方发放的重置卡。';
   controls();
 }
 async function load(force = false) {
@@ -179,18 +172,6 @@ async function action(op, args, success, errorId) {
     if (reloadPending) load();
   }
 }
-function openCardDialog(card = null) {
-  editing = card;
-  $('dialog-title').textContent = card ? '编辑手动卡' : '新增手动卡';
-  $('card-title').value = card?.title ?? '';
-  $('card-error').textContent = '';
-  const localDate = (seconds) => {
-    const date = new Date(seconds * 1000);
-    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  };
-  $('card-expiry').value = card ? localDate(card.expiresAt) : '';
-  $('card-dialog').showModal();
-}
 function openSnooze(card) {
   snoozing = card;
   $('snooze-title').textContent = `${card.title} · ${formatTime(card.expiresAt)} 到期`;
@@ -202,12 +183,9 @@ function openSnooze(card) {
   }
   $('snooze-dialog').showModal();
 }
-for (const id of ['card', 'snooze']) {
-  $(`cancel-${id}`).addEventListener('click', () => $(`${id}-dialog`).close());
-  $(`${id}-dialog`).addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
-  $(`${id}-dialog`).addEventListener('close', () => load());
-}
-$('add').addEventListener('click', () => openCardDialog());
+$('cancel-snooze').addEventListener('click', () => $('snooze-dialog').close());
+$('snooze-dialog').addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
+$('snooze-dialog').addEventListener('close', () => load());
 $('active-filter').addEventListener('click', () => { history = false; render(); });
 $('history-filter').addEventListener('click', () => { history = true; render(); });
 $('settings').addEventListener('click', () => window.api.openSettings().catch((error) => notice(error.message, true)));
@@ -242,18 +220,6 @@ $('bind-account').addEventListener('click', async () => {
     notice(accountDescription(result), result.state !== 'verified');
   } catch (error) { notice(`绑定失败：${error.message}`, true); }
   finally { busy = false; await load(true); controls(); }
-});
-$('card-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const expiresAt = Math.floor(new Date($('card-expiry').value).getTime() / 1000);
-  if (!$('card-title').value.trim()) { $('card-error').textContent = '请输入卡片名称'; return; }
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() / 1000) {
-    $('card-error').textContent = '到期时间必须晚于现在'; return;
-  }
-  const result = await action(editing ? 'updateManualCard' : 'addManualCard',
-    { cardId: editing?.id, title: $('card-title').value, expiresAt },
-    editing ? '手动卡已更新' : '手动卡已添加', 'card-error');
-  if (result) $('card-dialog').close();
 });
 $('snooze-form').addEventListener('submit', async (event) => {
   event.preventDefault();

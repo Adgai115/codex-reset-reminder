@@ -48,7 +48,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     const begin = (node, channel) => {
       if (trackAttempts && !dryRun) beginReminderAttempt(db, node, channel, nowSeconds);
     };
-    const cards = listCards(db);
+    // 旧版手动记录保留在数据库中，但不代表官方额度，也不参与提醒。
+    const cards = listCards(db).filter((card) => card.source === 'codex');
     const lastCompleteSync = latestCompleteSync(db);
     const syncedCount = lastCompleteSync?.availableCount ?? null;
     const syncedAt = lastCompleteSync?.checkedAt ?? null;

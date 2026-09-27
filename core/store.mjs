@@ -254,6 +254,7 @@ export function listDueUsageVerifications(db, nowSeconds = Math.floor(Date.now()
     ORDER BY c.reported_used_at ASC`).all(nowSeconds, delaySeconds, nowSeconds, delaySeconds);
 }
 
+// 仅供测试构造旧版记录；正式界面、CLI、提醒调度均不再使用手动卡。
 export function addManualCard(db, { title, expiresAt }) {
   if (typeof title !== 'string' || !title.trim() || !Number.isInteger(expiresAt) || expiresAt <= Date.now() / 1000) {
     throw new Error('请提供卡片名称和未来的到期时间');
@@ -351,15 +352,6 @@ export function markSnoozeDelivered(db, cardId, channel) {
 
 export function clearSnooze(db, cardId) {
   db.prepare('DELETE FROM snoozes WHERE card_id = ?').run(cardId);
-}
-
-export function updateManualCard(db, id, { title, expiresAt }) {
-  if (!id?.startsWith('manual:') || typeof title !== 'string' || !title.trim()
-    || !Number.isInteger(expiresAt) || expiresAt <= Date.now() / 1000) {
-    throw new Error('请提供手动卡片编号、名称和未来到期时间');
-  }
-  return db.prepare("UPDATE cards SET title = ?, expires_at = ?, status = 'available', updated_at = ? WHERE id = ? AND source = 'manual'")
-    .run(title.trim(), expiresAt, Math.floor(Date.now() / 1000), id).changes > 0;
 }
 
 export function deliveryExists(db, id, expiresAt, days, channel) {
