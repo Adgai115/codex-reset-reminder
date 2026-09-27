@@ -48,54 +48,67 @@ async function page(port, suffix, child, deadline) {
   throw new Error(`等待窗口超时：${suffix}`);
 }
 
-async function command(tab, method, params) {
+async function debuggerSession(tab, run) {
   const socket = new WebSocket(tab.webSocketDebuggerUrl);
-  const context = `${tab.url?.split('/ui/')[1] || tab.id} · ${method} · ${String(params?.expression || '').trim().slice(0, 120)}`;
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('无法连接渲染进程调试端口')), 5000);
       socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
       socket.addEventListener('error', (error) => { clearTimeout(timer); reject(error); }, { once: true });
     });
-    const id = 1;
-    const result = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`渲染进程没有响应：${context}`)), 15000);
-      socket.addEventListener('close', () => {
-        clearTimeout(timer);
-        reject(new Error(`调试窗口已关闭：${context}`));
-      }, { once: true });
-      socket.addEventListener('message', (event) => {
-        const message = JSON.parse(event.data);
-        if (message.id !== id) return;
-        clearTimeout(timer);
-        if (message.error || message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.error || message.result.exceptionDetails)));
-        else resolve(message.result);
+    let nextId = 0;
+    const send = async (method, params) => {
+      const context = `${tab.url?.split('/ui/')[1] || tab.id} · ${method} · ${String(params?.expression || '').trim().slice(0, 120)}`;
+      const id = ++nextId;
+      let onClose;
+      let onMessage;
+      let timer;
+      const result = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`渲染进程没有响应：${context}`)), 15000);
+        onClose = () => reject(new Error(`调试窗口已关闭：${context}`));
+        onMessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.id !== id) return;
+          if (message.error || message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.error || message.result.exceptionDetails)));
+          else resolve(message.result);
+        };
+        socket.addEventListener('close', onClose, { once: true });
+        socket.addEventListener('message', onMessage);
       });
-    });
-    socket.send(JSON.stringify({ id, method, params }));
-    return await result;
+      try {
+        socket.send(JSON.stringify({ id, method, params }));
+        return await result;
+      } finally {
+        clearTimeout(timer);
+        socket.removeEventListener('close', onClose);
+        socket.removeEventListener('message', onMessage);
+      }
+    };
+    return await run(send);
   } finally { socket.close(); }
 }
 
-async function evaluate(tab, expression) {
-  return (await command(tab, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value;
+const command = (tab, method, params) => debuggerSession(tab, (send) => send(method, params));
+
+async function evaluate(tab, expression, send = (method, params) => command(tab, method, params)) {
+  return (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value;
 }
 
-async function until(tab, expression, description, timeout = 12000) {
+async function until(tab, expression, description, timeout = 12000, send) {
   const deadline = Date.now() + timeout;
   do {
-    const value = await evaluate(tab, expression);
+    const value = await evaluate(tab, expression, send);
     if (value) return value;
     await sleep(200);
   } while (Date.now() < deadline);
   throw new Error(`界面未更新：${description}`);
 }
 
-async function screenshot(tab, name) {
+async function screenshot(tab, name, send = (method, params) => command(tab, method, params)) {
   const directory = process.env.CODEX_RESET_SMOKE_SCREENSHOTS;
   if (!directory) return;
   await mkdir(directory, { recursive: true });
-  const { data } = await command(tab, 'Page.captureScreenshot', { format: 'png' });
+  const { data } = await send('Page.captureScreenshot', { format: 'png' });
   await writeFile(join(directory, `${name}.png`), Buffer.from(data, 'base64'));
 }
 
@@ -110,24 +123,30 @@ async function untilClosed(port, suffix) {
 }
 
 async function checkCompactLayout(tab) {
-  for (const width of [1180, 800]) {
-    await command(tab, 'Emulation.setDeviceMetricsOverride', { width, height: 640, deviceScaleFactor: 1, mobile: false });
-    const layout = await evaluate(tab, `(() => {
-      const table = document.querySelector('.table-wrap');
-      return {
-        pageFits: document.documentElement.scrollWidth <= window.innerWidth,
-        tableScrolls: table.scrollWidth > table.clientWidth,
-        oneLine: [...document.querySelectorAll('.card-name, .time, .badge, button, select')]
-          .every(element => getComputedStyle(element).whiteSpace === 'nowrap'),
-        actionsFit: [...document.querySelectorAll('.actions select')].every(element =>
-          element.getBoundingClientRect().right <= element.closest('td').getBoundingClientRect().right - 5),
-        toolbarFits: document.querySelector('.toolbar').getBoundingClientRect().right <= window.innerWidth,
-      };
-    })()`);
-    assert.deepEqual(layout, { pageFits: true, tableScrolls: width === 800, oneLine: true, actionsFit: true, toolbarFits: true });
-    await screenshot(tab, `manage-${width}`);
-  }
-  await command(tab, 'Emulation.clearDeviceMetricsOverride');
+  // Emulation belongs to its debugging session. Keep that connection open until
+  // measurements and screenshots finish; detaching may restore the native size.
+  await debuggerSession(tab, async (send) => {
+    for (const width of [1180, 800]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 640, deviceScaleFactor: 1, mobile: false });
+      await until(tab, `window.innerWidth === ${width}`, '目标测试宽度已生效', 12000, send);
+      const layout = await evaluate(tab, `(() => {
+        const table = document.querySelector('.table-wrap');
+        return {
+          viewportWidth: window.innerWidth,
+          pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+          tableScrolls: table.scrollWidth > table.clientWidth,
+          oneLine: [...document.querySelectorAll('.card-name, .time, .badge, button, select')]
+            .every(element => getComputedStyle(element).whiteSpace === 'nowrap'),
+          actionsFit: [...document.querySelectorAll('.actions select')].every(element =>
+            element.getBoundingClientRect().right <= element.closest('td').getBoundingClientRect().right - 5),
+          toolbarFits: document.querySelector('.toolbar').getBoundingClientRect().right <= window.innerWidth,
+        };
+      })()`, send);
+      assert.deepEqual(layout, { viewportWidth: width, pageFits: true, tableScrolls: width === 800, oneLine: true, actionsFit: true, toolbarFits: true });
+      await screenshot(tab, `manage-${width}`, send);
+    }
+    await send('Emulation.clearDeviceMetricsOverride');
+  });
 }
 
 const isDebuggerTimeout = (error) => /渲染进程没有响应|无法连接渲染进程调试端口/.test(error.message);

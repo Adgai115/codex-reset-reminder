@@ -35,6 +35,8 @@ SHA-256：`2DBF69D7D838A4957895A6E5140FAC3CE28563284D56943651484FF25AE890AC`。
 
 隔离截图在本机 `dist/qa-beta3/`：`manage-1180.png`、`manage-800.png`、`p0-waiting.png`、`p0-details.png`、`p0-results.png`、`auto-recovered.png`。升级核对结果为 `upgrade-result.json`；这些文件均不提交仓库。
 
+首轮 CI 的 Windows 和 Linux 全部通过；macOS 在 800 像素检查时读到了未滚动的表格。测试工具随后改为在同一 CDP 连接内完成尺寸切换、实际宽度确认、测量和截图，避免断开调试连接恢复原窗口尺寸。保留全部布局断言，三平台在最终提交上重新运行。该修正只涉及测试脚本，不改变上述已安装应用与包哈希。
+
 ## 交付范围与未验证事项
 
 交付到 `feature/cross-platform` 和现有 PR #1，不创建正式 Release、不合并。三平台 CI 新增同一套布局与一分钟后台恢复检查；最终运行结果见 PR 检查项。
