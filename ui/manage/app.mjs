@@ -7,7 +7,7 @@ let snapshot = null;
 let busy = false;
 let loading = false;
 let reloadPending = false;
-let history = false;
+let filter = 'active';
 let noticeTimer;
 const expandedCards = new Set();
 const interacting = () => document.activeElement?.tagName === 'SELECT';
@@ -42,6 +42,7 @@ function button(parent, label, callback, unavailable = false) {
   return element;
 }
 function renderDelivery(parent, card) {
+  if (card.pendingReminder) text(parent, 'div', '待处理', 'pending-reminder');
   const nodes = deliveryGroups(card);
   if (!nodes.length) text(parent, 'span', cardState(card).active && snapshot.channels.length
     ? nextReminder(card, snapshot.channels) : '—', 'sub single-line');
@@ -121,11 +122,15 @@ function render() {
   $('bind-account').hidden = snapshot.account?.state !== 'needsBinding';
   $('channel-status').hidden = snapshot.channels.length > 0;
   const active = snapshot.cards.filter((card) => cardState(card).active);
+  const pending = active.filter((card) => card.pendingReminder);
   $('active-filter').textContent = `可用卡 ${active.length}`;
   $('history-filter').textContent = `历史卡 ${snapshot.cards.length - active.length}`;
-  $('active-filter').setAttribute('aria-pressed', String(!history));
-  $('history-filter').setAttribute('aria-pressed', String(history));
-  const cards = snapshot.cards.filter((card) => cardState(card).active !== history);
+  $('pending-filter').textContent = `待处理 ${pending.length}`;
+  $('pending-filter').hidden = !pending.length && filter !== 'pending';
+  for (const name of ['active', 'history', 'pending'])
+    $(`${name}-filter`).setAttribute('aria-pressed', String(filter === name));
+  const cards = filter === 'pending' ? pending
+    : snapshot.cards.filter((card) => cardState(card).active === (filter === 'active'));
   const tbody = document.querySelector('#cards tbody');
   tbody.replaceChildren();
   for (const card of cards) {
@@ -174,7 +179,8 @@ function render() {
   }
   $('cards').hidden = cards.length === 0;
   $('empty').hidden = cards.length > 0;
-  $('empty').textContent = history ? '暂无历史卡片' : '暂无可用卡片';
+  $('empty').textContent = filter === 'pending' ? '暂无待处理提醒'
+    : filter === 'history' ? '暂无历史卡片' : '暂无可用卡片';
   controls();
 }
 async function load(force = false) {
@@ -206,8 +212,8 @@ async function action(op, args, success, errorId) {
     if (reloadPending) load();
   }
 }
-$('active-filter').addEventListener('click', () => { history = false; render(); });
-$('history-filter').addEventListener('click', () => { history = true; render(); });
+for (const name of ['active', 'history', 'pending'])
+  $(`${name}-filter`).addEventListener('click', () => { filter = name; render(); });
 $('settings').addEventListener('click', () => window.api.openSettings().catch((error) => notice(error.message, true)));
 $('channel-status').addEventListener('click', () => $('settings').click());
 $('check-account').addEventListener('click', async () => {

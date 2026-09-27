@@ -69,6 +69,7 @@
   summary { cursor:pointer; color:var(--muted); }
   .actions .more-actions { width:56px; }
   .delivery-compact { font-size:12px; }
+  .pending-reminder { color:var(--danger); font-size:12px; font-weight:600; margin-bottom:4px; white-space:nowrap; }
   .delivery-summary { display:flex; align-items:baseline; justify-content:space-between; gap:8px; white-space:nowrap; }
   .delivery-summary .time { color:var(--muted); font-size:12px; }
   .delivery-details { font-size:12px; margin-top:6px; }
@@ -99,7 +100,7 @@
 </header>
 <main>
   <div class="filterbar">
-    <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="history-filter" aria-pressed="false">历史卡</button></div>
+    <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="pending-filter" aria-pressed="false" hidden>待处理</button><button id="history-filter" aria-pressed="false">历史卡</button></div>
     <button id="channel-status" hidden>提醒已关闭</button>
   </div>
   <details id="notice-box" hidden><summary id="notice" class="single-line" role="status" aria-live="polite"></summary><p id="notice-detail"></p></details>

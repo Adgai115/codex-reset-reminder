@@ -9,6 +9,7 @@ import { enabledChannels, quietHours } from '../core/reminder-policy.mjs';
 import { deliveryTime } from '../core/reminder-policy.mjs';
 import { dueThreshold } from '../check.mjs';
 import { maxReminderAttempts } from '../core/delivery-retry.mjs';
+import { pendingReminder } from '../core/pending-reminders.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
 import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
 import { accountStatus, checkAccount, requireAccount, requireCardInScope } from './account-guard.mjs';
@@ -74,8 +75,10 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
           cards: store.listCards(db, true).filter((card) => card.source === 'codex'
             && (!boundScopeId || card.accountScopeId === boundScopeId)).map((card) => {
             const snooze = store.getSnooze(db, card.id);
+            const results = store.listReminderResults(db, card.id);
             return { ...card, snooze,
-              deliveryResults: store.listReminderResults(db, card.id).map((result) => {
+              pendingReminder: pendingReminder(card, snooze, results, nowSeconds),
+              deliveryResults: results.map((result) => {
                 const activeNode = nodeIsCurrent(card, snooze, result);
                 const accountReady = account.state === 'verified';
                 const retryOpen = activeNode && result.state === 'failed'
