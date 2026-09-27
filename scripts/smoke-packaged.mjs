@@ -81,8 +81,8 @@ async function evaluate(tab, expression) {
   return (await command(tab, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value;
 }
 
-async function until(tab, expression, description) {
-  const deadline = Date.now() + 12000;
+async function until(tab, expression, description, timeout = 12000) {
+  const deadline = Date.now() + timeout;
   do {
     const value = await evaluate(tab, expression);
     if (value) return value;
@@ -107,6 +107,27 @@ async function untilClosed(port, suffix) {
     await sleep(200);
   } while (Date.now() < deadline);
   throw new Error(`窗口未按预期关闭：${suffix}`);
+}
+
+async function checkCompactLayout(tab) {
+  for (const width of [1180, 800]) {
+    await command(tab, 'Emulation.setDeviceMetricsOverride', { width, height: 640, deviceScaleFactor: 1, mobile: false });
+    const layout = await evaluate(tab, `(() => {
+      const table = document.querySelector('.table-wrap');
+      return {
+        pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+        tableScrolls: table.scrollWidth > table.clientWidth,
+        oneLine: [...document.querySelectorAll('.card-name, .time, .badge, button, select')]
+          .every(element => getComputedStyle(element).whiteSpace === 'nowrap'),
+        actionsFit: [...document.querySelectorAll('.actions select')].every(element =>
+          element.getBoundingClientRect().right <= element.closest('td').getBoundingClientRect().right - 5),
+        toolbarFits: document.querySelector('.toolbar').getBoundingClientRect().right <= window.innerWidth,
+      };
+    })()`);
+    assert.deepEqual(layout, { pageFits: true, tableScrolls: width === 800, oneLine: true, actionsFit: true, toolbarFits: true });
+    await screenshot(tab, `manage-${width}`);
+  }
+  await command(tab, 'Emulation.clearDeviceMetricsOverride');
 }
 
 const isDebuggerTimeout = (error) => /渲染进程没有响应|无法连接渲染进程调试端口/.test(error.message);
@@ -143,6 +164,7 @@ async function stopTree(child) {
 const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
 const setupOnly = process.argv.includes('--setup');
 const p0Only = process.argv.includes('--p0');
+const recoveryOnly = process.argv.includes('--recovery');
 const background = process.argv.includes('--background');
 const nativeDialogs = process.platform === 'win32' && process.argv.includes('--native-dialogs');
 const mockAccount = { account: { type: 'chatgpt', email: 'ci@example.invalid' }, requiresOpenaiAuth: true };
@@ -170,7 +192,7 @@ try {
   if (!setupOnly) {
     process.env.CODEX_RESET_MONITOR_DATA_DIR = profile;
     const mockCli = await createMockCodex(profile);
-    await writeFile(accountFile, JSON.stringify(mockAccount));
+    if (!recoveryOnly) await writeFile(accountFile, JSON.stringify(mockAccount));
     const { openStore, addManualCard, bindAccountScope, markCardUsed,
       recordReminderResult, saveCodexSnapshot } = await import('../core/store.mjs');
     const db = openStore();
@@ -189,10 +211,10 @@ try {
         recordReminderResult(db, { cardId, expiresAt, nodeKind: 'fixed', nodeAt: now,
           thresholdDays: 7 }, 'desktop', { state: 'failed', attemptedAt: now,
           nextRetryAt: now + 3600, errorCode: 'send_failed',
-          errorText: '桌面弹窗失败；请在提醒设置中测试桌面弹窗。' });
+          errorText: '桌面弹窗失败；请在提醒设置中测试桌面弹窗。窗口尚未就绪，已安排下一次尝试，展开详情可查看完整原因。' });
       } else {
         const active = [
-          { id: activeCardId, title: 'CI 演示重置卡', status: 'available', expiresAt: now + 10 * 86400 },
+          { id: activeCardId, title: 'CI 演示重置卡 · Full reset (Weekly + 5 hr) · 长名称显示验证', status: 'available', expiresAt: now + 10 * 86400 },
           { id: 'RateLimitResetCredit_ciNear', title: 'CI 即将到期卡', status: 'available', expiresAt: now + 3600 },
         ];
         saveCodexSnapshot(db, { availableCount: 4, credits: [...active,
@@ -272,6 +294,30 @@ try {
     assert.match(probeText, /未找到 Codex CLI/);
     await screenshot(setup, 'setup');
     console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
+  } else if (recoveryOnly) {
+    const manage = await page(port, '/ui/manage/index.html', child, deadline);
+    await until(manage, `document.querySelector('#account-status')?.textContent.includes('账号暂不可用')
+      && document.querySelector('#sync')?.disabled === false`, '模拟断网时暂停账号操作');
+    const failed = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(failed.account.state, 'unavailable');
+    assert.equal(failed.recovering, true);
+    assert.ok(failed.nextSyncAt > Date.now() / 1000 && failed.nextSyncAt <= Date.now() / 1000 + 61);
+    await writeFile(accountFile, JSON.stringify(mockAccount));
+    await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
+      availableCount: 1, credits: [{ id: 'RateLimitResetCredit_autoRecovered',
+        title: 'CI 自动恢复卡', status: 'available', expiresAt: Math.floor(Date.now() / 1000) + 10 * 86400 }],
+    } }));
+    console.log('已恢复模拟账号与 Usage，等待后台的一分钟自动重试（不点击刷新）');
+    await until(manage, `document.querySelector('#cards tbody').textContent.includes('CI 自动恢复卡')
+      && document.querySelector('#account-status').textContent.includes('缓存绑定')
+      && !document.querySelector('#sync').disabled`, '自动重新核对账号并同步官方卡', 75000);
+    const recovered = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(recovered.account.state, 'verified');
+    assert.equal(recovered.latest.outcome, 'complete');
+    assert.equal(recovered.recovering, false);
+    assert.ok(recovered.nextSyncAt > Date.now() / 1000 + 850);
+    await screenshot(manage, 'auto-recovered');
+    console.log('安装包后台自动恢复通过：账号核实、列表刷新、重试重置，全程无需人工操作');
   } else if (p0Only) {
     const manage = await page(port, '/ui/manage/index.html', child, deadline);
     await until(manage, `document.querySelector('#cards tbody')?.textContent.includes('CI 补发演示卡')
@@ -286,6 +332,11 @@ try {
     assert.match(initial.account, /缓存绑定/);
     assert.equal(initial.retry, true);
     assert.equal(initial.error, true);
+    await screenshot(manage, 'p0-waiting');
+    await evaluate(manage, `document.querySelector('.delivery-details').open = true; true`);
+    await until(manage, `document.querySelector('.delivery-details').open`, '可展开完整发送记录');
+    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').textContent.includes('展开详情可查看完整原因')`), true);
+    await screenshot(manage, 'p0-details');
     await rm(accountFile);
     await evaluate(manage, `document.querySelector('#check-account').click(); true`);
     await until(manage, `document.querySelector('#notice').textContent.includes('无法读取 Codex 账号身份')`, '账号重新核对结果');
@@ -295,6 +346,8 @@ try {
     await evaluate(manage, `document.querySelector('#check-account').click(); true`);
     await until(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道' && !button.disabled)`, '账号恢复后可重试');
+    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').open`), true, '自动刷新保留展开状态');
+    await evaluate(manage, `document.querySelector('.delivery-details').open = false; true`);
     const progress = await evaluate(manage, `(() => {
       const button = Array.from(document.querySelectorAll('#cards tbody button'))
         .find(item => item.textContent === '重试失败渠道');
@@ -330,7 +383,7 @@ try {
     && !document.querySelector('#sync').disabled`, '模拟账号核对和启动同步结束');
   const visible = await evaluate(manage, `({
     expired: document.querySelector('#cards tbody').textContent.includes('CI 过期卡'),
-    nearDisabled: Array.from(document.querySelectorAll('#cards tbody tr')).find(row => row.textContent.includes('CI 即将到期卡'))?.querySelector('button')?.disabled,
+    nearDisabled: Array.from(document.querySelectorAll('#cards tbody tr')).find(row => row.textContent.includes('CI 即将到期卡'))?.querySelector('select')?.disabled,
     overflow: document.documentElement.scrollWidth > window.innerWidth,
     manual: document.querySelector('#cards tbody').textContent.includes('CI 旧手动记录'),
     addOrEdit: Boolean(document.querySelector('#add, #card-dialog'))
@@ -347,24 +400,29 @@ try {
   })()`);
   assert.equal(blocked.length, 3);
   assert.ok(blocked.every(message => message.includes('不允许的页面操作')));
-  await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody tr'))
-    .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('button').click(); true`);
-  assert.equal(await evaluate(manage, `document.querySelector('#snooze-dialog').open`), true);
-  await evaluate(manage, `document.querySelector('#snooze-option').value = '1d';
-    document.querySelector('#save-snooze').click(); true`);
-  await until(manage, `!document.querySelector('#snooze-dialog').open
-    && document.querySelector('#cards tbody').textContent.includes('取消延期')`, '官方卡延期');
+  await checkCompactLayout(manage);
+  await evaluate(manage, `(() => {
+    const select = Array.from(document.querySelectorAll('#cards tbody tr'))
+      .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('select');
+    select.value = '1d'; select.dispatchEvent(new Event('change')); return true;
+  })()`);
+  await until(manage, `document.querySelector('#cards tbody').textContent.includes('取消延期')`, '选择时间即完成官方卡延期');
+  assert.ok(await evaluate(manage, `(async () => Boolean((await window.api.core('snooze', { cardId: '${activeCardId}' }))?.targetAt))()`));
+  await evaluate(manage, `(() => {
+    const select = Array.from(document.querySelectorAll('#cards tbody tr'))
+      .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('select');
+    select.value = 'clear'; select.dispatchEvent(new Event('change')); return true;
+  })()`);
+  await until(manage, `document.querySelector('#notice').textContent.includes('已取消延期')`, '同一菜单直接取消延期');
   const flow = await evaluate(manage, `(async () => {
     const before = await window.api.core('getCard', { cardId: '${activeCardId}' });
-    const scheduled = await window.api.core('snooze', { cardId: before.id });
-    await window.api.core('clearSnooze', { cardId: before.id });
     const cleared = await window.api.core('snooze', { cardId: before.id });
     await window.api.core('reportCardUsed', { cardId: before.id });
     const card = await window.api.core('getCard', { cardId: before.id });
-    return { snooze: Boolean(scheduled?.targetAt), cleared: !cleared, status: card.status,
+    return { cleared: !cleared, status: card.status,
       reported: Boolean(card.reportedUsedAt), unchanged: card.title === before.title && card.expiresAt === before.expiresAt };
   })()`);
-  assert.deepEqual(flow, { snooze: true, cleared: true, status: 'available', reported: true, unchanged: true });
+  assert.deepEqual(flow, { cleared: true, status: 'available', reported: true, unchanged: true });
   await until(manage, `document.querySelector('#cards tbody').textContent.includes('等待使用核验')`, '使用反馈后列表自动刷新');
   await evaluate(manage, `document.querySelector('#history-filter').click(); true`);
   assert.equal(await evaluate(manage, `document.querySelector('#cards tbody').textContent.includes('CI 过期卡') && document.querySelector('#cards tbody').textContent.includes('已使用')`), true);
