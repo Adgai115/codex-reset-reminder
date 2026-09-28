@@ -29,7 +29,10 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   if (op === 'runReminders') {
     let accountScopeId = null;
     try { accountScopeId = await verifiedScope(); } catch { /* 未核实账号时暂停卡片提醒。 */ }
-    return runReminders({ configPath: configPath(), desktop, trackAttempts: true,
+    return runReminders({ configPath: configPath(), desktop: desktop && (async (payload) => {
+      if (await verifiedScope() !== accountScopeId) throw new Error('账号已变更，暂停桌面提醒');
+      return desktop(payload);
+    }), trackAttempts: true, batchDesktop: true,
       ...args, allowCodex: Boolean(accountScopeId), accountScopeId });
   }
   if (op === 'preflightSync') {
@@ -47,6 +50,17 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   if (op === 'checkAccount') return checkAccount(configPath());
   if (op === 'confirmLegacyBinding') return checkAccount(configPath(), {
     confirmLegacy: true, expectedCandidateToken: args.expectedCandidateToken });
+  if (op === 'pendingReminders') {
+    await verifiedScope();
+    const snapshot = await runCoreOperation('manageSnapshot');
+    return { cards: snapshot.cards.filter((card) => card.pendingReminder
+      && (!args.cardId || card.id === args.cardId)).map((card) => ({
+      creditId: card.id, cardName: card.title, source: card.source, expiresAt: card.expiresAt,
+      expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
+      currentAvailableCount: snapshot.confirmed?.availableCount ?? null,
+      syncedAt: snapshot.confirmed?.checkedAt ?? null, ...card.pendingReminder,
+    })) };
+  }
 
   const db = store.openStore();
   try {
@@ -120,9 +134,11 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         return { card: store.reportCardUsed(db, value(args.cardId)) };
       }
       case 'scheduleSnooze': {
-        const card = store.getCard(db, value(args.cardId));
+        let card = store.getCard(db, value(args.cardId));
         if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
-        requireCardInScope(card.id, await verifiedScope());
+        card = requireCardInScope(card.id, await verifiedScope());
+        if (args.expectedExpiresAt !== undefined && card.expiresAt !== args.expectedExpiresAt)
+          throw new Error('卡片已更新，请重新查看提醒');
         const plan = planSnooze(card, value(args.option));
         store.scheduleSnooze(db, card.id, card.expiresAt, plan.targetAt);
         return plan;

@@ -163,9 +163,13 @@ if (!gotLock) {
     const refreshMenu = async () => {
       let summary = '状态不可用';
       let detail = summary;
+      let pendingCount = 0;
       try {
-        const cards = (await coreRequest('listCards')).filter((card) => card.expiresAt > Date.now() / 1000);
-        const latest = await coreRequest('latestSync');
+        const snapshot = await coreRequest('manageSnapshot');
+        const cards = snapshot.cards.filter((card) => card.status === 'available' && card.expiresAt > Date.now() / 1000);
+        const latest = snapshot.latest;
+        pendingCount = cards.filter((card) => card.pendingReminder).length;
+        reminders?.reconcile(snapshot);
         const count = cards.length;
         const next = cards[0];
         summary = `${count} 张可用`;
@@ -176,6 +180,9 @@ if (!gotLock) {
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开卡片管理', click: () => showManage() },
         { label: '提醒设置', click: () => showSettings() },
+        ...(pendingCount ? [{ label: `待处理 ${pendingCount} 张`, click: () => {
+          openPendingReminders().catch(() => showManage());
+        } }] : []),
         { label: summary, enabled: false },
         { type: 'separator' },
         { label: '退出应用（停止提醒）', click: () => requestQuit() },
@@ -186,6 +193,18 @@ if (!gotLock) {
   }
 
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
+  async function openPendingReminders(cardId) {
+    try {
+      const payload = await coreRequest('pendingReminders', { cardId });
+      await reminders.present(payload);
+      return payload.cards.length;
+    } finally { stateChanged(); }
+  }
+  ipcMain.handle('reminders:openPending', (event, cardId) => {
+    if (event.senderFrame?.url !== managePage || (cardId !== undefined && typeof cardId !== 'string'))
+      throw new Error('不允许的页面操作');
+    return openPendingReminders(cardId);
+  });
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
     'snooze', 'reportCardUsed',
     'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels',

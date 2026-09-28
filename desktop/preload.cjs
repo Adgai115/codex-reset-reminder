@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('state:changed', listener);
   },
   onReminderData: (callback) => ipcRenderer.on('reminder:data', (_event, payload) => callback(payload)),
-  reminderAction: (action, option) => invoke('reminder:act', action, option),
+  reminderAction: (action, args) => invoke('reminder:act', action, args),
+  openPendingReminders: (cardId) => invoke('reminders:openPending', cardId),
   setupDiscover: () => invoke('setup:discover'),
   setupProbeCodex: (path) => invoke('setup:probeCodex', path),
   setupBrowse: () => invoke('setup:browse'),

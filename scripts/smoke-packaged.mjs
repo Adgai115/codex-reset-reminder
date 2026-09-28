@@ -112,8 +112,8 @@ async function screenshot(tab, name, send = (method, params) => command(tab, met
   await writeFile(join(directory, `${name}.png`), Buffer.from(data, 'base64'));
 }
 
-async function untilClosed(port, suffix) {
-  const deadline = Date.now() + 15000;
+async function untilClosed(port, suffix, timeout = 15000) {
+  const deadline = Date.now() + timeout;
   do {
     const tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
     if (!tabs.some((tab) => tab.url?.endsWith(suffix))) return;
@@ -162,16 +162,23 @@ async function triggerWindow(tab, expression) {
 
 async function stopTree(child) {
   if (!child) return;
+  let killOutput = '';
   if (process.platform === 'win32' && child.exitCode === null) {
-    await new Promise((resolve) => spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'],
-      { windowsHide: true, stdio: 'ignore' }).once('close', resolve));
+    await new Promise((resolve, reject) => {
+      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      killer.stdout.on('data', (chunk) => { killOutput += chunk; });
+      killer.stderr.on('data', (chunk) => { killOutput += chunk; });
+      killer.once('error', reject);
+      // 子进程恰好先退出时 taskkill 也可能返回非零；以主进程实际退出为准。
+      killer.once('close', resolve);
+    });
   } else if (child.exitCode === null) {
     try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill(); }
   }
-  await new Promise((resolve) => {
-    const timer = setTimeout(resolve, 3000);
-    child.once('close', () => { clearTimeout(timer); resolve(); });
-  });
+  const exitDeadline = Date.now() + 15000;
+  while (child.exitCode === null && child.signalCode === null && Date.now() < exitDeadline) await sleep(100);
+  assert.ok(child.exitCode !== null || child.signalCode !== null, `测试实例尚未退出：${child.pid}\n${killOutput}`);
   if (process.platform !== 'win32') {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 进程组已退出。 */ }
   }
@@ -184,6 +191,7 @@ const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
 const setupOnly = process.argv.includes('--setup');
 const p0Only = process.argv.includes('--p0');
 const recoveryOnly = process.argv.includes('--recovery');
+const pendingOnly = process.argv.includes('--pending');
 const background = process.argv.includes('--background');
 const nativeDialogs = process.platform === 'win32' && process.argv.includes('--native-dialogs');
 const mockAccount = { account: { type: 'chatgpt', email: 'ci@example.invalid' }, requiresOpenaiAuth: true };
@@ -221,7 +229,14 @@ try {
       bindAccountScope(db, { scopeId,
         emailHash: createHash('sha256').update(`${scopeId}\0${mockAccount.account.email}`).digest('hex'),
         workspaceHash: null, displayName: 'c***@example.invalid' });
-      if (p0Only) {
+      if (pendingOnly) {
+        const usage = { availableCount: 3, credits: [2, 4, 6].map((days, i) => ({
+          id: `RateLimitResetCredit_pending${i}`, title: `CI 合并提醒 ${i + 1} · Full reset (Weekly + 5 hr)`,
+          status: 'available', expiresAt: now + days * 86400,
+        })) };
+        saveCodexSnapshot(db, usage, now, scopeId);
+        await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: usage }));
+      } else if (p0Only) {
         const expiresAt = now + 7 * 86400;
         const cardId = 'RateLimitResetCredit_ciRetry';
         saveCodexSnapshot(db, { availableCount: 1, credits: [
@@ -248,13 +263,13 @@ try {
     finally { db.close(); }
     const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
     config.codexScript = mockCli;
-    config.desktop.enabled = p0Only;
-    if (p0Only) config.reminders.quietHours.enabled = false;
+    config.desktop.enabled = p0Only || pendingOnly;
+    if (p0Only || pendingOnly) config.reminders.quietHours.enabled = false;
     config.feishu.enabled = false;
     if (config.wechat) config.wechat.enabled = false;
     await writeFile(join(profile, 'config.json'), JSON.stringify(config));
   }
-  const port = await freePort();
+  let port = await freePort();
   // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
   const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
   const testEnv = { ...process.env, CODEX_RESET_MONITOR_USER_DATA_DIR: profile,
@@ -267,13 +282,15 @@ try {
       second.once('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`第二实例退出：${code}`)); });
     });
   };
-  child = spawn(appPath, [`--remote-debugging-port=${port}`, '--enable-logging', ...testFlags, ...(background ? ['--background'] : [])], {
-    detached: process.platform !== 'win32',
-    env: testEnv,
-    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-  });
-  child.stdout.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
-  child.stderr.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
+  const launch = () => {
+    child = spawn(appPath, [`--remote-debugging-port=${port}`, '--enable-logging', ...testFlags, ...(background ? ['--background'] : [])], {
+      detached: process.platform !== 'win32', env: testEnv,
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    child.stdout.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
+    child.stderr.on('data', (chunk) => { logs = (logs + chunk.toString()).slice(-10000); });
+  };
+  launch();
   console.log(`已启动 ${process.platform} 安装包，等待${setupOnly ? '安装与连接' : '卡片管理'}窗口`);
   const deadline = Date.now() + 120000;
   if (background && !setupOnly) {
@@ -340,6 +357,90 @@ try {
     assert.ok(recovered.nextSyncAt > Date.now() / 1000 + 850);
     await screenshot(manage, 'auto-recovered');
     console.log('安装包后台自动恢复通过：账号核实、列表刷新、重试重置，全程无需人工操作');
+  } else if (pendingOnly) {
+    let manage = await page(port, '/ui/manage/index.html', child, deadline);
+    await until(manage, `document.querySelector('#pending-filter')?.textContent === '待处理 3'`, '三张提醒持久化');
+    let reminder = await page(port, '/ui/reminder/index.html', child, deadline);
+    await until(reminder, `document.querySelectorAll('.reminder-item').length === 3`, '同轮多卡合并');
+    const reminderTabs = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
+      .filter((tab) => tab.url?.endsWith('/ui/reminder/index.html'));
+    assert.equal((await reminderTabs()).length, 1, '三张卡只创建一个窗口');
+    assert.deepEqual(await evaluate(reminder, `Array.from(document.querySelectorAll('.reminder-item'), row => row.dataset.cardId)`),
+      [0, 1, 2].map((i) => `RateLimitResetCredit_pending${i}`));
+    assert.equal(await evaluate(reminder, `document.documentElement.scrollWidth <= innerWidth
+      && [...document.querySelectorAll('.name, .expiry, select')].every(element => getComputedStyle(element).whiteSpace === 'nowrap')`), true);
+    await screenshot(reminder, 'pending-batch');
+    await screenshot(manage, 'pending-manage');
+    const before = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    const attemptCount = (snapshot) => snapshot.cards.flatMap((card) => card.deliveryResults).reduce((sum, result) => sum + result.attempts, 0);
+    assert.equal(attemptCount(before), 3);
+    await triggerWindow(reminder, `document.querySelector('#close').click(); true`);
+    await untilClosed(port, '/ui/reminder/index.html');
+    await stopTree(child);
+    // Windows 强制结束进程树后，Chromium/CLI 的继承句柄可能稍后才释放。
+    // 等旧调试服务退出后再复用 profile，避免把退出中的实例当作重启结果。
+    const stoppedDeadline = Date.now() + 15000;
+    let portClosed = false;
+    while (Date.now() < stoppedDeadline) {
+      try { await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(500) }); }
+      catch { portClosed = true; break; }
+      await sleep(200);
+    }
+    assert.ok(portClosed, '旧实例调试端口未退出');
+    await sleep(500);
+    port = await freePort();
+    launch();
+    manage = await page(port, '/ui/manage/index.html', child, Date.now() + 30000);
+    await until(manage, `document.querySelector('#pending-filter')?.textContent === '待处理 3'
+      && document.querySelector('#account-info').dataset.state === 'verified'
+      && !document.querySelector('#sync').disabled`, '重启后恢复待处理与账号');
+    await sleep(1000);
+    assert.equal((await reminderTabs()).length, 0, '重启恢复待处理时不重复弹出已发送节点');
+    assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 3);
+    await evaluate(manage, `document.querySelector('#pending-filter').click(); document.querySelector('.pending-reminder').click(); true`);
+    reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
+    await until(reminder, `document.querySelectorAll('.reminder-item').length === 1`, '可从卡片重新查看提醒');
+    assert.equal(await evaluate(manage, `window.api.openPendingReminders()`), 3);
+    await until(reminder, `document.querySelectorAll('.reminder-item').length === 3`, '重复打开合入已有窗口');
+    assert.equal((await reminderTabs()).length, 1);
+    await evaluate(reminder, `(() => {
+      const option = document.querySelector('select[data-card-id="RateLimitResetCredit_pending0"]');
+      option.value = '1d'; option.dispatchEvent(new Event('change')); return true;
+    })()`);
+    await until(reminder, `document.querySelectorAll('.reminder-item').length === 2`, '延期只移除所选卡');
+    await until(manage, `document.querySelector('#pending-filter').textContent === '待处理 2'`, '管理页待处理数量同步');
+    await screenshot(reminder, 'pending-after-snooze');
+    const snoozed = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.ok(snoozed.cards.find((card) => card.id.endsWith('pending0')).snooze?.targetAt);
+    assert.equal(snoozed.cards.find((card) => card.id.endsWith('pending0')).pendingReminder, null);
+    assert.equal(attemptCount(snoozed), 3, '重新查看与延期均不产生新的发送记录');
+    // 模拟官方 Usage 中第二张卡已不可用；保留延期卡与第三张卡。
+    await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
+      availableCount: 2, credits: before.cards.filter((card) => !card.id.endsWith('pending1'))
+        .map((card) => ({ id: card.id, title: card.title, status: 'available', expiresAt: card.expiresAt })),
+    } }));
+    await evaluate(manage, `window.api.core('syncCards')`);
+    await until(reminder, `document.querySelectorAll('.reminder-item').length === 1`, '官方不可用卡从弹窗移除');
+    await until(manage, `document.querySelector('#pending-filter').textContent === '待处理 1'`, '自动清理失效待处理');
+    await writeFile(accountFile, JSON.stringify({ ...mockAccount, account: { type: 'chatgpt', email: 'different@example.invalid' } }));
+    await evaluate(manage, `window.api.core('checkAccount')`);
+    await untilClosed(port, '/ui/reminder/index.html');
+    assert.match(await evaluate(manage, `window.api.openPendingReminders().then(() => 'unexpected', error => error.message)`), /账号不一致/);
+    assert.equal((await reminderTabs()).length, 0, '换号时不可重新展示旧账号待处理');
+    await writeFile(accountFile, JSON.stringify(mockAccount));
+    await evaluate(manage, `window.api.core('checkAccount')`);
+    await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'`, '恢复原账号');
+    await evaluate(manage, `window.api.openPendingReminders()`);
+    reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
+    await until(reminder, `document.querySelector('#name')?.textContent.includes('CI 合并提醒 3')`, '剩余待处理仍可找回');
+    await screenshot(reminder, 'pending-restored');
+    console.log('合并、独立延期、重启和账号保护通过；等待实际 90 秒自动收起，核对待处理不会丢失');
+    await untilClosed(port, '/ui/reminder/index.html', 100000);
+    const after = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(after.cards.filter((card) => card.pendingReminder).length, 1, JSON.stringify(after));
+    assert.equal(attemptCount(after), 3);
+    assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs));
+    console.log(`待处理与合并提醒检查通过：${process.platform}，自动收起不清除待处理，不重复发送`);
   } else if (p0Only) {
     const manage = await page(port, '/ui/manage/index.html', child, deadline);
     await until(manage, `document.querySelector('#cards tbody')?.textContent.includes('CI 补发演示卡')

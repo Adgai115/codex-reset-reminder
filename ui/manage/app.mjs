@@ -42,7 +42,19 @@ function button(parent, label, callback, unavailable = false) {
   return element;
 }
 function renderDelivery(parent, card) {
-  if (card.pendingReminder) text(parent, 'div', '待处理', 'pending-reminder');
+  if (card.pendingReminder) {
+    const pending = button(parent, '待处理', async () => {
+      if (busy) return;
+      busy = true; controls();
+      try {
+        const count = await window.api.openPendingReminders(card.id);
+        if (!count) notice('暂无待处理提醒');
+      } catch (error) { notice('暂时无法查看提醒', true, error.message); }
+      finally { busy = false; await load(true); controls(); }
+    }, snapshot.account?.state !== 'verified');
+    pending.className = 'pending-reminder';
+    pending.title = '重新查看提醒';
+  }
   const nodes = deliveryGroups(card);
   if (!nodes.length) text(parent, 'span', cardState(card).active && snapshot.channels.length
     ? nextReminder(card, snapshot.channels) : '—', 'sub single-line');

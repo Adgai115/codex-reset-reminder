@@ -49,6 +49,9 @@ jobs:
       - name: Smoke automatic recovery (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/smoke-packaged.mjs --recovery
+      - name: Smoke pending and grouped reminders (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-packaged.mjs --pending
       - name: Smoke packaged sidecar (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/smoke-packaged.mjs --background
@@ -66,6 +69,9 @@ jobs:
       - name: Smoke automatic recovery
         if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs --recovery
+      - name: Smoke pending and grouped reminders
+        if: runner.os != 'Linux'
+        run: node scripts/smoke-packaged.mjs --pending
       - name: Smoke packaged sidecar
         if: runner.os != 'Linux'
         run: node scripts/smoke-packaged.mjs --background

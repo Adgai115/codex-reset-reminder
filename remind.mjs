@@ -7,7 +7,7 @@ import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 import { safeDeliveryFailure } from './core/delivery-results.mjs';
 import { mayAttemptReminder, nextRetryAfter } from './core/delivery-retry.mjs';
-import { clearSnooze, deliveryExists, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
+import { clearSnooze, deliveryExists, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
   beginReminderAttempt, getReminderAttempt, markSnoozeDelivered, openStore, recordDelivery,
   recordFeishuMessage, recordReminderResult } from './store.mjs';
 
@@ -16,12 +16,15 @@ const directory = dirname(fileURLToPath(import.meta.url));
 export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   configPath = join(directory, 'config.json'), desktop = showNotification,
   feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false,
-  trackAttempts = false, manualRetry = null, allowCodex = true, accountScopeId = null } = {}) {
+  trackAttempts = false, manualRetry = null, allowCodex = true, accountScopeId = null,
+  batchDesktop = false } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
   const db = openStore();
   const results = [];
+  const desktopJobs = [];
+  const startedAt = Date.now();
   let shownIndex = 0;
   try {
     const saveResult = (node, channel, state, error = null) => {
@@ -47,6 +50,23 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     };
     const begin = (node, channel) => {
       if (trackAttempts && !dryRun) beginReminderAttempt(db, node, channel, nowSeconds);
+    };
+    const desktopSucceeded = ({ node, result }) => {
+      recordDelivery(db, node.cardId, node.expiresAt, node.thresholdDays, 'desktop');
+      if (node.nodeKind === 'snooze') markSnoozeDelivered(db, node.cardId, 'desktop');
+      result.desktop = saveResult(node, 'desktop', 'shown');
+    };
+    const presentDesktop = async (card, node, result, days) => {
+      const job = { node, result, payload: {
+        cardName: card.title, creditId: card.id, source: card.source, expiresAt: card.expiresAt,
+        expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
+        days, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex++,
+        nodeKind: node.nodeKind, nodeAt: node.nodeAt, thresholdDays: node.thresholdDays,
+      } };
+      if (batchDesktop) { desktopJobs.push(job); return; }
+      begin(node, 'desktop');
+      await desktop(job.payload);
+      desktopSucceeded(job);
     };
     // 旧版手动记录保留在数据库中，但不代表官方额度，也不参与提醒。
     const cards = listCards(db).filter((card) => card.source === 'codex');
@@ -102,14 +122,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         result.desktop = 'due';
         if (!dryRun) {
           try {
-            begin(node, 'desktop');
-            await desktop({ cardName: card.title, creditId: card.id, source: card.source,
-              expiresAt: card.expiresAt,
-              expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
-              days, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex });
-            recordDelivery(db, card.id, card.expiresAt, days, 'desktop');
-            shownIndex++;
-            result.desktop = saveResult(node, 'desktop', 'shown');
+            await presentDesktop(card, node, result, days);
           } catch (error) { result.desktop = saveResult(node, 'desktop', 'failed', error); }
         }
       }
@@ -169,18 +182,42 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       if (channels.includes('desktop') && !snooze.desktopDeliveredAt && !dryRun
         && maySend(node, 'desktop')) {
         try {
-          begin(node, 'desktop');
-          await desktop({ cardName: card.title, creditId: card.id, source: card.source,
-            expiresAt: card.expiresAt,
-            expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
-            days: remainingDays, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex });
-          recordDelivery(db, card.id, card.expiresAt, 0, 'desktop');
-          markSnoozeDelivered(db, card.id, 'desktop');
-          shownIndex++;
-          result.desktop = saveResult(node, 'desktop', 'shown');
+          await presentDesktop(card, node, result, remainingDays);
         } catch (error) { result.desktop = saveResult(node, 'desktop', 'failed', error); }
       }
       results.push(result);
+    }
+    if (desktopJobs.length) {
+      // 其他渠道发送期间，用户可能已延期、用卡或关闭提醒。批次提交前重新核对。
+      const latestConfig = JSON.parse(await readFile(configPath, 'utf8'));
+      const batchNow = nowSeconds + Math.floor((Date.now() - startedAt) / 1000);
+      const currentQuiet = quietHours(latestConfig);
+      const eligible = desktopJobs.filter(({ node, result }) => {
+        result.desktop = 'deferred';
+        const card = getCard(db, node.cardId);
+        if (!enabledChannels(latestConfig).includes('desktop') || card?.status !== 'available'
+          || card.expiresAt !== node.expiresAt || card.expiresAt <= batchNow
+          || (accountScopeId && card.accountScopeId !== accountScopeId)
+          || deliveryTime(batchNow, card.expiresAt, currentQuiet) > batchNow) return false;
+        const snooze = getSnooze(db, card.id);
+        const days = dueThreshold(card.expiresAt, batchNow);
+        if (node.nodeKind === 'fixed') {
+          if (days !== node.thresholdDays || deliveryExists(db, card.id, card.expiresAt, days, 'desktop')
+            || (snooze?.expiresAt === card.expiresAt && snooze.targetAt >= node.nodeAt)) return false;
+        } else if (snooze?.expiresAt !== card.expiresAt || snooze.targetAt !== node.nodeAt
+          || snooze.desktopDeliveredAt || (days !== null && node.nodeAt < card.expiresAt - days * 86400)) return false;
+        if (trackAttempts && !mayAttemptReminder(getReminderAttempt(db, { ...node, channel: 'desktop' }), batchNow,
+          Boolean(manualRetry))) return false;
+        // 核对和占用间没有 await；另一轮并发检查只能看到已占用的节点。
+        begin(node, 'desktop');
+        return true;
+      });
+      try {
+        if (eligible.length) await desktop({ cards: eligible.map((job) => job.payload) });
+        for (const job of eligible) desktopSucceeded(job);
+      } catch (error) {
+        for (const job of eligible) job.result.desktop = saveResult(job.node, 'desktop', 'failed', error);
+      }
     }
     return { checkedAt: new Date(nowSeconds * 1000).toISOString(), latestSync: latestSync(db),
       cachedCards: cards.length, due: results };
