@@ -2,7 +2,7 @@
 
 1. 在三平台 CI 中运行单元测试、SQLite 探针、目录包内容检查、首次安装与交互界面检查，确认全部通过。
 2. 按 [三平台实际使用验收](platform-qa.md) 完成有设备的平台；macOS 和 Linux 实机未验收时，发行说明需明确标注测试范围。
-3. 将版本写入 `package.json`，创建同版本 `v<version>` tag。发布工作流会拒绝与包版本不一致的 tag。
+3. 将版本写入 `package.json` 和 `package-lock.json`，编写 `docs/releases/v<version>.md`，创建同版本 `v<version>` tag。发布工作流会拒绝与包版本不一致的 tag，并使用该文件作为发行说明。
 4. 发布工作流汇总 Windows NSIS、macOS DMG、Linux AppImage 和 deb，并生成 `SHA256SUMS.txt`。用户可校验下载文件的 SHA256。
 5. 安装包只允许包含示例配置，不包含 `config.json`、`.state`、数据库或凭证。CI 会检查目录包内容。
 
