@@ -1,5 +1,7 @@
 # Codex 重置卡提醒：首次安装
 
+本页仅适用于旧版 Windows PowerShell 脚本包。Electron 桌面版请使用[桌面版使用指南](https://github.com/Adgai115/codex-reset-reminder/blob/main/docs/user-guide.md)；旧版完整说明见 [Windows PowerShell 旧版文档](docs/legacy-powershell.md)。
+
 1. 解压安装包到当前用户可写、准备长期保留的目录。不要在安装后移动该目录；Windows 计划任务会引用目录中的脚本。
 2. 安装 Windows PowerShell 7、Node.js 24，并通过 npm 全局安装 Codex CLI（`npm install -g @openai/codex`），确保已登录。若要使用飞书通知，另安装本机 `lark-cli`，并在飞书开放平台准备启用了机器人的应用及 App ID、App Secret。
 3. 双击 **开始安装.vbs**。点击 **安装本机提醒**，等待窗口显示“本机提醒安装完成”。此步骤会创建桌面快捷方式和当前 Windows 用户的提醒计划任务。
