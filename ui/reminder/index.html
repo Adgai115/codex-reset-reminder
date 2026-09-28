@@ -3,51 +3,48 @@
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'">
-<title>Codex 重置卡即将到期</title>
+<title>Codex 重置卡到期提醒</title>
 <style>
   * { box-sizing:border-box; }
-  body { margin:0; height:100vh; display:flex; flex-direction:column; font:14px 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
-    background:#fff; color:#1e293b; border:1px solid #dbe2ee; border-radius:12px; overflow:hidden; }
-  header { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#fff3e8;
-    color:#9a410d; padding:12px 15px; -webkit-app-region:drag; }
+  body { margin:0; width:100%; height:100vh; display:flex; flex-direction:column; overflow:hidden;
+    font:14px 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; color:#1e293b;
+    background:#fff; border:1px solid #dbe2ee; border-radius:12px; }
+  header { display:flex; align-items:center; gap:8px; padding:11px 15px; background:#fff3e8;
+    color:#9a410d; -webkit-app-region:drag; }
   #heading { white-space:nowrap; }
-  #total { margin-left:auto; font-size:12px; white-space:nowrap; }
-  header button { -webkit-app-region:no-drag; border:0; background:transparent; color:inherit; cursor:pointer; font-size:19px; }
-  main { padding:12px 17px; flex:1; min-height:0; overflow-y:auto; }
-  .reminder-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 14px; align-items:center; padding:14px 0; border-bottom:1px solid #edf0f4; }
-  .reminder-item:first-child { padding-top:0; }
-  .remaining { grid-column:2; grid-row:1; font-size:16px; font-weight:600; color:#b44a10; white-space:nowrap; font-variant-numeric:tabular-nums; }
-  .name { grid-column:1; grid-row:1; min-width:0; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .expiry { grid-column:1; grid-row:2; font-variant-numeric:tabular-nums; white-space:nowrap; font-size:12px; color:#64748b; }
-  .item-actions { grid-column:2; grid-row:2; }
-  .single .reminder-item { display:block; padding:0; border:0; }
-  .single .remaining { font-size:25px; font-weight:700; color:#eb5b13; }
-  .single .name { margin:7px 0; }
-  .meta { color:#64748b; font-size:12px; line-height:1.65; }
-  details { margin-top:8px; }
-  summary { cursor:pointer; }
-  #identifiers { overflow-wrap:anywhere; }
-  #error { color:#b42318; font-size:12px; overflow-wrap:anywhere; margin-top:8px; }
-  #error:empty { display:none; }
-  footer { display:flex; gap:6px; padding:0 17px 15px; }
+  #account { min-width:0; margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+  #close, #prev, #next { -webkit-app-region:no-drag; border:0; background:transparent; color:inherit; cursor:pointer; }
+  #close { font-size:19px; line-height:1; }
+  main { flex:1; min-height:0; padding:15px 17px 7px; overflow:hidden; }
+  .top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+  #days { font-size:24px; font-weight:700; color:#e45815; white-space:nowrap; }
+  .pager { display:flex; align-items:center; gap:2px; color:#64748b; font-size:12px; white-space:nowrap; }
+  .pager button { padding:4px 7px; font-size:15px; }
+  #name-row { display:flex; gap:7px; min-width:0; margin:9px 0 5px; align-items:baseline; }
+  #name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  #card-key { flex:none; color:#64748b; font-size:12px; white-space:nowrap; }
+  #expiry { color:#64748b; font-size:12px; white-space:nowrap; }
+  #feedback { color:#64748b; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 17px 5px; }
+  #feedback.error { color:#b42318; }
+  footer { display:flex; gap:8px; padding:0 17px 15px; }
   button, select { font:inherit; white-space:nowrap; }
-  footer button, select { border:1px solid #cad3df; background:white; border-radius:7px; padding:7px 9px; cursor:pointer; }
-  footer button:first-child { background:#ee641b; border-color:#ee641b; color:white; }
-  select { width:124px; }
-  .multi select { font-size:12px; width:110px; padding:5px 6px; }
+  footer button, select { border:1px solid #cad3df; background:#fff; border-radius:7px; padding:8px 10px; cursor:pointer; }
+  #reset { flex:1; background:#ee641b; border-color:#ee641b; color:#fff; }
+  #option { width:125px; }
   button:disabled, select:disabled { opacity:.5; cursor:not-allowed; }
   :focus-visible { outline:2px solid #b44a10; outline-offset:2px; }
   [hidden] { display:none !important; }
 </style>
 </head>
-<body class="single">
-<header><strong id="heading">Codex 重置卡</strong><span id="total" hidden></span><button id="close" aria-label="关闭">×</button></header>
+<body>
+<header><strong id="heading">Codex 重置卡</strong><span id="account" title="当前核对账号"></span><button id="close" aria-label="关闭">×</button></header>
 <main>
-  <div id="items" aria-label="到期提醒"></div>
-  <details class="meta" id="reminder-details"><summary>详情</summary><div id="count"></div><div id="sync"></div><div id="identifiers"></div></details>
-  <div id="error" role="alert"></div>
+  <div class="top"><div id="days"></div><div class="pager" id="pager" hidden><button id="prev" aria-label="上一张">‹</button><span id="position"></span><button id="next" aria-label="下一张">›</button></div></div>
+  <div id="name-row"><span id="name"></span><span id="card-key"></span></div>
+  <div id="expiry"></div>
 </main>
-<footer><button id="open" title="打开 Codex 网页">打开 Codex</button><span id="single-option"></span></footer>
+<div id="feedback" role="status" aria-live="polite"></div>
+<footer><button id="reset">立即重置</button><select id="option" aria-label="稍后提醒"></select></footer>
 <script type="module" src="./app.mjs"></script>
 </body>
 </html>

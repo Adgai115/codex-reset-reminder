@@ -180,7 +180,7 @@ if (!gotLock) {
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开卡片管理', click: () => showManage() },
         { label: '提醒设置', click: () => showSettings() },
-        ...(pendingCount ? [{ label: `待处理 ${pendingCount} 张`, click: () => {
+        ...(pendingCount ? [{ label: `已提醒 ${pendingCount} 张`, click: () => {
           openPendingReminders().catch(() => showManage());
         } }] : []),
         { label: summary, enabled: false },
@@ -206,10 +206,10 @@ if (!gotLock) {
     return openPendingReminders(cardId);
   });
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
-    'snooze', 'reportCardUsed',
+    'snooze',
     'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels',
     'checkAccount', 'confirmLegacyBinding']);
-  const mutatingOperations = new Set(['reportCardUsed', 'scheduleSnooze', 'clearSnooze']);
+  const mutatingOperations = new Set(['scheduleSnooze', 'clearSnooze']);
   ipcMain.handle('core', async (event, op, args) => {
     if (event.senderFrame?.url !== managePage || !allowedOperations.has(op)) {
       throw new Error('不允许的页面操作');
@@ -219,8 +219,13 @@ if (!gotLock) {
     const result = await coreRequest(op, args);
     if (op === 'checkAccount' || op === 'confirmLegacyBinding') {
       stateChanged();
-      if (result.state === 'verified') scheduler?.check('account-confirmed');
-      return result;
+      if (result.state !== 'verified') return result;
+      let syncResult = null;
+      let syncError = null;
+      try { syncResult = await scheduler?.sync('account-confirmed') || null; }
+      catch (error) { syncError = error.message; }
+      scheduler?.check('account-confirmed');
+      return { ...result, syncResult, syncError };
     }
     if (op === 'manageSnapshot') return { ...result, ...scheduler?.syncState(),
       retrying: scheduler?.isRetrying() === true };
@@ -310,6 +315,7 @@ if (!gotLock) {
   ipcMain.handle('settings:testDesktop', async (event) => {
     checkSettingsPage(event);
     await reminders.present({ cardName: '【测试】演示重置卡', creditId: 'simulation-card',
+      accountDisplay: '演示账号',
       expiresAt: Math.floor(Date.now() / 1000) + 7 * 86400,
       expiresLocal: new Date(Date.now() + 7 * 86400000).toLocaleString('zh-CN', { hour12: false }),
       days: 7, currentAvailableCount: null, stackIndex: 0, simulated: true });

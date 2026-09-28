@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, screen, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain, screen } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getSnoozeOptions } from '../core/later.mjs';
@@ -15,15 +15,15 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     if (record.window.isDestroyed()) return;
     if (!record.items.length) { record.window.close(); return; }
     const area = screen.getDisplayMatching(record.window.getBounds()).workArea;
-    const width = Math.min(record.items.length > 1 ? 520 : 420, area.width - 24);
-    const height = Math.min(record.items.length > 1 ? 145 + Math.min(record.items.length, 5) * 100 : 260,
-      area.height - 24);
+    const width = Math.min(420, area.width - 24);
+    const height = Math.min(230, area.height - 24);
     const bounds = record.window.getBounds();
     record.window.setBounds({ width, height,
       x: Math.max(area.x + 12, Math.min(bounds.x + bounds.width - width, area.x + area.width - width - 12)),
       y: Math.max(area.y + 12, Math.min(bounds.y + bounds.height - height, area.y + area.height - height - 12)),
     });
     record.window.webContents.send('reminder:data', { simulated: record.simulated,
+      accountDisplay: record.accountDisplay,
       cards: record.items.map((item) => ({ ...item,
         snoozeOptions: getSnoozeOptions({ status: 'available', expiresAt: item.expiresAt }),
       })) });
@@ -48,9 +48,26 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     if (record.busy) return false;
     record.busy = true;
     try {
-      if (action === 'open') {
-        await shell.openExternal('https://chatgpt.com/codex');
-        record.window.close();
+      if (action === 'reset') {
+        if (record.simulated) throw new Error('测试提醒不能使用真实重置卡');
+        const item = record.items.find((entry) => entry.creditId === args?.cardId
+          && entry.expiresAt === args?.expectedExpiresAt);
+        if (!item) throw new Error('卡片已变化，请重新查看提醒');
+        const confirmation = await dialog.showMessageBox(record.window, {
+          type: 'warning', noLink: true, buttons: ['取消', '确认立即重置'], defaultId: 0, cancelId: 0,
+          message: `立即重置 ${item.cardName}？`,
+          detail: `账号：${record.accountDisplay || '待核对'}\n卡片：#${item.creditId.slice(-6)}\n确认后会向 Codex 发起正式用卡请求；成功后无法撤销。`,
+        });
+        if (confirmation.response !== 1) return { outcome: 'cancelled' };
+        const result = await coreRequest('resetCardFromReminder', {
+          cardId: item.creditId, expectedExpiresAt: item.expiresAt });
+        if (['reset', 'alreadyRedeemed'].includes(result.outcome)) {
+          record.items = record.items.filter((current) => current !== item);
+          if (record.items.length) update(record);
+          else setTimeout(() => { if (!record.window.isDestroyed()) record.window.close(); }, 1200);
+          try { await onScheduleChanged(); } catch (error) { console.warn(`[reminder] 用卡后重排失败：${error.message}`); }
+        }
+        return result;
       } else if (action === 'snooze') {
         const item = record.items.find((item) => item.creditId === args?.cardId);
         if (!item || !['1d', '3d', 'tomorrow10'].includes(args?.option)) throw new Error('提醒时间或卡片无效');
@@ -77,6 +94,7 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     let record = windows.get(key);
     if (record) {
       record.items = mergeReminderItems(record.items, items);
+      record.accountDisplay = payload.accountDisplay || record.accountDisplay;
       await record.ready;
       if (record.window.isDestroyed()) throw new Error('提醒窗口已关闭，请稍后重试');
       update(record);
@@ -86,12 +104,13 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     }
     const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const window = new BrowserWindow({
-      width: 420, height: 260, x: area.x + area.width - 436, y: area.y + area.height - 276,
+      width: 420, height: 230, x: area.x + area.width - 436, y: area.y + area.height - 246,
       frame: false, resizable: false, movable: true, alwaysOnTop: true, skipTaskbar: true, show: false,
       webPreferences: { preload: join(import.meta.dirname, 'preload.cjs'), contextIsolation: true,
         nodeIntegration: false, sandbox: true },
     });
-    record = { window, items, simulated, busy: false, ready: null, closeTimer: null };
+    record = { window, items, simulated, accountDisplay: payload.accountDisplay || null,
+      busy: false, ready: null, closeTimer: null };
     windows.set(key, record);
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());

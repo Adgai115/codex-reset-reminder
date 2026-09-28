@@ -13,13 +13,19 @@ export async function probeCodex(codexScript, { appServer = callAppServer, exist
       return { ok: false, message: 'Codex Usage 未返回有效数据。' };
     }
     const credits = result.rateLimitResetCredits;
-    if (!Number.isInteger(credits?.availableCount) || !Array.isArray(credits?.credits)) {
-      return { ok: true, complete: false,
-        message: 'Codex 已连接，但重置卡详情不完整；提醒会继续使用已有缓存。' };
+    if (!Number.isInteger(credits?.availableCount) || credits.availableCount < 0) {
+      return { ok: false, message: 'Codex 已连接，但未返回有效的重置卡数量。' };
     }
-    return { ok: true, complete: credits.availableCount === credits.credits.length,
-      availableCount: credits.availableCount,
-      message: `Codex Usage 可读取，当前可用 ${credits.availableCount} 张重置卡。` };
+    const rows = credits.credits;
+    if (rows == null) return { ok: true, complete: false, availableCount: credits.availableCount,
+      detailedCount: 0, message: `Codex 已连接，显示 ${credits.availableCount} 张可用；官方暂未提供逐卡到期详情。已有缓存保留，稍后自动重试。` };
+    if (!Array.isArray(rows)) return { ok: false, message: 'Codex 已连接，但重置卡详情格式无效。' };
+    const detailedCount = rows.filter((credit) => credit?.status === 'available'
+      && typeof credit.id === 'string' && Number.isInteger(credit.expiresAt)).length;
+    const complete = credits.availableCount === rows.length && detailedCount === rows.length;
+    return { ok: true, complete, availableCount: credits.availableCount, detailedCount,
+      message: complete ? `Codex 已连接，${credits.availableCount} 张卡的到期详情已核对。`
+        : `Codex 已连接，显示 ${credits.availableCount} 张可用，其中 ${detailedCount} 张有到期详情；保留已有缓存并自动重试。` };
   } catch (error) {
     return { ok: false, message: `读取 Codex Usage 失败：${error.message}` };
   }

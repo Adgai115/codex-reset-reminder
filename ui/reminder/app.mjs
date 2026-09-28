@@ -2,62 +2,44 @@ const $ = (id) => document.getElementById(id);
 let payload = null;
 let deferred = null;
 let busy = false;
+let selectedId = null;
 const selecting = () => document.activeElement?.tagName === 'SELECT';
-const text = (parent, tag, content, className = '') => {
-  const element = document.createElement(tag);
-  element.textContent = content; element.className = className; parent.appendChild(element);
-  return element;
-};
+const keyLabel = (id) => `#${String(id || '').slice(-6)}`;
+const currentCard = () => payload?.cards.find((card) => card.creditId === selectedId) || payload?.cards[0];
 
 function controls() {
-  document.querySelectorAll('button, select').forEach((element) => {
-    element.disabled = busy || element.dataset.unavailable === 'true';
-  });
+  for (const element of document.querySelectorAll('button, select')) element.disabled = busy;
+  $('reset').disabled = busy || payload?.simulated === true;
+  $('option').disabled = busy || $('option').options.length < 2;
 }
 
 function render(next) {
   payload = next;
-  const cards = payload.cards;
-  const single = cards.length === 1;
-  const scrollTop = document.querySelector('main').scrollTop;
-  document.body.className = single ? 'single' : 'multi';
-  $('heading').textContent = payload.simulated ? 'Codex 测试提醒' : 'Codex 重置卡';
-  $('total').hidden = single;
-  $('total').textContent = `${cards.length} 张待处理`;
-  $('items').replaceChildren(); $('single-option').replaceChildren(); $('identifiers').replaceChildren();
-  for (const card of cards) {
-    const row = text($('items'), 'article', '', 'reminder-item');
-    row.dataset.cardId = card.creditId;
-    const hours = Math.ceil((card.expiresAt * 1000 - Date.now()) / 3600000);
-    const remaining = text(row, 'div', hours <= 0 ? '已到期' : hours < 24
-      ? `不足 ${Math.max(1, hours)} 小时` : `${Math.ceil(hours / 24)} 天后到期`, 'remaining');
-    const name = text(row, 'div', card.cardName, 'name');
-    name.title = `${card.cardName}\n${card.creditId}`;
-    const expiry = text(row, 'div', `到期 ${card.expiresLocal}`, 'expiry');
-    if (single) { remaining.id = 'days'; name.id = 'name'; expiry.id = 'expiry'; }
-    const select = text(single ? $('single-option') : text(row, 'div', '', 'item-actions'), 'select', '');
-    if (single) select.id = 'option';
-    select.setAttribute('aria-label', `${card.cardName} · 稍后提醒`);
-    select.dataset.cardId = card.creditId;
-    const placeholder = text(select, 'option', '稍后提醒');
-    placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
-    for (const choice of card.snoozeOptions || []) text(select, 'option', choice.label).value = choice.option;
-    select.dataset.unavailable = String(select.options.length < 2);
-    if (select.options.length < 2) placeholder.textContent = '无法延期';
-    select.title = select.options.length < 2 ? '可选时间均已超过到期时间' : '选择后立即生效';
-    select.addEventListener('change', () => {
-      const option = select.value;
-      select.value = ''; select.blur();
-      placeholder.textContent = '保存中…';
-      act('snooze', { cardId: card.creditId, option });
-    });
-    text($('identifiers'), 'div', `${card.cardName} · ${card.creditId}`);
+  if (!next.cards.some((card) => card.creditId === selectedId)) selectedId = next.cards[0]?.creditId || null;
+  const card = currentCard();
+  if (!card) return;
+  $('heading').textContent = next.simulated ? 'Codex 测试提醒' : 'Codex 重置卡';
+  $('account').textContent = next.accountDisplay || (next.simulated ? '演示账号' : '账号待核对');
+  const index = next.cards.findIndex((item) => item.creditId === card.creditId);
+  $('pager').hidden = next.cards.length < 2;
+  $('position').textContent = `${index + 1} / ${next.cards.length}`;
+  const hours = Math.ceil((card.expiresAt * 1000 - Date.now()) / 3600000);
+  $('days').textContent = hours <= 0 ? '已到期' : hours < 24
+    ? `不足 ${Math.max(1, hours)} 小时` : `${Math.ceil(hours / 24)} 天后到期`;
+  $('name').textContent = card.cardName;
+  $('name').title = card.cardName;
+  $('card-key').textContent = keyLabel(card.creditId);
+  $('card-key').title = card.creditId;
+  $('expiry').textContent = `到期 ${card.expiresLocal}`;
+  $('option').replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.textContent = card.snoozeOptions?.length ? '稍后提醒' : '无法延期';
+  placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
+  $('option').appendChild(placeholder);
+  for (const choice of card.snoozeOptions || []) {
+    const option = document.createElement('option');
+    option.value = choice.option; option.textContent = choice.label; $('option').appendChild(option);
   }
-  const latest = [...cards].sort((a, b) => (b.syncedAt || 0) - (a.syncedAt || 0))[0];
-  $('count').textContent = Number.isInteger(latest?.currentAvailableCount) ? `最近可用：${latest.currentAvailableCount} 张` : '可用数量：尚未核对';
-  $('sync').textContent = payload.simulated ? '演示数据' : latest?.syncedAt
-    ? `上次核对：${new Date(latest.syncedAt * 1000).toLocaleString('zh-CN', { hour12: false })}` : '';
-  document.querySelector('main').scrollTop = scrollTop;
   controls();
 }
 
@@ -69,11 +51,23 @@ document.addEventListener('focusout', () => queueMicrotask(() => {
   if (!busy && !selecting() && deferred) { const next = deferred; deferred = null; render(next); }
 }));
 
-async function act(action, args) {
+function feedback(message, error = false) {
+  $('feedback').textContent = message;
+  $('feedback').title = message;
+  $('feedback').classList.toggle('error', error);
+}
+async function act(action, args = {}) {
   if (busy) return;
-  busy = true; controls(); $('error').textContent = '';
-  try { await window.api.reminderAction(action, args); }
-  catch (error) { $('error').textContent = error.message; }
+  busy = true; controls(); feedback(action === 'reset' ? '正在核对重置卡…' : '正在保存…');
+  try {
+    const result = await window.api.reminderAction(action, args);
+    if (result?.outcome === 'cancelled') feedback('已取消，重置卡未使用');
+    else if (result?.outcome === 'nothingToReset') feedback('当前没有可重置的额度，卡片未消耗');
+    else if (result?.outcome === 'noCredit') feedback('Codex 未找到可用的重置卡，请刷新列表', true);
+    else if (result?.outcome === 'reset' || result?.outcome === 'alreadyRedeemed') feedback('Codex 已确认重置');
+    else feedback('');
+  } catch (error) { feedback(action === 'reset'
+    ? `结果未确认：${error.message}；请先核对 Codex，勿连续重试` : error.message, true); }
   finally {
     busy = false;
     if (deferred) { const next = deferred; deferred = null; render(next); }
@@ -82,5 +76,16 @@ async function act(action, args) {
   }
 }
 $('close').addEventListener('click', () => act('dismiss'));
-$('open').addEventListener('click', () => act('open'));
+$('prev').addEventListener('click', () => { if (!payload) return; const i = payload.cards.findIndex((card) => card.creditId === selectedId); selectedId = payload.cards[(i - 1 + payload.cards.length) % payload.cards.length].creditId; feedback(''); render(payload); });
+$('next').addEventListener('click', () => { if (!payload) return; const i = payload.cards.findIndex((card) => card.creditId === selectedId); selectedId = payload.cards[(i + 1) % payload.cards.length].creditId; feedback(''); render(payload); });
+$('reset').addEventListener('click', () => {
+  const card = currentCard();
+  if (card && !payload.simulated) act('reset', { cardId: card.creditId, expectedExpiresAt: card.expiresAt });
+});
+$('option').addEventListener('change', () => {
+  const card = currentCard();
+  const option = $('option').value;
+  $('option').value = ''; $('option').blur();
+  if (card && option) act('snooze', { cardId: card.creditId, option });
+});
 setInterval(() => { if (payload && !busy && !selecting()) render(payload); }, 30_000);

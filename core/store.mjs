@@ -91,6 +91,14 @@ export function openStore() {
       outcome TEXT,
       processed_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS desktop_reset_requests (
+      card_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      requested_at INTEGER NOT NULL,
+      PRIMARY KEY (card_id, expires_at),
+      FOREIGN KEY (card_id) REFERENCES cards(id)
+    );
     CREATE TABLE IF NOT EXISTS snoozes (
       card_id TEXT PRIMARY KEY,
       expires_at INTEGER NOT NULL,
@@ -113,13 +121,16 @@ export function openStore() {
 export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.now() / 1000), scopeId = null) {
   const credits = resetCredits?.credits;
   const availableCount = resetCredits?.availableCount;
-  if (!Number.isInteger(availableCount) || !Array.isArray(credits)) {
-    throw new Error('Codex 未返回可用重置卡的完整到期详情');
+  if (!Number.isInteger(availableCount) || availableCount < 0) {
+    throw new Error('Codex 未返回有效的重置卡数量');
   }
-  const rows = credits.filter((credit) => credit?.status === 'available'
+  if (credits != null && !Array.isArray(credits)) throw new Error('Codex 返回的重置卡详情格式无效');
+  const rows = (credits || []).filter((credit) => credit?.status === 'available'
     && typeof credit.id === 'string' && credit.id.length > 0
     && Number.isInteger(credit.expiresAt));
-  const complete = availableCount === credits.length && rows.length === credits.length;
+  const complete = Array.isArray(credits) && availableCount === credits.length && rows.length === credits.length;
+  const detailMessage = credits == null ? `Codex 只返回 ${availableCount} 张的数量，未提供逐卡到期详情`
+    : complete ? null : `Codex 返回 ${availableCount} 张可用卡，其中 ${rows.length} 张有有效到期详情`;
   const previousComplete = latestCompleteSync(db);
   const seenIds = new Set(rows.map((credit) => credit.id));
   const newlyUsed = [];
@@ -166,13 +177,13 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
     }
     db.prepare('INSERT INTO sync_history (checked_at, outcome, available_count, detailed_count, message) VALUES (?, ?, ?, ?, ?)')
       .run(checkedAt, complete ? 'complete' : 'partial', availableCount, rows.length,
-        complete ? null : '只返回部分卡片详情；保留此前缓存的卡片');
+        detailMessage);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
-  return { availableCount, detailedCount: rows.length, complete,
+  return { availableCount, detailedCount: rows.length, complete, detailMessage,
     countDelta: previousComplete ? availableCount - previousComplete.availableCount : null,
     newlyUsed, noLongerAvailable };
 }
@@ -302,6 +313,19 @@ export function setFeishuMessageStatus(db, messageId, status) {
   if (!['available', 'used', 'snoozed', 'unavailable', 'choosing', 'pending_verification'].includes(status)) throw new Error('无效的飞书卡片状态');
   db.prepare('UPDATE feishu_messages SET action_status = ? WHERE message_id = ?')
     .run(status, messageId);
+}
+
+export function desktopResetKey(db, cardId, expiresAt, newKey) {
+  db.prepare(`INSERT OR IGNORE INTO desktop_reset_requests
+    (card_id, expires_at, idempotency_key, requested_at) VALUES (?, ?, ?, ?)`)
+    .run(cardId, expiresAt, newKey, Math.floor(Date.now() / 1000));
+  return db.prepare(`SELECT idempotency_key AS idempotencyKey FROM desktop_reset_requests
+    WHERE card_id = ? AND expires_at = ?`).get(cardId, expiresAt).idempotencyKey;
+}
+
+export function clearDesktopResetKey(db, cardId, expiresAt, key) {
+  db.prepare(`DELETE FROM desktop_reset_requests
+    WHERE card_id = ? AND expires_at = ? AND idempotency_key = ?`).run(cardId, expiresAt, key);
 }
 
 export function claimCardActionEvent(db, eventId, messageId, action) {

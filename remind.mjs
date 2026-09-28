@@ -7,7 +7,7 @@ import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 import { safeDeliveryFailure } from './core/delivery-results.mjs';
 import { mayAttemptReminder, nextRetryAfter } from './core/delivery-retry.mjs';
-import { clearSnooze, deliveryExists, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
+import { clearSnooze, deliveryExists, getActiveAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
   beginReminderAttempt, getReminderAttempt, markSnoozeDelivered, openStore, recordDelivery,
   recordFeishuMessage, recordReminderResult } from './store.mjs';
 
@@ -22,6 +22,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
   const db = openStore();
+  const boundAccount = accountScopeId ? getActiveAccountScope(db) : null;
+  const accountDisplay = boundAccount?.scopeId === accountScopeId ? boundAccount.displayName : null;
   const results = [];
   const desktopJobs = [];
   const startedAt = Date.now();
@@ -95,7 +97,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         if (!dryRun) {
           try {
             begin(node, 'feishu');
-            const sent = await feishu(config, card, days, { currentAvailableCount: syncedCount, syncedAt });
+            const sent = await feishu(config, card, days, { currentAvailableCount: syncedCount, syncedAt, accountDisplay });
             if (sent?.messageId && config.feishu.userId) {
               recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
                 expiresAt: card.expiresAt, thresholdDays: days, recipientOpenId: config.feishu.userId });
@@ -158,7 +160,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         try {
           begin(node, 'feishu');
           const sent = await feishu(config, card, remainingDays,
-            { currentAvailableCount: syncedCount, syncedAt, snoozeTargetAt: snooze.targetAt });
+            { currentAvailableCount: syncedCount, syncedAt, snoozeTargetAt: snooze.targetAt, accountDisplay });
           if (sent?.messageId && config.feishu.userId) {
             recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
               expiresAt: card.expiresAt, thresholdDays: remainingDays, recipientOpenId: config.feishu.userId });

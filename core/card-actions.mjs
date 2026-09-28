@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
 import { patchFeishuCard, updateFeishuCard } from './feishu.mjs';
 import { getSnoozeOptions, planSnooze } from './later.mjs';
-import { claimCardActionEvent, completeCardActionEvent, getCard, getFeishuMessage,
+import { claimCardActionEvent, completeCardActionEvent, getActiveAccountScope, getCard, getFeishuMessage,
   getSnooze, latestCompleteSync, openStore, recordFeishuMessage,
   reportCardUsed, scheduleSnooze, setFeishuMessageStatus } from './store.mjs';
 
@@ -57,7 +57,8 @@ export async function handleCardAction(event, config, { db = openStore(),
     let card = getCard(db, message.cardId);
     const updateCard = async (state, notice = null, statusInfo = null, display = {}) => {
       if (!card) return;
-      const options = { currentAvailableCount: latestCompleteSync(db)?.availableCount ?? null, ...display };
+      const options = { currentAvailableCount: latestCompleteSync(db)?.availableCount ?? null,
+        accountDisplay: card.source === 'codex' ? getActiveAccountScope(db)?.displayName : null, ...display };
       try {
         await update(config, event.token, card, message.thresholdDays, state,
           null, notice, statusInfo, options);

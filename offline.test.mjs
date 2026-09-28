@@ -47,6 +47,11 @@ test('cached cards remind offline once per channel and threshold; partial sync k
     saveCodexSnapshot(db, { availableCount: 1, credits: [] }, now + 1);
     assert.equal(latestSync(db).outcome, 'partial');
     assert.equal(listCards(db).length, 1);
+    const countOnly = saveCodexSnapshot(db, { availableCount: 3, credits: null }, now + 2);
+    assert.equal(countOnly.complete, false);
+    assert.equal(countOnly.detailedCount, 0);
+    assert.match(countOnly.detailMessage, /只返回 3 张的数量/);
+    assert.equal(listCards(db)[0].status, 'available');
   } finally { db.close(); }
 
   const calls = [];

@@ -13,6 +13,7 @@ import { pendingReminder } from '../core/pending-reminders.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
 import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
 import { accountStatus, checkAccount, requireAccount, requireCardInScope } from './account-guard.mjs';
+import { resetCardFromReminder } from './reset-card.mjs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -21,6 +22,11 @@ const value = (input) => String(input ?? '').trim();
 const configPath = () => process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(import.meta.dirname, '..', 'config.json');
 const verifiedScope = () => requireAccount(configPath());
 const protectedSync = (path, options = {}) => syncCards(path, { ...options, accountGuard: verifiedScope });
+function currentAccountDisplay() {
+  const db = store.openStore();
+  try { return accountStatus(db).boundDisplay || '账号待核对'; }
+  finally { db.close(); }
+}
 
 export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   if (op === 'syncCards') {
@@ -31,7 +37,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
     try { accountScopeId = await verifiedScope(); } catch { /* 未核实账号时暂停卡片提醒。 */ }
     return runReminders({ configPath: configPath(), desktop: desktop && (async (payload) => {
       if (await verifiedScope() !== accountScopeId) throw new Error('账号已变更，暂停桌面提醒');
-      return desktop(payload);
+      return desktop({ ...payload, accountDisplay: currentAccountDisplay() });
     }), trackAttempts: true, batchDesktop: true,
       ...args, allowCodex: Boolean(accountScopeId), accountScopeId });
   }
@@ -50,10 +56,11 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
   if (op === 'checkAccount') return checkAccount(configPath());
   if (op === 'confirmLegacyBinding') return checkAccount(configPath(), {
     confirmLegacy: true, expectedCandidateToken: args.expectedCandidateToken });
+  if (op === 'resetCardFromReminder') return resetCardFromReminder(args, { verifyAccount: verifiedScope });
   if (op === 'pendingReminders') {
     await verifiedScope();
     const snapshot = await runCoreOperation('manageSnapshot');
-    return { cards: snapshot.cards.filter((card) => card.pendingReminder
+    return { accountDisplay: snapshot.account.boundDisplay, cards: snapshot.cards.filter((card) => card.pendingReminder
       && (!args.cardId || card.id === args.cardId)).map((card) => ({
       creditId: card.id, cardName: card.title, source: card.source, expiresAt: card.expiresAt,
       expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
@@ -129,10 +136,6 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
           accountScopeId: store.getActiveAccountScope(db)?.scopeId ?? null });
       }
       case 'snooze': return store.getSnooze(db, value(args.cardId));
-      case 'reportCardUsed': {
-        requireCardInScope(value(args.cardId), await verifiedScope());
-        return { card: store.reportCardUsed(db, value(args.cardId)) };
-      }
       case 'scheduleSnooze': {
         let card = store.getCard(db, value(args.cardId));
         if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
