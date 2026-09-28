@@ -11,7 +11,9 @@ const fileName = /^\s*- url:\s*([^\s]+)\s*$/m.exec(manifest)?.[1];
 const expectedHash = /^\s+sha512:\s*([A-Za-z0-9+/=]+)\s*$/m.exec(manifest)?.[1];
 assert.ok(version && fileName && expectedHash, 'Windows 更新元数据不完整');
 assert.equal(fileName, `Codex.Reset.Reminder.Setup.${version}.exe`, '更新元数据与安装包名不一致');
-const expectedVersion = process.env.GITHUB_REF_NAME?.replace(/^v/, '') ||
+const releaseTag = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(process.env.GITHUB_REF_NAME || '')
+  ? process.env.GITHUB_REF_NAME.slice(1) : null;
+const expectedVersion = releaseTag ||
   JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 assert.equal(version, expectedVersion, '更新元数据版本与发布版本不一致');
 const installerPath = join(directory, fileName);
