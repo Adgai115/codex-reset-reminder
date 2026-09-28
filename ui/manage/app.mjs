@@ -1,4 +1,4 @@
-import { accountDescription, accountSummary, automationSummary, cardState, deliveryGroups,
+import { accountDescription, accountSummary, automationSummary, cardShortId, cardState, deliveryGroups,
   deliveryNodeLabel, deliveryResultLabel, formatShortTime, formatTime,
   nextReminder, syncDescription, syncSummary } from './view-model.mjs';
 
@@ -25,7 +25,13 @@ function notice(message, error = false, detail = message) {
   $('notice-detail').textContent = detail;
   $('notice-box').hidden = !message;
   $('notice').classList.toggle('error', error);
-  if (message && !error) noticeTimer = setTimeout(() => { if (!busy) $('notice-box').hidden = true; }, 6000);
+  if (message) {
+    const hide = () => {
+      if (busy) { noticeTimer = setTimeout(hide, 1000); return; }
+      $('notice-box').hidden = true;
+    };
+    noticeTimer = setTimeout(hide, error ? 12000 : 6000);
+  }
 }
 function controls() {
   document.querySelectorAll('button, select').forEach((element) => {
@@ -43,12 +49,12 @@ function button(parent, label, callback, unavailable = false) {
 }
 function renderDelivery(parent, card) {
   if (card.pendingReminder) {
-    const pending = button(parent, '待处理', async () => {
+    const pending = button(parent, '查看提醒', async () => {
       if (busy) return;
       busy = true; controls();
       try {
         const count = await window.api.openPendingReminders(card.id);
-        if (!count) notice('暂无待处理提醒');
+        if (!count) notice('暂无已提醒卡片');
       } catch (error) { notice('暂时无法查看提醒', true, error.message); }
       finally { busy = false; await load(true); controls(); }
     }, snapshot.account?.state !== 'verified');
@@ -136,8 +142,8 @@ function render() {
   const active = snapshot.cards.filter((card) => cardState(card).active);
   const pending = active.filter((card) => card.pendingReminder);
   $('active-filter').textContent = `可用卡 ${active.length}`;
-  $('history-filter').textContent = `历史卡 ${snapshot.cards.length - active.length}`;
-  $('pending-filter').textContent = `待处理 ${pending.length}`;
+  $('history-filter').textContent = `已结束 ${snapshot.cards.length - active.length}`;
+  $('pending-filter').textContent = `已提醒 ${pending.length}`;
   $('pending-filter').hidden = !pending.length && filter !== 'pending';
   for (const name of ['active', 'history', 'pending'])
     $(`${name}-filter`).setAttribute('aria-pressed', String(filter === name));
@@ -149,7 +155,9 @@ function render() {
     const state = cardState(card);
     const row = text(tbody, 'tr', '');
     const name = text(row, 'td', '');
-    text(name, 'div', card.title, 'card-name single-line').title = card.title;
+    const label = text(name, 'div', '', 'card-label');
+    text(label, 'span', card.title, 'card-name single-line').title = card.title;
+    text(label, 'span', cardShortId(card.id), 'card-key').title = card.id;
     text(row, 'td', formatShortTime(card.expiresAt), 'time').title = formatTime(card.expiresAt);
     const status = text(row, 'td', '');
     const badge = text(status, 'span', state.label, `badge ${state.tone}`);
@@ -175,24 +183,11 @@ function render() {
       action(option === 'clear' ? 'clearSnooze' : 'scheduleSnooze', { cardId: card.id, option },
         option === 'clear' ? '已取消延期' : '已延期');
     });
-    if (!card.reportedUsedAt) {
-      const more = text(actions, 'select', '', 'more-actions');
-      more.setAttribute('aria-label', `${card.title} · 更多操作`);
-      more.dataset.unavailable = String(codexBlocked);
-      const option = text(more, 'option', '更多');
-      option.value = ''; option.disabled = true; option.selected = true;
-      text(more, 'option', '我已在 Codex 使用').value = 'report';
-      more.addEventListener('change', () => {
-        more.value = ''; more.blur();
-        if (confirm('已在 Codex 中使用这张卡？\n仅记录反馈，不会消耗卡片。'))
-          action('reportCardUsed', { cardId: card.id }, '等待使用核验');
-      });
-    }
   }
   $('cards').hidden = cards.length === 0;
   $('empty').hidden = cards.length > 0;
-  $('empty').textContent = filter === 'pending' ? '暂无待处理提醒'
-    : filter === 'history' ? '暂无历史卡片' : '暂无可用卡片';
+  $('empty').textContent = filter === 'pending' ? '暂无已提醒卡片'
+    : filter === 'history' ? '暂无已结束卡片' : '暂无可用卡片';
   controls();
 }
 async function load(force = false) {
@@ -233,7 +228,13 @@ $('check-account').addEventListener('click', async () => {
   busy = true; controls(); notice('核对账号…');
   try {
     const result = await window.api.core('checkAccount');
-    notice(result.state === 'verified' ? '账号已核实' : accountSummary(result), result.state !== 'verified', accountDescription(result));
+    const sync = result.syncResult;
+    notice(result.state !== 'verified' ? accountSummary(result)
+      : result.syncError ? '账号已核实 · 卡片同步暂不可用'
+        : sync?.complete ? `账号与 ${sync.availableCount} 张卡片已核对`
+          : `账号已核实 · 官方仅提供 ${sync?.availableCount ?? 0} 张卡的部分详情`,
+    result.state !== 'verified' || Boolean(result.syncError) || Boolean(sync && !sync.complete),
+    result.syncError || sync?.detailMessage || accountDescription(result));
   } catch (error) { notice('账号核对失败', true, error.message); }
   finally { busy = false; await load(true); controls(); }
 });
@@ -245,7 +246,10 @@ $('bind-account').addEventListener('click', async () => {
   try {
     const result = await window.api.core('confirmLegacyBinding', {
       expectedCandidateToken: candidate.candidateToken });
-    notice(result.state === 'verified' ? '账号已确认' : accountSummary(result), result.state !== 'verified', accountDescription(result));
+    notice(result.state !== 'verified' ? accountSummary(result)
+      : result.syncResult?.complete ? '账号与卡片已核对' : '账号已确认 · 卡片详情待获取',
+    result.state !== 'verified' || !result.syncResult?.complete,
+    result.syncError || result.syncResult?.detailMessage || accountDescription(result));
   } catch (error) { notice('绑定失败', true, error.message); }
   finally { busy = false; await load(true); controls(); }
 });
@@ -255,8 +259,10 @@ $('sync').addEventListener('click', async () => {
   notice('同步中…');
   try {
     const result = await window.api.core('syncCards');
-    notice(result.complete ? `已同步 · ${result.availableCount} 张可用` : '同步不完整 · 自动重试', !result.complete);
-  } catch (error) { notice('同步失败 · 自动重试', true, error.message); }
+    notice(result.complete ? `已核对 · ${result.availableCount} 张可用`
+      : `已连接 · ${result.availableCount} 张可用，详情待获取`, !result.complete,
+    result.detailMessage || '逐卡到期详情已核对');
+  } catch (error) { notice('刷新暂不可用 · 自动重试', true, error.message); }
   finally { busy = false; await load(true); controls(); }
 });
 window.api.onStateChanged(() => load());

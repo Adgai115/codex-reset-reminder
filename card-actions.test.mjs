@@ -73,10 +73,12 @@ test('a historical use button only records feedback; matching count drop confirm
 
 test('a new official card requires a confirmed consume action before using Codex', async () => {
   reset();
-  const built = buildFeishuCard({ ...card('credit-a'), source: 'codex' }, 7);
+  const built = buildFeishuCard({ ...card('credit-a'), source: 'codex' }, 7,
+    { accountDisplay: 'c***@example.invalid' });
+  assert.match(JSON.stringify(built.body.elements), /c\*\*\*@example.invalid · #edit-a/);
   const primary = built.body.elements.find((item) => item.tag === 'column_set' && item.columns?.[0]?.elements?.[0]?.tag === 'button')
     ?.columns[0].elements[0];
-  assert.equal(primary.text.content, '立即使用');
+  assert.equal(primary.text.content, '立即重置');
   assert.deepEqual(primary.behaviors[0].value, { action: 'consume' });
   assert.match(primary.confirm.text.content, /正式用卡请求/);
   let calls = 0;

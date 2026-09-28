@@ -335,6 +335,14 @@ try {
       await sleep(100);
     }
     assert.match(probeText, /未找到 Codex CLI/);
+    const countOnlyCli = await createMockCodex(profile);
+    await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
+      availableCount: 3, credits: null,
+    } }));
+    await evaluate(setup, `document.querySelector('#path').value = ${JSON.stringify(countOnlyCli)};
+      document.querySelector('#probe').click(); true`);
+    await until(setup, `document.querySelector('#probe-status').textContent.includes('官方暂未提供逐卡到期详情')`,
+      '连接成功但详情缺失时显示真实原因');
     await screenshot(setup, 'setup');
     console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
   } else if (recoveryOnly) {
@@ -363,16 +371,27 @@ try {
     console.log('安装包后台自动恢复通过：账号核实、列表刷新、重试重置，全程无需人工操作');
   } else if (pendingOnly) {
     let manage = await page(port, '/ui/manage/index.html', child, deadline);
-    await until(manage, `document.querySelector('#pending-filter')?.textContent === '待处理 3'`, '三张提醒持久化');
+    await until(manage, `document.querySelector('#pending-filter')?.textContent === '已提醒 3'`, '三张提醒持久化');
     let reminder = await page(port, '/ui/reminder/index.html', child, deadline);
-    await until(reminder, `document.querySelectorAll('.reminder-item').length === 3`, '同轮多卡合并');
+    await until(reminder, `document.querySelector('#position')?.textContent === '1 / 3'`, '同轮多卡合并');
     const reminderTabs = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
       .filter((tab) => tab.url?.endsWith('/ui/reminder/index.html'));
     assert.equal((await reminderTabs()).length, 1, '三张卡只创建一个窗口');
-    assert.deepEqual(await evaluate(reminder, `Array.from(document.querySelectorAll('.reminder-item'), row => row.dataset.cardId)`),
-      [0, 1, 2].map((i) => `RateLimitResetCredit_pending${i}`));
+    assert.deepEqual(await evaluate(reminder, `(() => {
+      const ids = [document.querySelector('#card-key').textContent];
+      for (let i = 1; i < 3; i++) { document.querySelector('#next').click(); ids.push(document.querySelector('#card-key').textContent); }
+      return ids;
+    })()`), ['#nding0', '#nding1', '#nding2']);
     assert.equal(await evaluate(reminder, `document.documentElement.scrollWidth <= innerWidth
-      && [...document.querySelectorAll('.name, .expiry, select')].every(element => getComputedStyle(element).whiteSpace === 'nowrap')`), true);
+      && document.documentElement.scrollHeight <= innerHeight
+      && document.querySelector('#account').textContent.includes('example.invalid')
+      && [...document.querySelectorAll('#name, #expiry, select')].every(element => getComputedStyle(element).whiteSpace === 'nowrap')`), true);
+    if (nativeDialogs) {
+      await evaluate(reminder, `document.querySelector('#reset').click(); true`);
+      await clickNative('取消');
+      await until(reminder, `document.querySelector('#feedback').textContent.includes('已取消')`, '取消二次确认不请求用卡');
+      assert.equal(await evaluate(reminder, `document.querySelector('#reset').disabled`), false);
+    }
     await screenshot(reminder, 'pending-batch');
     await screenshot(manage, 'pending-manage');
     const before = await evaluate(manage, `window.api.core('manageSnapshot')`);
@@ -395,7 +414,7 @@ try {
     port = await freePort();
     launch();
     manage = await page(port, '/ui/manage/index.html', child, Date.now() + 30000);
-    await until(manage, `document.querySelector('#pending-filter')?.textContent === '待处理 3'
+    await until(manage, `document.querySelector('#pending-filter')?.textContent === '已提醒 3'
       && document.querySelector('#account-info').dataset.state === 'verified'
       && !document.querySelector('#sync').disabled`, '重启后恢复待处理与账号');
     await sleep(1000);
@@ -403,16 +422,18 @@ try {
     assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 3);
     await evaluate(manage, `document.querySelector('#pending-filter').click(); document.querySelector('.pending-reminder').click(); true`);
     reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
-    await until(reminder, `document.querySelectorAll('.reminder-item').length === 1`, '可从卡片重新查看提醒');
+    await until(reminder, `document.querySelector('#name')?.textContent.includes('CI 合并提醒')
+      && document.querySelector('#pager').hidden`, '可从卡片重新查看提醒');
     assert.equal(await evaluate(manage, `window.api.openPendingReminders()`), 3);
-    await until(reminder, `document.querySelectorAll('.reminder-item').length === 3`, '重复打开合入已有窗口');
+    await until(reminder, `document.querySelector('#position')?.textContent.endsWith('/ 3')`, '重复打开合入已有窗口');
     assert.equal((await reminderTabs()).length, 1);
     await evaluate(reminder, `(() => {
-      const option = document.querySelector('select[data-card-id="RateLimitResetCredit_pending0"]');
+      while (document.querySelector('#card-key').textContent !== '#nding0') document.querySelector('#next').click();
+      const option = document.querySelector('#option');
       option.value = '1d'; option.dispatchEvent(new Event('change')); return true;
     })()`);
-    await until(reminder, `document.querySelectorAll('.reminder-item').length === 2`, '延期只移除所选卡');
-    await until(manage, `document.querySelector('#pending-filter').textContent === '待处理 2'`, '管理页待处理数量同步');
+    await until(reminder, `document.querySelector('#position')?.textContent.endsWith('/ 2')`, '延期只移除所选卡');
+    await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 2'`, '管理页待处理数量同步');
     await screenshot(reminder, 'pending-after-snooze');
     const snoozed = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.ok(snoozed.cards.find((card) => card.id.endsWith('pending0')).snooze?.targetAt);
@@ -424,8 +445,9 @@ try {
         .map((card) => ({ id: card.id, title: card.title, status: 'available', expiresAt: card.expiresAt })),
     } }));
     await evaluate(manage, `window.api.core('syncCards')`);
-    await until(reminder, `document.querySelectorAll('.reminder-item').length === 1`, '官方不可用卡从弹窗移除');
-    await until(manage, `document.querySelector('#pending-filter').textContent === '待处理 1'`, '自动清理失效待处理');
+    await until(reminder, `document.querySelector('#pager').hidden
+      && document.querySelector('#name').textContent.includes('CI 合并提醒 3')`, '官方不可用卡从弹窗移除');
+    await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 1'`, '自动清理失效待处理');
     await writeFile(accountFile, JSON.stringify({ ...mockAccount, account: { type: 'chatgpt', email: 'different@example.invalid' } }));
     await evaluate(manage, `window.api.core('checkAccount')`);
     await untilClosed(port, '/ui/reminder/index.html');
@@ -532,13 +554,13 @@ try {
   })`), { automationVisible: false, accountDetailVisible: false, footerCopy: false, firstCardVisible: true, expiryVisible: true });
   const blocked = await evaluate(manage, `(async () => {
     const errors = [];
-    for (const op of ['addManualCard', 'updateManualCard', 'markManualUsed']) {
+    for (const op of ['addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed']) {
       try { await window.api.core(op, { cardId: '${activeCardId}', title: '改写官方卡', expiresAt: 9999999999 }); }
       catch (error) { errors.push(error.message); }
     }
     return errors;
   })()`);
-  assert.equal(blocked.length, 3);
+  assert.equal(blocked.length, 4);
   assert.ok(blocked.every(message => message.includes('不允许的页面操作')));
   await checkCompactLayout(manage);
   await evaluate(manage, `(() => {
@@ -557,21 +579,19 @@ try {
   const flow = await evaluate(manage, `(async () => {
     const before = await window.api.core('getCard', { cardId: '${activeCardId}' });
     const cleared = await window.api.core('snooze', { cardId: before.id });
-    await window.api.core('reportCardUsed', { cardId: before.id });
     const card = await window.api.core('getCard', { cardId: before.id });
     return { cleared: !cleared, status: card.status,
       reported: Boolean(card.reportedUsedAt), unchanged: card.title === before.title && card.expiresAt === before.expiresAt };
   })()`);
-  assert.deepEqual(flow, { cleared: true, status: 'available', reported: true, unchanged: true });
-  await until(manage, `document.querySelector('#cards tbody').textContent.includes('等待使用核验')`, '使用反馈后列表自动刷新');
+  assert.deepEqual(flow, { cleared: true, status: 'available', reported: false, unchanged: true });
   await evaluate(manage, `document.querySelector('#history-filter').click(); true`);
   assert.equal(await evaluate(manage, `document.querySelector('#cards tbody').textContent.includes('CI 过期卡') && document.querySelector('#cards tbody').textContent.includes('已使用')`), true);
   await evaluate(manage, `document.querySelector('#active-filter').click(); true`);
   await until(manage, `!document.querySelector('#sync').disabled`, '启动同步结束');
   assert.equal(await evaluate(manage, `document.querySelector('#sync').click(); document.querySelector('#sync').textContent`), '同步中…');
-  await until(manage, `!document.querySelector('#sync').disabled && document.querySelector('#notice').textContent.includes('同步失败')`, '同步失败后恢复按钮和缓存列表');
+  await until(manage, `!document.querySelector('#sync').disabled && document.querySelector('#notice').textContent.includes('刷新暂不可用')`, '同步失败后恢复按钮和缓存列表');
   await screenshot(manage, 'manage');
-  console.log('官方卡展示、移除新增编辑、延期和使用反馈通过，检查设置窗口');
+  console.log('官方卡展示、移除新增编辑及手动反馈、延期通过，检查设置窗口');
   // 打开新窗口后，旧窗口可能失焦；直接检查新窗口是否出现。
   await triggerWindow(manage, 'window.api.openSettings(); true');
   console.log('已请求设置窗口，等待页面与本地诊断');
@@ -646,15 +666,15 @@ try {
   assert.match(reminder.name, /演示重置卡/);
   assert.match(reminder.expiry, /到期/);
   assert.deepEqual(await evaluate(reminderTab, `({
-    countVisible: document.querySelector('#count').checkVisibility(),
-    syncVisible: document.querySelector('#sync').checkVisibility(),
+    accountVisible: document.querySelector('#account').textContent === '演示账号',
+    resetDisabled: document.querySelector('#reset').disabled,
     expiryVisible: document.querySelector('#expiry').checkVisibility(),
     demoLabel: document.querySelector('#heading').textContent.includes('测试'),
-    extraConfirm: Boolean(document.querySelector('#later')),
+    noScrollbar: document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth,
     footerFits: document.querySelector('footer').getBoundingClientRect().bottom <= window.innerHeight,
     oneLineName: getComputedStyle(document.querySelector('#name')).whiteSpace === 'nowrap'
-  })`), { countVisible: false, syncVisible: false, expiryVisible: true, demoLabel: true,
-    extraConfirm: false, footerFits: true, oneLineName: true });
+  })`), { accountVisible: true, resetDisabled: true, expiryVisible: true, demoLabel: true,
+    noScrollbar: true, footerFits: true, oneLineName: true });
   await screenshot(reminderTab, 'reminder');
   console.log('演示提醒内容已显示，检查关闭弹窗与保存设置');
   // 关闭会销毁调用方页面；确认窗口消失，不把丢失 CDP 回执误判为应用卡住。

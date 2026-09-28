@@ -28,7 +28,8 @@ test('自动化状态不把未知账号或失败同步显示为已恢复', () =>
   assert.match(syncSummary({ account: { state: 'unavailable' } }), /暂停/);
   assert.match(accountSummary({ state: 'mismatch' }), /账号不一致/);
   assert.match(automationSummary({ recovering: true, nextSyncAt: 100 }), /自动恢复连接.*下次/);
-  assert.match(syncSummary({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /同步失败/);
+  assert.match(syncSummary({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /已同步/);
+  assert.equal(syncSummary({ latest: { outcome: 'partial' } }), '卡片详情待获取');
 });
 
 test('提醒说明使用核心的延期或补查结果，停用渠道时明确提示', () => {
@@ -39,7 +40,7 @@ test('提醒说明使用核心的延期或补查结果，停用渠道时明确�
 });
 
 test('同步失败保留完整核对时间，旧数据和同步中的状态可区分', () => {
-  assert.match(syncDescription({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /已保存的卡片继续提醒/);
+  assert.match(syncDescription({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /已有卡片保留/);
   assert.match(syncDescription({ latest: { outcome: 'complete', checkedAt: 100, availableCount: 2 } }, 86501), /超过 24 小时/);
   assert.match(syncDescription({ syncing: true }), /正在同步/);
 });

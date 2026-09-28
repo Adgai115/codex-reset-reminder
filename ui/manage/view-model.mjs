@@ -29,10 +29,11 @@ export function syncSummary(snapshot) {
   if (!snapshot.latest) return '等待同步';
   const stale = Date.now() / 1000 - snapshot.confirmed?.checkedAt > 86400 ? ' · 已超过 24 小时' : '';
   const checked = snapshot.confirmed ? `已同步 ${formatShortTime(snapshot.confirmed.checkedAt)}` : '尚未同步';
-  return snapshot.latest.outcome === 'complete'
-    ? `${checked}${stale}`
-    : `${snapshot.latest.outcome === 'failed' ? '同步失败 · 自动重试' : '同步不完整'}${stale}`;
+  if (snapshot.confirmed) return `${checked}${stale}`;
+  return snapshot.latest.outcome === 'partial' ? '卡片详情待获取' : '连接待恢复';
 }
+
+export const cardShortId = (id) => `#${String(id || '').slice(-6)}`;
 
 export function automationSummary(snapshot) {
   if (snapshot.syncing) return '自动同步中 · 失败渠道按计划补发';
@@ -100,7 +101,7 @@ export function syncDescription(snapshot, now = Date.now() / 1000) {
   const { latest, confirmed } = snapshot;
   if (!latest) return '尚未同步 Codex；应用会自动读取官方重置卡。';
   const checked = confirmed ? `上次完整核对 ${formatTime(confirmed.checkedAt)}` : '尚无完整核对记录';
-  if (latest.outcome !== 'complete') return `${latest.outcome === 'failed' ? '同步失败' : '同步详情不完整'} · ${checked}。已保存的卡片继续提醒。`;
+  if (latest.outcome !== 'complete') return `${latest.message || (latest.outcome === 'failed' ? '同步暂不可用' : '逐卡到期详情未齐全')} · ${checked}。已有卡片保留，稍后自动重试。`;
   const stale = now - latest.checkedAt > 86400 ? ' · 超过 24 小时未核对，建议立即同步' : '';
   return `上次核对 ${formatTime(latest.checkedAt)} · Codex 可用 ${latest.availableCount} 张${stale}`;
 }

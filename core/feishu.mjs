@@ -28,7 +28,7 @@ export async function callFeishuCli(config, args) {
 
 export function buildFeishuCard(card, days, { state = 'available', nextDays = null, simulation = false,
   notice = null, statusInfo = null, currentAvailableCount = null, syncedAt = null,
-  snoozeTargetAt = null } = {}) {
+  snoozeTargetAt = null, accountDisplay = null } = {}) {
   const expiryDate = new Date(card.expiresAt * 1000);
   const pad = (value) => String(value).padStart(2, '0');
   const expires = `${expiryDate.getFullYear()}/${pad(expiryDate.getMonth() + 1)}/${pad(expiryDate.getDate())} ${pad(expiryDate.getHours())}:${pad(expiryDate.getMinutes())}`;
@@ -64,7 +64,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
   const snoozeOptions = getSnoozeOptions(card);
   const awaitingVerification = card.source === 'codex' && Boolean(card.reportedUsedAt);
   const primaryAction = awaitingVerification ? 'refresh' : card.source === 'codex' ? 'consume' : 'use';
-  const primaryText = awaitingVerification ? '核实状态' : card.source === 'codex' ? '立即使用' : '标记已使用';
+  const primaryText = awaitingVerification ? '核实状态' : card.source === 'codex' ? '立即重置' : '标记已使用';
   const actions = isActive && !simulation ? [{ tag: 'column_set', flex_mode: 'none', horizontal_spacing: '12px',
     columns: [
       { tag: 'column', width: 'weighted', weight: 1, elements: [{ tag: 'button',
@@ -73,7 +73,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
         behaviors: [{ type: 'callback', value: { action: primaryAction } }],
         ...(!awaitingVerification ? { confirm: {
           title: { tag: 'plain_text', content: card.source === 'codex'
-            ? `确认立即使用 ${card.title.slice(0, 65)}？`
+            ? `确认立即重置 ${card.title.slice(0, 65)}？`
             : `确认标记 ${card.title.slice(0, 65)} 为已使用？` },
           text: { tag: 'plain_text', content: card.source === 'manual'
             ? '确认后只会把手动录入的卡片标记为已使用。'
@@ -104,7 +104,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
           : snoozeTargetAt ? '这是你设定的延期提醒；官方到期时间不变。'
             : awaitingVerification ? '此前已反馈使用，但 Codex 最近同步仍显示可用；可点「核实状态」。'
             : card.source === 'codex'
-              ? `提前 ${days} 天提醒 · 点击「立即使用」并二次确认后，会请求 Codex 正式用卡。`
+              ? `提前 ${days} 天提醒`
               : `提前 ${days} 天提醒 · 手动卡片只更新本地状态。`);
   const body = [
     { tag: 'column_set', flex_mode: 'none', horizontal_spacing: '12px', columns: [
@@ -116,11 +116,8 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
       ] },
     ] },
     plain(card.title, 'heading-3', 'default'),
-    ...(card.source === 'codex' && Number.isInteger(currentAvailableCount)
-      ? [plain(`Codex 最近同步可用 ${currentAvailableCount} 张`, 'normal', 'grey-500')] : []),
-    ...(card.source === 'codex' && Number.isInteger(syncedAt)
-      ? [plain(`最近核对：${new Date(syncedAt * 1000).toLocaleString('zh-CN', { hour12: false })}${Date.now() / 1000 - syncedAt > 86400 ? ' · 数据可能已过时' : ''}`,
-        'notation', 'grey-500')] : []),
+    ...(card.source === 'codex' ? [plain(`${accountDisplay || 'Codex 账号待核对'} · #${card.id.slice(-6)}`,
+      'notation', 'grey-500')] : []),
     { tag: 'column_set', flex_mode: 'none', horizontal_spacing: '12px',
       background_style: 'grey-50', columns: [
         { tag: 'column', width: 'weighted', weight: 1, padding: '12px', vertical_spacing: '4px', elements: [
@@ -165,7 +162,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
       icon: { tag: 'standard_icon', token: 'warning_outlined', color: 'orange' },
       text_tag_list: [{ tag: 'text_tag', text: { tag: 'plain_text', content: state === 'used' ? '已使用'
         : state === 'snoozed' ? '稍后提醒' : state === 'choosing' ? '选择时间'
-          : state === 'pending_verification' ? '待核实' : state === 'unavailable' ? '不可用' : '待处理' },
+          : state === 'pending_verification' ? '待核实' : state === 'unavailable' ? '不可用' : '可用' },
       color: state === 'used' ? 'green' : state === 'unavailable' ? 'neutral'
         : state === 'pending_verification' ? 'blue' : 'orange' }],
     },
@@ -180,7 +177,7 @@ export function feishuReminderIdempotencyKey(card, days, snoozeTargetAt = null) 
 }
 
 export async function sendFeishuReminder(config, card, days, { dryRun = false, simulation = false,
-  currentAvailableCount = null, syncedAt = null, snoozeTargetAt = null } = {}) {
+  currentAvailableCount = null, syncedAt = null, snoozeTargetAt = null, accountDisplay = null } = {}) {
   const channel = config.feishu;
   if (!channel?.enabled) return false;
   if (!['bot', 'user'].includes(channel.as)) throw new Error('飞书发送身份未配置');
@@ -190,7 +187,7 @@ export async function sendFeishuReminder(config, card, days, { dryRun = false, s
   const args = ['im', '+messages-send', '--profile', channel.profile || 'codex-reset-monitor', '--as', channel.as,
     channel.chatId ? '--chat-id' : '--user-id', channel.chatId || channel.userId,
     '--msg-type', 'interactive', '--content', JSON.stringify(buildFeishuCard(card, days,
-      { simulation, currentAvailableCount, syncedAt, snoozeTargetAt })),
+      { simulation, currentAvailableCount, syncedAt, snoozeTargetAt, accountDisplay })),
     '--idempotency-key', idempotencyKey, '--json',
     ...(dryRun ? ['--dry-run'] : [])];
   const envelope = await callFeishuCli(config, args);
