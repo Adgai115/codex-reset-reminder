@@ -1,7 +1,7 @@
 {
   "name": "codex-reset-reminder",
   "desktopName": "com.adgai.codexresetreminder.desktop",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Codex 重置卡到期提醒（跨平台桌面版）",
   "author": {
     "name": "Adgai115",
@@ -18,10 +18,14 @@
     "probe:sqlite": "node desktop/check-electron-sqlite.mjs",
     "prepare:sidecar": "node desktop/prepare-sidecar.mjs",
     "verify:package": "node scripts/verify-package.mjs",
+    "verify:updates": "node scripts/verify-update-assets.mjs",
     "dist:dir": "npm run prepare:sidecar && electron-builder --dir --publish never",
     "dist": "npm run prepare:sidecar && electron-builder --publish never"
   },
   "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
   "devDependencies": {
     "electron": "^37.0.0",
     "electron-builder": "^26.15.3"
@@ -68,10 +72,16 @@
       "icon": "assets/app-icon.ico"
     },
     "nsis": {
+      "artifactName": "Codex.Reset.Reminder.Setup.${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "Codex 重置卡提醒"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Adgai115",
+      "repo": "codex-reset-reminder"
     },
     "mac": {
       "target": [

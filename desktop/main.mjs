@@ -3,6 +3,7 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, powerMonitor } from 'electron';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { coreRequest, coreStatus, setDesktopPresenter } from './core-host.mjs';
@@ -15,10 +16,12 @@ import { readSettings, saveSettings, connectFeishu } from './settings.mjs';
 import { setAutoStart } from './autostart.mjs';
 import { diagnoseLocal, probeCodex } from './diagnostics.mjs';
 import { checkForUpdates, releasePageFor } from './update-check.mjs';
+import { createWindowsUpdater } from './update-install.mjs';
 import { repairCodexPath } from './cli-repair.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
+const require = createRequire(import.meta.url);
 if (process.env.CODEX_RESET_MONITOR_USER_DATA_DIR) {
   mkdirSync(process.env.CODEX_RESET_MONITOR_USER_DATA_DIR, { recursive: true });
   app.setPath('userData', process.env.CODEX_RESET_MONITOR_USER_DATA_DIR);
@@ -37,6 +40,7 @@ if (!gotLock) {
   let settingsWindow = null;
   let trayRefreshTimer = null;
   let availableUpdate = null;
+  let windowsUpdater = null;
   let refreshTray = null;
   let stateTimer = null;
   let settingsDraft = { dirty: false, working: false };
@@ -278,9 +282,41 @@ if (!gotLock) {
   ipcMain.handle('settings:checkUpdates', async (event) => {
     checkSettingsPage(event);
     availableUpdate = null;
-    const result = await checkForUpdates(app.getVersion());
+    let result;
+    if (windowsUpdater) {
+      try { result = await windowsUpdater.check(); }
+      catch (error) {
+        const fallback = await checkForUpdates(app.getVersion());
+        result = { ...fallback, canInstall: false,
+          message: fallback.state === 'available'
+            ? `发现 ${fallback.latestVersion}；应用内更新不可用：${error.message}` : fallback.message };
+      }
+    } else result = await checkForUpdates(app.getVersion());
     availableUpdate = result.state === 'available' ? result.latestVersion : null;
     return result;
+  });
+  ipcMain.handle('settings:updateStatus', (event) => {
+    checkSettingsPage(event);
+    return windowsUpdater?.status() || { phase: 'manual', message: '' };
+  });
+  ipcMain.handle('settings:downloadUpdate', async (event) => {
+    checkSettingsPage(event);
+    if (!windowsUpdater || !availableUpdate) throw new Error('请先检查新版本');
+    return windowsUpdater.download(availableUpdate.replace(/^v/, ''));
+  });
+  ipcMain.handle('settings:installUpdate', async (event) => {
+    checkSettingsPage(event);
+    if (!windowsUpdater || !availableUpdate) throw new Error('请先下载新版本');
+    if (windowsUpdater.status().phase !== 'ready') throw new Error('请先完成下载和校验');
+    const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
+      message: `升级到 ${availableUpdate}？`,
+      detail: '应用会关闭并在原位置升级，完成后自动重新打开。配置和卡片数据保留。',
+      buttons: ['立即升级', '稍后'], defaultId: 0, cancelId: 1 });
+    if (response !== 0) return { canceled: true };
+    if (!await discardSettings()) return { canceled: true };
+    windowsUpdater.install(availableUpdate.replace(/^v/, ''));
+    quitting = true;
+    return { installing: true };
   });
   ipcMain.handle('settings:openUpdate', async (event) => {
     checkSettingsPage(event);
@@ -386,6 +422,14 @@ if (!gotLock) {
   }
 
   app.whenReady().then(async () => {
+    if (process.platform === 'win32' && app.isPackaged) {
+      const { autoUpdater } = require('electron-updater');
+      windowsUpdater = createWindowsUpdater({ updater: autoUpdater, currentVersion: app.getVersion(),
+        emit: (status) => {
+          if (settingsWindow && !settingsWindow.isDestroyed())
+            settingsWindow.webContents.send('update:status', status);
+        } });
+    }
     if (app.isPackaged) {
       const userData = app.getPath('userData');
       process.env.CODEX_RESET_MONITOR_DATA_DIR = userData;

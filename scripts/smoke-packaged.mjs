@@ -602,7 +602,9 @@ try {
       settings = await evaluate(tab, `({bridge: Boolean(window.api), listener: document.querySelector('#listener-state')?.textContent,
         connection: document.querySelector('#feishu-state')?.textContent,
         diagnostics: document.querySelector('#diagnostics')?.textContent,
-        updateButton: Boolean(document.querySelector('#check-updates'))})`);
+        updateButton: Boolean(document.querySelector('#check-updates')),
+        downloadButton: Boolean(document.querySelector('#download-update')),
+        installButton: Boolean(document.querySelector('#install-update'))})`);
     } catch (error) {
       if (!isDebuggerTimeout(error) || Date.now() >= deadline) throw error;
       continue;
@@ -616,6 +618,7 @@ try {
   assert.match(settings.connection, /未连接/);
   assert.match(settings.diagnostics, /Codex CLI 路径/);
   assert.ok(settings.updateButton, '检查更新入口未显示');
+  assert.ok(settings.downloadButton && settings.installButton, 'Windows 升级入口未打包');
   console.log('设置窗口已显示，检查测试弹窗');
   const settingsTab = await page(port, '/ui/settings/index.html', child, deadline);
   assert.deepEqual(await evaluate(settingsTab, `({

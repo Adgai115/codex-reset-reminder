@@ -30,6 +30,10 @@ for (const name of ['config.json', '.state', '.env', 'data.db']) {
   assert.ok(!existsSync(join(appRoot, name)), `安装包包含用户数据 ${name}`);
 }
 const resources = dirname(appRoot);
+if (process.platform === 'win32') {
+  assert.ok(existsSync(join(resources, 'app-update.yml')), 'Windows 安装包缺少更新来源配置');
+  assert.ok(existsSync(join(appRoot, 'node_modules', 'electron-updater')), 'Windows 安装包缺少更新组件');
+}
 assert.ok(existsSync(join(resources, 'vendor-node', process.platform === 'win32' ? 'node.exe' : 'node')),
   '安装包缺少 Node sidecar');
 console.log(`安装包内容检查通过：${process.platform}`);
