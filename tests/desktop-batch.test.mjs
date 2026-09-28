@@ -6,8 +6,8 @@ import { test, after } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-desktop-batch-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const store = await import('./core/store.mjs');
-const { runReminders } = await import('./remind.mjs');
+const store = await import('../core/store.mjs');
+const { runReminders } = await import('../remind.mjs');
 after(() => rmSync(directory, { recursive: true, force: true }));
 const configPath = join(directory, 'config.json');
 const now = Math.floor(Date.now() / 1000) + 120;

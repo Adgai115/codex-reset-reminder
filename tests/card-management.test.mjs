@@ -10,11 +10,11 @@ process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(directory, 'config.json');
 writeFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH,
   JSON.stringify({ codexScript: 'missing-codex', desktop: { enabled: true }, feishu: { enabled: false } }));
 const { addManualCard, getCard, getSnooze, listCards, openStore, recordDelivery,
-  saveCodexSnapshot, scheduleSnooze } = await import('./store.mjs');
-const { planCardNextCheck } = await import('./plan-next.mjs');
-const { runCardsCommand } = await import('./cards.mjs');
-const { runCoreOperation } = await import('./desktop/core-operations.mjs');
-const { runReminders } = await import('./remind.mjs');
+  saveCodexSnapshot, scheduleSnooze } = await import('../store.mjs');
+const { planCardNextCheck } = await import('../plan-next.mjs');
+const { runCardsCommand } = await import('../cards.mjs');
+const { runCoreOperation } = await import('../desktop/core-operations.mjs');
+const { runReminders } = await import('../remind.mjs');
 
 test('card management shows the next node and cancelling a snooze restores it', () => {
   const now = Math.floor(Date.now() / 1000);

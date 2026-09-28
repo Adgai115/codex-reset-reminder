@@ -9,7 +9,7 @@ try {
     New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
     $locked = $mutex.WaitOne(30000)
     if (-not $locked) { throw '等待设置刷新任务超时。' }
-    & (Join-Path $directory 'refresh-settings.ps1')
+    & (Join-Path $directory 'legacy/refresh-settings.ps1')
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') 设置已保存，提醒计划更新完成。" |
         Set-Content -LiteralPath $logPath -Encoding utf8
 } catch {

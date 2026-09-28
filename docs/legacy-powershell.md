@@ -12,7 +12,7 @@
 
 新用户在 Windows 上双击 `开始安装.vbs`，先进入可视化初始化窗口。点击“安装本机提醒”，程序会配置 Codex 数据路径、桌面快捷方式及登录、唤醒、每小时和精确提醒计划任务；再按需连接飞书机器人，填写应用 App ID、接收人 Open ID（`ou_`）或 Union ID（`on_`），以及隐藏输入的 App Secret。只有本机提醒安装完成，“完成并打开管理”才可点击；点击后才进入卡片管理主页面。连接飞书时会先发送一条测试私聊，确认发送成功才保存配置并锁定输入框；点击“重新连接”并二次确认后才能修改，再点击“保存并连接”生效。取消确认不会更改配置。密钥通过进程标准输入传给本机飞书 CLI，不写进命令行或 `config.json`。飞书连接是可选的，Windows 本地提醒可以独立运行。后续若要修复安装或更换飞书应用，重新运行安装目录中的 `开始安装.vbs`；“提醒设置”中的“测试提醒”可验证已勾选的通知渠道。
 
-安装前需要 Windows、PowerShell 7、Node.js 24 和[通过 npm 全局安装的 Codex CLI](https://github.com/openai/codex/blob/main/README.md)（`npm install -g @openai/codex`）；确保 Codex CLI 已登录。使用飞书时还需要通过 npm 安装、可从命令行运行的 `lark-cli`。安装目录应长期保留且当前用户可写，不要放在 `Program Files` 等受保护目录。如果缺少依赖或安装失败，初始化窗口会显示具体错误。分发给其他用户时，运行 `build-user-package.ps1` 生成干净安装包，内含 `INSTALL.md` 与 `config.example.json`，不包含当前用户的 `config.json`、`.state` 数据库或日志。以下命令均在项目目录执行。
+安装前需要 Windows、PowerShell 7、Node.js 24 和[通过 npm 全局安装的 Codex CLI](https://github.com/openai/codex/blob/main/README.md)（`npm install -g @openai/codex`）；确保 Codex CLI 已登录。使用飞书时还需要通过 npm 安装、可从命令行运行的 `lark-cli`。安装目录应长期保留且当前用户可写，不要放在 `Program Files` 等受保护目录。如果缺少依赖或安装失败，初始化窗口会显示具体错误。分发给其他用户时，从项目根目录运行 `scripts/build-user-package.ps1` 生成干净安装包，内含 `INSTALL.md` 与 `config.example.json`，不包含当前用户的 `config.json`、`.state` 数据库或日志。以下命令均在项目目录执行。
 
 也可用命令行执行本机安装：
 
@@ -65,7 +65,7 @@ pwsh -NoProfile -File .\setup-feishu.ps1
 
 “稍后提醒”提供 **1 天后、3 天后、明天 10:00** 三个不晚于到期时间的选项。延期只修改下一次提醒时间，不修改官方 `expiresAt`；落在延期期间的固定 7/3/1 天节点会跳过，延期后的固定节点照常提醒。桌面弹窗只提供“打开 Codex”和相同的延期选项。
 
-飞书按钮回调由本机计划任务 `CodexResetCardFeishuActions` 处理。配置完成后可运行 `node .\demo-feishu.mjs` 发送安全仿真卡。`node .\demo-interactive.mjs --real` 会向真实 Codex 卡片发送交互提醒；这张卡的“立即使用”经二次确认后会正式调用 Codex。这两个演示脚本不会被 `node --test` 自动执行。
+飞书按钮回调由本机计划任务 `CodexResetCardFeishuActions` 处理。仓库源码中的 `examples/` 保留手动演示脚本，不随旧版用户安装包分发；运行时会向真实飞书接收人发消息。`demo-interactive.mjs --real` 还会发送真实卡片的交互提醒，点击“立即使用”并二次确认后会正式调用 Codex。本轮验证不执行这些脚本。
 
 ## 自有微信公众号通知（默认关闭）
 

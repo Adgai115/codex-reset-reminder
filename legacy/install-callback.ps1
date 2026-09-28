@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $config = Get-Content -LiteralPath (Join-Path $directory 'config.json') -Raw | ConvertFrom-Json
 if (-not $config.feishu.enabled -or -not $config.feishu.userId) { throw '飞书机器人私聊尚未配置。' }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -17,7 +17,7 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatt
 Register-ScheduledTask -TaskName 'CodexResetCardFeishuActions' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description '本机监听飞书重置卡按钮操作，在二次确认后处理用卡和稍后提醒。' -Force | Out-Null
 $registered = Get-ScheduledTask -TaskName 'CodexResetCardFeishuActions'
 if ($registered.State -eq 'Running') { Stop-ScheduledTask -TaskName 'CodexResetCardFeishuActions' }
-. (Join-Path $directory 'callback-process.ps1')
+. (Join-Path $PSScriptRoot 'callback-process.ps1')
 Stop-ReminderCallbackWorker -Directory $directory
 Start-ScheduledTask -TaskName 'CodexResetCardFeishuActions'
 Write-Output '飞书卡片操作监听已安装并启动。'

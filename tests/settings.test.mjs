@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { mergeSettings, saveSettings, viewSettings } from './settings.mjs';
+import { mergeSettings, saveSettings, viewSettings } from '../settings.mjs';
 
 const base = {
   codexScript: 'keep-this-account',

@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendFeishuReminder } from './feishu.mjs';
-import { addManualCard, latestCompleteSync, listCards, openStore, recordDelivery, recordFeishuMessage } from './store.mjs';
+import { sendFeishuReminder } from '../feishu.mjs';
+import { addManualCard, latestCompleteSync, listCards, openStore, recordDelivery, recordFeishuMessage } from '../store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 try {
-  const config = JSON.parse(await readFile(join(directory, 'config.json'), 'utf8'));
+  const config = JSON.parse(await readFile(join(directory, '..', 'config.json'), 'utf8'));
   if (!config.feishu?.enabled || !config.feishu.userId) throw new Error('飞书机器人私聊尚未配置');
   const expiresAt = Math.floor(Date.now() / 1000) + 7 * 86400;
   const useRealCard = process.argv.includes('--real');

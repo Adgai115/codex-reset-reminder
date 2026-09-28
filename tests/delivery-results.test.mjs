@@ -6,8 +6,8 @@ import { test } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-delivery-results-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const { listReminderResults, openStore, saveCodexSnapshot } = await import('./store.mjs');
-const { runReminders } = await import('./remind.mjs');
+const { listReminderResults, openStore, saveCodexSnapshot } = await import('../store.mjs');
+const { runReminders } = await import('../remind.mjs');
 const configPath = join(directory, 'config.json');
 writeFileSync(configPath, JSON.stringify({ desktop: { enabled: true }, feishu: { enabled: true },
   wechat: { enabled: false, }, }));

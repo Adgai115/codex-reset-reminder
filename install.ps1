@@ -60,10 +60,10 @@ $subscription.InnerText = '<QueryList><Query Id="0" Path="System"><Select Path="
 [void]$triggerList.AppendChild($eventTrigger)
 Register-ScheduledTask -TaskName 'CodexResetCardExpiryReminder' -Xml $taskXml.OuterXml -Force | Out-Null
 & (Join-Path $directory 'schedule-next.ps1')
-& (Join-Path $directory 'install-ui.ps1')
+& (Join-Path $directory 'legacy/install-ui.ps1')
 if ($config.feishu.enabled) {
     $callbackTask = Get-ScheduledTask -TaskName 'CodexResetCardFeishuActions' -ErrorAction SilentlyContinue
-    if (-not $callbackTask) { & $pwsh -NoProfile -File (Join-Path $directory 'install-callback.ps1') }
+    if (-not $callbackTask) { & $pwsh -NoProfile -File (Join-Path $directory 'legacy/install-callback.ps1') }
     elseif ($callbackTask.State -ne 'Running') { Start-ScheduledTask -TaskName 'CodexResetCardFeishuActions' }
 } else {
     $callbackTask = Get-ScheduledTask -TaskName 'CodexResetCardFeishuActions' -ErrorAction SilentlyContinue
