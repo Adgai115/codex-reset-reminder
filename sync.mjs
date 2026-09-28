@@ -10,12 +10,16 @@ import { getCard, latestCompleteSync, listPendingFeishuConfirmations, openStore,
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function syncCards(configPath = join(directory, 'config.json'),
-  { appServer = callAppServer, patchCard = patchFeishuCard, patchMessages = true } = {}) {
+  { appServer = callAppServer, patchCard = patchFeishuCard, patchMessages = true,
+    accountGuard = null } = {}) {
   const db = openStore();
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
+    const scopeId = accountGuard ? await accountGuard() : null;
     const response = await appServer(resolve(config.codexScript), 'account/rateLimits/read');
-    const result = saveCodexSnapshot(db, response?.rateLimitResetCredits);
+    if (accountGuard && await accountGuard() !== scopeId) throw new Error('Codex 账号在同步期间发生变化');
+    const result = saveCodexSnapshot(db, response?.rateLimitResetCredits,
+      Math.floor(Date.now() / 1000), scopeId);
     const cardUpdateFailures = [];
     if (patchMessages && config.feishu?.enabled) {
       for (const message of listPendingFeishuConfirmations(db)) {

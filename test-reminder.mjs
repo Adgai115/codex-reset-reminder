@@ -9,7 +9,10 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const channels = new Set(process.argv.slice(2));
 const result = {};
 
-if (![...channels].every((channel) => ['desktop', 'feishu'].includes(channel)) || !channels.size) {
+// 此文件是手动发送脚本；Node 的默认测试发现也会匹配其文件名。
+if (process.env.NODE_TEST_CONTEXT) {
+  // 自动化测试不可向桌面或飞书发送消息。
+} else if (![...channels].every((channel) => ['desktop', 'feishu'].includes(channel)) || !channels.size) {
   console.error('用法：test-reminder.mjs desktop [feishu]');
   process.exitCode = 2;
 } else {
