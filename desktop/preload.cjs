@@ -27,6 +27,14 @@ contextBridge.exposeInMainWorld('api', {
   probeCodex: () => invoke('settings:probeCodex'),
   repairCodex: () => invoke('settings:repairCodex'),
   checkUpdates: () => invoke('settings:checkUpdates'),
+  updateStatus: () => invoke('settings:updateStatus'),
+  onUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
+  downloadUpdate: () => invoke('settings:downloadUpdate'),
+  installUpdate: () => invoke('settings:installUpdate'),
   openUpdate: () => invoke('settings:openUpdate'),
   settingsSave: (settings) => invoke('settings:save', settings),
   settingsDraft: (state) => invoke('settings:draft', state),

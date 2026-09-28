@@ -37,6 +37,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - run: node scripts/verify-package.mjs
+      - name: Verify Windows update metadata
+        if: runner.os == 'Windows'
+        run: node scripts/verify-update-assets.mjs
       - name: Smoke first-run setup (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/smoke-packaged.mjs --setup
@@ -82,6 +85,7 @@ jobs:
           name: codex-reset-reminder-${{ matrix.artifact }}
           path: |
             dist/*.exe
+            dist/latest.yml
             dist/*.dmg
             dist/*.AppImage
             dist/*.deb
@@ -106,6 +110,8 @@ jobs:
           merge-multiple: true
       - name: Match GitHub asset names
         run: node scripts/normalize-release-assets.mjs artifacts
+      - name: Verify Windows update assets
+        run: node scripts/verify-update-assets.mjs artifacts
       - name: Generate SHA256 checksums
         run: cd artifacts && sha256sum * > SHA256SUMS.txt
       - name: Publish release

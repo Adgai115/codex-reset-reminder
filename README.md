@@ -22,9 +22,9 @@
 
 ### 安装与构建
 
-安装页和设置页提供只读 Codex Usage 检查及本地连接诊断。设置页还能手动检查 GitHub Release；发现新版本时由用户决定是否打开下载页，不会自动安装。三平台的真实设备验收项目见 [platform-qa.md](docs/platform-qa.md)，发布前检查见 [release.md](docs/release.md)。
+安装页和设置页提供只读 Codex Usage 检查及本地连接诊断。Windows 安装版可在设置页检查、下载并确认原位升级；旧版首次启用此能力仍需手动运行一次安装包。macOS 和 Linux 继续从 GitHub Release 下载对应安装包。三平台的真实设备验收项目见 [platform-qa.md](docs/platform-qa.md)，发布前检查见 [release.md](docs/release.md)。
 
-从 [v2.0.2 正式发布页](https://github.com/Adgai115/codex-reset-reminder/releases/tag/v2.0.2)下载 Windows x64 NSIS、macOS Apple Silicon (arm64) DMG、Linux amd64 AppImage 或 deb，并用同页的 `SHA256SUMS.txt` 校验。当前没有 Intel macOS 安装包。Windows 包未签名；macOS 包未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
+从 [正式发布页](https://github.com/Adgai115/codex-reset-reminder/releases/latest)下载 Windows x64 NSIS、macOS Apple Silicon (arm64) DMG、Linux amd64 AppImage 或 deb，并用同页的 `SHA256SUMS.txt` 校验。当前没有 Intel macOS 安装包。Windows 包未签名；macOS 包未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
 
 从源码构建时使用 Node.js 24：
 

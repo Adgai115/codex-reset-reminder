@@ -77,7 +77,9 @@
     <p><small id="codex-probe" role="status" aria-live="polite"></small></p>
   </details>
   <details id="update-details"><summary>关于</summary>
-    <button id="check-updates" type="button" title="查询 GitHub Release，不会自动安装">检查更新</button>
+    <button id="check-updates" type="button">检查更新</button>
+    <button id="download-update" type="button" hidden>下载更新</button>
+    <button id="install-update" type="button" class="primary" hidden>立即升级</button>
     <button id="open-update" type="button" hidden>打开下载页</button>
     <small id="update-state" role="status" aria-live="polite"></small>
   </details></section>
@@ -94,6 +96,14 @@
   let baseline = null;
   let connectionBaseline = '';
   let savedFeishuEnabled = false;
+  function showUpdateState(value) {
+    if (value.phase === 'idle' || value.phase === 'manual') return;
+    $('update-state').textContent = value.message || '';
+    $('download-update').hidden = value.phase !== 'available';
+    $('install-update').hidden = value.phase !== 'ready';
+    $('check-updates').disabled = ['checking', 'downloading'].includes(value.phase);
+    if (value.phase === 'downloading' || value.phase === 'ready') $('open-update').hidden = true;
+  }
   const draft = () => ({ autoStartEnabled: $('autostart').checked, desktopEnabled: $('desktop').checked,
     feishuEnabled: $('feishu').checked, quietEnabled: $('quiet').checked,
     quietStart: $('quiet-start').value, quietEnd: $('quiet-end').value,
@@ -181,6 +191,8 @@
   }
   controls();
   window.api.settingsRead().then(fill).catch((error) => status(error.message, true));
+  window.api.onUpdateStatus(showUpdateState);
+  window.api.updateStatus().then(showUpdateState).catch(() => {});
   refreshListenerState();
   refreshDiagnostics();
   setInterval(refreshListenerState, 5000);
@@ -212,13 +224,32 @@
   $('check-updates').addEventListener('click', async () => {
     $('check-updates').disabled = true;
     $('open-update').hidden = true;
+    $('download-update').hidden = true;
+    $('install-update').hidden = true;
     $('update-state').textContent = '检查中…';
     try {
       const result = await window.api.checkUpdates();
       $('update-state').textContent = result.message;
-      $('open-update').hidden = result.state !== 'available';
+      $('download-update').hidden = result.state !== 'available' || !result.canInstall;
+      $('open-update').hidden = result.state !== 'available' || result.canInstall;
     } catch (error) { $('update-state').textContent = `检查失败：${error.message}`; }
     finally { $('check-updates').disabled = false; }
+  });
+  $('download-update').addEventListener('click', async () => {
+    $('download-update').disabled = true;
+    $('check-updates').disabled = true;
+    try { showUpdateState(await window.api.downloadUpdate()); }
+    catch (error) {
+      $('update-state').textContent = `下载失败：${error.message}`;
+      $('open-update').hidden = false;
+    }
+    finally { $('download-update').disabled = false; $('check-updates').disabled = false; }
+  });
+  $('install-update').addEventListener('click', async () => {
+    $('install-update').disabled = true;
+    try { await window.api.installUpdate(); }
+    catch (error) { $('update-state').textContent = `升级未开始：${error.message}`; }
+    finally { $('install-update').disabled = false; }
   });
   $('open-update').addEventListener('click', () => window.api.openUpdate()
     .catch((error) => { $('update-state').textContent = error.message; }));
