@@ -335,6 +335,14 @@ try {
       await sleep(100);
     }
     assert.match(probeText, /未找到 Codex CLI/);
+    const countOnlyCli = await createMockCodex(profile);
+    await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
+      availableCount: 3, credits: null,
+    } }));
+    await evaluate(setup, `document.querySelector('#path').value = ${JSON.stringify(countOnlyCli)};
+      document.querySelector('#probe').click(); true`);
+    await until(setup, `document.querySelector('#probe-status').textContent.includes('官方暂未提供逐卡到期详情')`,
+      '连接成功但详情缺失时显示真实原因');
     await screenshot(setup, 'setup');
     console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
   } else if (recoveryOnly) {
