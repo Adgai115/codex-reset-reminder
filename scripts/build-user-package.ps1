@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $output = Join-Path (Split-Path -Parent $directory) 'codex-reset-reminder-user.zip'
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -9,11 +9,12 @@ $zip = [System.IO.Compression.ZipFile]::Open($output, [System.IO.Compression.Zip
 try {
     foreach ($file in Get-ChildItem -LiteralPath $directory -File -Recurse) {
         $relative = $file.FullName.Substring($directory.Length + 1).Replace('\', '/')
-        if ($relative -match '^(\.state|node_modules|scripts)/') { continue }
+        if ($relative -match '^(\.git|\.github|\.state|node_modules|vendor-node|dist|desktop|ui|scripts|tests|examples)/') { continue }
         if ($relative -in @('config.json', 'status.json', 'last-run.log')) { continue }
-        if ($relative -match '(^|/)([^/]+\.test\.mjs|demo-[^/]+\.mjs)$') { continue }
-        if ($relative -in @('build-icon.ps1', 'build-user-package.ps1')) { continue }
-        $allowed = $relative -in @('README.md', 'INSTALL.md', 'LICENSE', 'config.example.json', 'docs/legacy-powershell.md') -or
+        if ($relative -match '(^|/)[^/]+\.test\.mjs$') { continue }
+        $allowed = $relative -in @('README.md', 'INSTALL.md', 'LICENSE', 'config.example.json',
+            'docs/README.md', 'docs/user-guide.md', 'docs/legacy-powershell.md',
+            'docs/platform-qa.md', 'docs/release.md', 'docs/signing.md') -or
             $relative -match '\.(mjs|ps1|vbs)$' -or $relative -match '^assets/.*\.(ico|png)$'
         if (-not $allowed) { continue }
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(

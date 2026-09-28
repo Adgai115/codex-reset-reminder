@@ -68,7 +68,7 @@ $config.feishu = @{ enabled = $true; as = 'bot'; profile = $profile; userId = $r
     appId = $AppId; recipientId = $RecipientId }
 try {
     [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
-    & (Get-Command pwsh.exe -ErrorAction Stop).Source -NoProfile -File (Join-Path $directory 'install-callback.ps1')
+    & (Get-Command pwsh.exe -ErrorAction Stop).Source -NoProfile -File (Join-Path $directory 'legacy/install-callback.ps1')
     if ($LASTEXITCODE -ne 0) { throw '飞书互动监听安装失败。' }
 } catch {
     [System.IO.File]::WriteAllBytes($configPath, $previousConfig)

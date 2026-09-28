@@ -3,15 +3,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { acquireListenerLease } from './listener-lease.mjs';
-import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
+import { acquireListenerLease } from '../listener-lease.mjs';
+import { deliveryTime, enabledChannels, quietHours } from '../reminder-policy.mjs';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-reminder-policy-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const { openStore, saveCodexSnapshot } = await import('./store.mjs');
-const { planNextCheck } = await import('./plan-next.mjs');
-const { preflightSync } = await import('./preflight-sync.mjs');
-const { runReminders } = await import('./remind.mjs');
+const { openStore, saveCodexSnapshot } = await import('../store.mjs');
+const { planNextCheck } = await import('../plan-next.mjs');
+const { preflightSync } = await import('../preflight-sync.mjs');
+const { runReminders } = await import('../remind.mjs');
 
 test('channel switches and quiet hours share one schedule and do not pass expiry', async () => {
   const config = { desktop: { enabled: true }, feishu: { enabled: false },

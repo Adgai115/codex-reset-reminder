@@ -7,9 +7,9 @@ import { test } from 'node:test';
 const directory = mkdtempSync(join(tmpdir(), 'codex-delivery-retry-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 const { addManualCard, getReminderAttempt, markCardUsed, openStore, saveCodexSnapshot,
-  scheduleSnooze } = await import('./store.mjs');
-const { planNextCheck } = await import('./plan-next.mjs');
-const { runReminders } = await import('./remind.mjs');
+  scheduleSnooze } = await import('../store.mjs');
+const { planNextCheck } = await import('../plan-next.mjs');
+const { runReminders } = await import('../remind.mjs');
 const configPath = join(directory, 'config.json');
 const now = Math.floor(Date.now() / 1000);
 const cardId = 'retry-card';

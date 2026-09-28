@@ -6,8 +6,8 @@ $config = Get-Content -LiteralPath (Join-Path $directory 'config.json') -Raw | C
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
-. (Join-Path $directory 'settings-ui.ps1')
-. (Join-Path $directory 'main-tray.ps1')
+. (Join-Path $directory 'legacy/settings-ui.ps1')
+. (Join-Path $directory 'legacy/main-tray.ps1')
 
 function Invoke-Cards([string[]]$arguments) {
     $output = & $config.nodePath (Join-Path $directory 'cards.mjs') @arguments 2>&1

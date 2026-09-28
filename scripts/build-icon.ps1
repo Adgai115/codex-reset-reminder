@@ -1,11 +1,11 @@
 param(
-    [string]$SourcePath = (Join-Path $PSScriptRoot 'assets\app-icon-source.png')
+    [string]$SourcePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\app-icon-source.png')
 )
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
-$assets = Join-Path $PSScriptRoot 'assets'
+$assets = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets'
 New-Item -ItemType Directory -Path $assets -Force | Out-Null
 $source = [System.Drawing.Bitmap]::new($SourcePath)
 try {

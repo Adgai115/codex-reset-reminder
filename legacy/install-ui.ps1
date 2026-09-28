@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $desktop = [Environment]::GetFolderPath('DesktopDirectory')
 if (-not (Test-Path -LiteralPath $desktop -PathType Container)) {
     Write-Warning '找不到当前用户桌面，跳过应用快捷方式。'
