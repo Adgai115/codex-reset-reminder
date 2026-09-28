@@ -176,12 +176,16 @@ async function stopTree(child) {
   } else if (child.exitCode === null) {
     try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill(); }
   }
+  if (process.platform !== 'win32') {
+    // Electron 可能把 SIGTERM 转为退出流程，先给它短暂的清理时间，再结束整个隔离进程组。
+    // 必须在升级为 SIGKILL 后才断言退出，否则 Linux 的退出确认会阻断测试清理。
+    const gracefulDeadline = Date.now() + 3000;
+    while (child.exitCode === null && child.signalCode === null && Date.now() < gracefulDeadline) await sleep(100);
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 进程组已退出。 */ }
+  }
   const exitDeadline = Date.now() + 15000;
   while (child.exitCode === null && child.signalCode === null && Date.now() < exitDeadline) await sleep(100);
   assert.ok(child.exitCode !== null || child.signalCode !== null, `测试实例尚未退出：${child.pid}\n${killOutput}`);
-  if (process.platform !== 'win32') {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 进程组已退出。 */ }
-  }
   child.stdout?.destroy();
   child.stderr?.destroy();
   child.unref();
