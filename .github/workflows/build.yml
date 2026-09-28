@@ -104,6 +104,8 @@ jobs:
           pattern: codex-reset-reminder-*
           path: artifacts
           merge-multiple: true
+      - name: Match GitHub asset names
+        run: node scripts/normalize-release-assets.mjs artifacts
       - name: Generate SHA256 checksums
         run: cd artifacts && sha256sum * > SHA256SUMS.txt
       - name: Publish release
