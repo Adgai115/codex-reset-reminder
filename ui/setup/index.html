@@ -84,9 +84,9 @@
     $('connect').textContent = '连接中…';
     $('status').textContent = '';
     try {
-      await window.api.setupSave({ codexScript: $('path').value,
+      const result = await window.api.setupSave({ codexScript: $('path').value,
         autoStartEnabled: $('autostart').checked });
-      $('status').textContent = '已连接';
+      $('status').textContent = result.message;
     } catch (error) {
       $('status').textContent = `连接失败：${error.message}`;
       working(false);

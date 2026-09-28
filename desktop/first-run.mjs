@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { app, dialog } from 'electron';
-import { callAppServer } from '../check.mjs';
+import { probeCodex } from './diagnostics.mjs';
 import { stopLegacyTasks } from './legacy-tasks.mjs';
 
 function nodeRuntime() {
@@ -88,8 +88,8 @@ export async function initializeConfig({ codexScript, configPath, examplePath })
   if (!String(codexScript || '').trim()) throw new Error('请先选择 Codex CLI');
   const script = resolve(String(codexScript).trim());
   if (!existsSync(script)) throw new Error('找不到 Codex CLI，请先安装并登录 Codex CLI');
-  const result = await callAppServer(script, 'account/rateLimits/read');
-  if (!result || typeof result !== 'object') throw new Error('Codex Usage 未返回数据');
+  const result = await probeCodex(script);
+  if (!result.ok) throw new Error(result.message);
   const config = JSON.parse(await readFile(examplePath, 'utf8'));
   config.codexScript = script;
   config.nodePath = nodeRuntime();
@@ -97,7 +97,7 @@ export async function initializeConfig({ codexScript, configPath, examplePath })
   const temporary = `${configPath}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
   await rename(temporary, configPath);
-  return { connected: true };
+  return { connected: true, complete: result.complete, message: result.message };
 }
 
 export async function offerLegacyMigration(userData) {

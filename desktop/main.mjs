@@ -350,7 +350,7 @@ if (!gotLock) {
     checkSetupPage(event);
     if (!app.isPackaged) throw new Error('开发版请使用项目目录的 config.json');
     const configPath = process.env.CODEX_RESET_MONITOR_CONFIG_PATH;
-    await initializeConfig({ codexScript: options?.codexScript, configPath,
+    const connection = await initializeConfig({ codexScript: options?.codexScript, configPath,
       examplePath: join(projectRoot, 'config.example.json') });
     try { await setAutoStart(options?.autoStartEnabled === true); }
     catch (error) {
@@ -360,8 +360,8 @@ if (!gotLock) {
     setTimeout(() => {
       startRuntime().then(() => { if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close(); })
         .catch((error) => dialog.showErrorBox('启动失败', error.message));
-    }, 100);
-    return { connected: true };
+    }, connection.complete ? 100 : 2000);
+    return connection;
   });
 
   async function startRuntime() {
