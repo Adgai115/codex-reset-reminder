@@ -4,7 +4,7 @@
 
 首次使用请看 [桌面版使用指南](docs/user-guide.md)：安装连接、查看卡片、延期、提醒设置和退出行为。
 
-`feature/cross-platform` 分支在 Windows、macOS 和 Linux 上使用同一套 Node 核心与 Electron 桌面界面。应用在本机读取已登录的 Codex CLI Usage 数据，缓存重置卡和去重记录；7 / 3 / 1 天、延期节点以及休眠恢复由应用内调度器处理。桌面提醒是带按钮的自绘窗口，飞书机器人私聊可选。提醒不调用 Codex 模型，也不消耗模型 Token；“立即使用”仍会请求 Codex 正式用卡接口，需在飞书卡片内二次确认。
+正式版 2.0.0 在 Windows、macOS 和 Linux 上使用同一套 Node 核心与 Electron 桌面界面。应用在本机读取已登录的 Codex CLI Usage 数据，缓存重置卡和去重记录；7 / 3 / 1 天、延期节点以及休眠恢复由应用内调度器处理。桌面提醒是带按钮的自绘窗口，飞书机器人私聊可选。提醒不调用 Codex 模型，也不消耗模型 Token；“立即使用”仍会请求 Codex 正式用卡接口，需在飞书卡片内二次确认。
 
 安装前请在本机安装并登录 [Codex CLI](https://github.com/openai/codex)，确保 `codex` 命令可以运行。桌面安装包内含 Node.js 24 sidecar，日常读取优先使用 Electron 内置的 `node:sqlite`；不需要另外安装 Node。开发源码和旧版 PowerShell 工具仍需 Node.js 24。
 
@@ -24,7 +24,7 @@
 
 安装页和设置页提供只读 Codex Usage 检查及本地连接诊断。设置页还能手动检查 GitHub Release；发现新版本时由用户决定是否打开下载页，不会自动安装。三平台的真实设备验收项目见 [platform-qa.md](docs/platform-qa.md)，发布前检查见 [release.md](docs/release.md)。
 
-当前可在 GitHub Actions 的三平台构建记录中下载 Windows NSIS、macOS DMG、Linux AppImage 和 deb 测试包；推送版本 tag 后，工作流才会创建 GitHub Release。macOS 包暂未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
+从 [v2.0.0 正式发布页](https://github.com/Adgai115/codex-reset-reminder/releases/tag/v2.0.0)下载 Windows x64 NSIS、macOS Apple Silicon (arm64) DMG、Linux amd64 AppImage 或 deb，并用同页的 `SHA256SUMS.txt` 校验。当前没有 Intel macOS 安装包。Windows 包未签名；macOS 包未签名或公证：首次尝试打开后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，仅在确认下载来源可信时操作。以 [Apple 官方说明](https://support.apple.com/en-au/102445) 为准。Linux AppImage 需要赋予执行权限；deb 可通过系统包管理器安装。若桌面环境隐藏托盘图标，请从应用菜单重新打开程序。
 
 从源码构建时使用 Node.js 24：
 
@@ -35,7 +35,7 @@ npm run probe:sqlite
 npm run dist
 ```
 
-`npm run dist` 会先把当前平台的 Node.js 24 复制为 sidecar，再用 electron-builder 构建本平台安装包。开发模式运行 `npm start`。GitHub Actions 的 Windows、macOS、Linux matrix 会先跑测试与 Electron SQLite 探针，再分别构建安装包，并用隔离的演示卡启动安装包，检查卡片管理与设置窗口；推送 `v*` tag 后，三个平台全部通过才创建 Release。当前只在 Windows 本机完成了 Electron 界面与目录包实测；macOS 和 Linux 安装包仍以 CI 结果为准。
+`npm run dist` 会先把当前平台的 Node.js 24 复制为 sidecar，再用 electron-builder 构建本平台安装包。开发模式运行 `npm start`。GitHub Actions 的 Windows、macOS、Linux matrix 会先跑测试与 Electron SQLite 探针，再分别构建安装包，并用隔离的演示卡启动安装包，检查卡片管理与设置窗口；推送 `v*` tag 后，三个平台全部通过才创建 Release。Windows 已在本机完成 2.0.0 安装升级和隔离测试；macOS 和 Linux 尚未实机验收。
 
 ### Windows PowerShell 旧版
 
