@@ -10,10 +10,14 @@ last-run.log
 .env
 .env.*
 !.env.example
-node_modules/
 *.zip
 Thumbs.db
 .DS_Store
 node_modules/
 dist/
 vendor-node/
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
