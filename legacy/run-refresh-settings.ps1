@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $stateDirectory = Join-Path $directory '.state'
 $logPath = Join-Path $stateDirectory 'settings-refresh.log'
 $mutex = [System.Threading.Mutex]::new($false, 'Local\CodexResetCardSettingsRefresh')

@@ -10,7 +10,7 @@ import { replanScheduledTask } from './replan.mjs';
 import { dataDirectory, databasePath } from './store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const readConfig = () => JSON.parse(readFileSync(join(directory, 'config.json'), 'utf8'));
+const readConfig = () => JSON.parse(readFileSync(join(directory, '..', '..', 'config.json'), 'utf8'));
 let config = readConfig();
 const logPath = join(dataDirectory, 'callback.log');
 mkdirSync(dataDirectory, { recursive: true });

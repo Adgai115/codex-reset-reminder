@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendFeishuReminder } from '../feishu.mjs';
-import { addManualCard, latestCompleteSync, listCards, openStore, recordDelivery, recordFeishuMessage } from '../store.mjs';
+import { sendFeishuReminder } from '../legacy/node/feishu.mjs';
+import { addManualCard, latestCompleteSync, listCards, openStore, recordDelivery, recordFeishuMessage } from '../legacy/node/store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 try {
@@ -21,7 +21,7 @@ try {
     if (useRealCard) {
       const card = listCards(db, true).filter((item) => item.source === 'codex' && item.status === 'available')
         .sort((a, b) => a.expiresAt - b.expiresAt)[0];
-      if (!card) throw new Error('本地没有可用的 Codex 重置卡，先运行 sync.mjs');
+      if (!card) throw new Error('本地没有可用的 Codex 重置卡，先运行 legacy/node/sync.mjs');
       ({ id, title, source, expiresAt: actualExpiresAt, reportedUsedAt } = card);
       currentAvailableCount = latestCompleteSync(db)?.availableCount ?? null;
     } else {

@@ -9,13 +9,13 @@ $locked = $false
 try {
     $locked = $mutex.WaitOne(120000)
     if (-not $locked) { exit 0 }
-    $verificationOutput = @(& $config.nodePath (Join-Path $directory 'verify-pending.mjs') --quiet 2>&1)
+    $verificationOutput = @(& $config.nodePath (Join-Path $directory 'legacy/node/verify-pending.mjs') --quiet 2>&1)
     $verificationCode = $LASTEXITCODE
-    $preflightOutput = @(& $config.nodePath (Join-Path $directory 'preflight-sync.mjs') --quiet 2>&1)
+    $preflightOutput = @(& $config.nodePath (Join-Path $directory 'legacy/node/preflight-sync.mjs') --quiet 2>&1)
     $preflightCode = $LASTEXITCODE
-    $reminderOutput = @(& $config.nodePath (Join-Path $directory 'remind.mjs') --quiet 2>&1)
+    $reminderOutput = @(& $config.nodePath (Join-Path $directory 'legacy/node/remind.mjs') --quiet 2>&1)
     $reminderCode = $LASTEXITCODE
-    $scheduleOutput = @(& (Join-Path $directory 'schedule-next.ps1') 2>&1)
+    $scheduleOutput = @(& (Join-Path $directory 'legacy/schedule-next.ps1') 2>&1)
     $output = @($verificationOutput) + @($preflightOutput) + @($reminderOutput) + @($scheduleOutput)
     $resultCode = if ($verificationCode -ne 0 -or $preflightCode -ne 0 -or $reminderCode -ne 0) { 1 } else { 0 }
     if ($output.Count -gt 0 -or $resultCode -ne 0) {

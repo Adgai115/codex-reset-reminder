@@ -29,7 +29,7 @@ export async function sendWechatReminder(config, card, days, options = {}) {
   const payload = buildWechatTemplate(config, card, days, options);
   const pwsh = config.pwshPath || 'pwsh.exe';
   return new Promise((resolve, reject) => {
-    const child = spawn(pwsh, ['-NoProfile', '-NonInteractive', '-File', join(directory, '..', 'wechat-send.ps1')],
+    const child = spawn(pwsh, ['-NoProfile', '-NonInteractive', '-File', join(directory, '..', 'legacy', 'wechat-send.ps1')],
       { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';

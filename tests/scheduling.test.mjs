@@ -7,9 +7,9 @@ import { test } from 'node:test';
 const directory = mkdtempSync(join(tmpdir(), 'codex-scheduling-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 const { getCard, listDueUsageVerifications, openStore, recordDelivery, reportCardUsed,
-  saveCodexSnapshot, scheduleSnooze } = await import('../store.mjs');
-const { planNextCheck } = await import('../plan-next.mjs');
-const { verifyPendingUsage } = await import('../verify-pending.mjs');
+  saveCodexSnapshot, scheduleSnooze } = await import('../legacy/node/store.mjs');
+const { planNextCheck } = await import('../legacy/node/plan-next.mjs');
+const { verifyPendingUsage } = await import('../legacy/node/verify-pending.mjs');
 
 test('the next exact trigger follows fixed nodes, snooze, and a delayed usage check', async () => {
   const now = Math.floor(Date.now() / 1000);

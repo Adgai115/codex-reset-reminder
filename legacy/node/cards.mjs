@@ -14,7 +14,7 @@ export function runCardsCommand([command, ...args]) {
     switch (command) {
       case 'list': {
         const config = JSON.parse(readFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH
-          || new URL('./config.json', import.meta.url), 'utf8'));
+          || new URL('../../config.json', import.meta.url), 'utf8'));
         const channels = enabledChannels(config);
         const quiet = quietHours(config);
         const nowSeconds = Math.floor(Date.now() / 1000);

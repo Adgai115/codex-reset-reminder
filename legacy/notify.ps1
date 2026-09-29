@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:reminderDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:reminderDirectory = Split-Path -Parent $PSScriptRoot
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -186,7 +186,7 @@ $laterButton.Add_Click({
             )
         } else {
             $config = Get-Content -LiteralPath (Join-Path $script:reminderDirectory 'config.json') -Raw | ConvertFrom-Json
-            $output = & $config.nodePath (Join-Path $script:reminderDirectory 'cards.mjs') options $CreditId 2>&1
+            $output = & $config.nodePath (Join-Path $script:reminderDirectory 'legacy/node/cards.mjs') options $CreditId 2>&1
             if ($LASTEXITCODE -ne 0) { throw ($output | Out-String) }
             $choices = @(($output | Out-String | ConvertFrom-Json).options)
         }
@@ -235,7 +235,7 @@ $laterButton.Add_Click({
         if ($Simulation) {
             $message = "仿真：选择了 $($selected.label)，未更改真实卡片。"
         } else {
-            $output = & $config.nodePath (Join-Path $script:reminderDirectory 'cards.mjs') later $CreditId ([string]$selected.option) 2>&1
+            $output = & $config.nodePath (Join-Path $script:reminderDirectory 'legacy/node/cards.mjs') later $CreditId ([string]$selected.option) 2>&1
             if ($LASTEXITCODE -ne 0) { throw ($output | Out-String) }
             $plan = $output | Out-String | ConvertFrom-Json
             $time = [DateTimeOffset]::FromUnixTimeSeconds([long]$plan.targetAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm')

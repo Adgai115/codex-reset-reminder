@@ -53,12 +53,12 @@ npm run dist
 | 目录 | 内容 |
 | --- | --- |
 | `desktop/` · `core/` · `ui/` | 桌面运行时、共享业务逻辑与界面 |
-| `legacy/` | 旧版 Windows PowerShell 的内部辅助脚本 |
+| `legacy/` | 旧版 Windows PowerShell 实现；`legacy/node/` 存放旧版 Node 脚本 |
 | `tests/` | 旧版与跨平台核心的集成测试；各模块仍保留就近单元测试 |
 | `scripts/` · `examples/` | 构建检查工具与手动演示脚本 |
 | `docs/` | [文档目录](docs/README.md)、发布说明和历史验收记录 |
 
-根目录保留旧版计划任务、快捷方式和命令行直接引用的脚本入口，避免已有安装路径失效。旧版说明见[Windows PowerShell 文档](docs/legacy-powershell.md)。
+根目录只保留项目元数据和旧版计划任务、快捷方式引用的兼容入口。旧版内部脚本统一放在 `legacy/`，已有安装路径继续可用。旧版说明见[Windows PowerShell 文档](docs/legacy-powershell.md)。
 
 ## 许可
 

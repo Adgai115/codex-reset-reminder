@@ -1,2 +1,2 @@
 // Compatibility shim: the module moved to core/.
-export * from './core/wechat.mjs';
+export * from '../../core/later.mjs';

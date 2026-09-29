@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { callAppServer } from '../check.mjs';
+import { callAppServer } from '../legacy/node/check.mjs';
 import { bindAccountScope, confirmAccountScope, countCodexCards,
   getActiveAccountScope, getCard, openStore } from '../core/store.mjs';
 

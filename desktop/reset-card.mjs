@@ -1,6 +1,6 @@
 // 桌面提醒的正式用卡入口。重启或结果不明后复用同一幂等键。
 import { randomUUID } from 'node:crypto';
-import { consumeCredit } from '../consume.mjs';
+import { consumeCredit } from '../legacy/node/consume.mjs';
 import { clearDesktopResetKey, desktopResetKey, getCard, openStore } from '../core/store.mjs';
 import { requireCardInScope } from './account-guard.mjs';
 

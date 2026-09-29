@@ -49,7 +49,7 @@ pwsh -NoProfile -File .\open-settings.ps1
 
 默认免打扰时间为本机时间 **22:00 至次日 09:00**。落在此时段内的固定节点或延期提醒会在 09:00 发送；如果延后会越过卡片到期时间，则仍按原时间提醒。提醒前核对的最短间隔默认 60 分钟；关闭后仍保留每天 08:30 的同步。飞书卡片和桌面弹窗会显示最近核对时间，超过 24 小时会提示数据可能已过时。
 
-当前数据库只支持**一个 Codex 账号**，每个 Windows 用户也只支持一个安装目录；在同一用户下重新安装到其他目录会让计划任务指向新目录。增加多账号前必须把账号标识纳入卡片主键、同步记录、发送去重和飞书按钮映射；现有账号数据需要迁移，不能只在配置文件里增加第二组登录信息。提醒时间和渠道开关已独立在 `reminder-policy.mjs`，届时可以给每个账号配置渠道，而不会改动 7/3/1 天规则。
+当前数据库只支持**一个 Codex 账号**，每个 Windows 用户也只支持一个安装目录；在同一用户下重新安装到其他目录会让计划任务指向新目录。增加多账号前必须把账号标识纳入卡片主键、同步记录、发送去重和飞书按钮映射；现有账号数据需要迁移，不能只在配置文件里增加第二组登录信息。提醒时间和渠道开关已独立在 `core/reminder-policy.mjs`，届时可以给每个账号配置渠道，而不会改动 7/3/1 天规则。
 
 ## 配置飞书机器人私聊
 
@@ -88,11 +88,11 @@ pwsh -NoProfile -File .\open-manage.ps1
 也可用命令行：
 
 ```powershell
-node .\cards.mjs list
-node .\cards.mjs report-used "RateLimitResetCredit_..."
-node .\cards.mjs options "RateLimitResetCredit_..."
-node .\cards.mjs later "RateLimitResetCredit_..." 1d
-node .\cards.mjs unsnooze "RateLimitResetCredit_..."
+node .\legacy\node\cards.mjs list
+node .\legacy\node\cards.mjs report-used "RateLimitResetCredit_..."
+node .\legacy\node\cards.mjs options "RateLimitResetCredit_..."
+node .\legacy\node\cards.mjs later "RateLimitResetCredit_..." 1d
+node .\legacy\node\cards.mjs unsnooze "RateLimitResetCredit_..."
 ```
 
 到期时间使用电脑的本地时区，始终以 Codex 同步结果为准。旧版 `add`、`edit`、`used` 手动卡命令已停用；测试数据由隔离测试脚本准备。
@@ -100,13 +100,13 @@ node .\cards.mjs unsnooze "RateLimitResetCredit_..."
 ## 检查与测试
 
 ```powershell
-node .\sync.mjs
-node .\remind.mjs --dry-run
-node .\check.mjs --test-notification
-node --test .\*.test.mjs
+node .\legacy\node\sync.mjs
+node .\legacy\node\remind.mjs --dry-run
+node .\legacy\node\check.mjs --test-notification
+npm test
 ```
 
-仿真弹窗使用虚构卡片，不调用真实用卡接口，也不会发送飞书。`sync.log` 和 `reminder-events.log` 位于安装目录的 `.state\`。数据库中的 `reminder_deliveries` 对卡片、到期时间、提醒节点、渠道分别去重。Codex 桌面端会映射 `%LOCALAPPDATA%`，所以状态文件使用项目目录，确保交互命令与 Windows 计划任务读写同一份数据。
+`npm test` 仅在完整源码仓库执行；旧版用户 ZIP 不包含测试脚本。仿真弹窗使用虚构卡片，不调用真实用卡接口，也不会发送飞书。`sync.log` 和 `reminder-events.log` 位于安装目录的 `.state\`。数据库中的 `reminder_deliveries` 对卡片、到期时间、提醒节点、渠道分别去重。Codex 桌面端会映射 `%LOCALAPPDATA%`，所以状态文件使用项目目录，确保交互命令与 Windows 计划任务读写同一份数据。
 
 卸载计划任务：
 

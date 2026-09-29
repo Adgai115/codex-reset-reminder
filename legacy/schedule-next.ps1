@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $taskName = 'CodexResetCardNextReminder'
 $mutex = [System.Threading.Mutex]::new($false, 'Local\CodexResetCardSchedule')
 $locked = $false
@@ -8,7 +8,7 @@ try {
     if (-not $locked) { throw '等待下一次提醒计划锁超时。' }
 if (-not (Get-ScheduledTask -TaskName 'CodexResetCardExpiryReminder' -ErrorAction SilentlyContinue)) { return }
 $config = Get-Content -LiteralPath (Join-Path $directory 'config.json') -Raw | ConvertFrom-Json
-$planOutput = & $config.nodePath (Join-Path $directory 'plan-next.mjs')
+$planOutput = & $config.nodePath (Join-Path $directory 'legacy/node/plan-next.mjs')
 if ($LASTEXITCODE -ne 0) { throw '计算下一次提醒时间失败。' }
 $plan = $planOutput | ConvertFrom-Json
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

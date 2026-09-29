@@ -27,9 +27,9 @@ $config.codexScript = $codexScript
 $config.larkCliScript = $larkCliScript
 [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
 
-& $node (Join-Path $directory 'sync.mjs')
+& $node (Join-Path $directory 'legacy/node/sync.mjs')
 if ($LASTEXITCODE -ne 0) { Write-Warning '首次 Codex 同步失败；已保存的卡片仍可离线提醒。' }
-& $node (Join-Path $directory 'remind.mjs') --dry-run
+& $node (Join-Path $directory 'legacy/node/remind.mjs') --dry-run
 if ($LASTEXITCODE -ne 0) { throw '本地提醒检查失败；未创建定时任务。' }
 
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -59,7 +59,7 @@ $subscription.InnerText = '<QueryList><Query Id="0" Path="System"><Select Path="
 [void]$eventTrigger.AppendChild($subscription)
 [void]$triggerList.AppendChild($eventTrigger)
 Register-ScheduledTask -TaskName 'CodexResetCardExpiryReminder' -Xml $taskXml.OuterXml -Force | Out-Null
-& (Join-Path $directory 'schedule-next.ps1')
+& (Join-Path $directory 'legacy/schedule-next.ps1')
 & (Join-Path $directory 'legacy/install-ui.ps1')
 if ($config.feishu.enabled) {
     $callbackTask = Get-ScheduledTask -TaskName 'CodexResetCardFeishuActions' -ErrorAction SilentlyContinue

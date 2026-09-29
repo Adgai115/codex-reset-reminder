@@ -1,7 +1,7 @@
 function Stop-ReminderCallbackWorker {
     param([Parameter(Mandatory)][string]$Directory)
 
-    $workerPath = [regex]::Escape((Join-Path $Directory 'callback-worker.mjs'))
+    $workerPath = [regex]::Escape((Join-Path $Directory 'legacy/node/callback-worker.mjs'))
     $runnerPath = [regex]::Escape((Join-Path $Directory 'run-callback.ps1'))
     $processes = @(Get-CimInstance Win32_Process)
     $workers = @($processes | Where-Object {

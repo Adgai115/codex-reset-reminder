@@ -9,7 +9,7 @@ import { getCard, latestCompleteSync, listPendingFeishuConfirmations, openStore,
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
-export async function syncCards(configPath = join(directory, 'config.json'),
+export async function syncCards(configPath = join(directory, '..', '..', 'config.json'),
   { appServer = callAppServer, patchCard = patchFeishuCard, patchMessages = true,
     accountGuard = null } = {}) {
   const db = openStore();

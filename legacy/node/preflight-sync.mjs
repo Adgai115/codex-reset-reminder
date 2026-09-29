@@ -9,7 +9,7 @@ import { deliveryExists, getSnooze, latestSync, listCards, openStore } from './s
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function preflightSync({ nowSeconds = Math.floor(Date.now() / 1000),
-  configPath = join(directory, 'config.json'), sync = syncCards } = {}) {
+  configPath = join(directory, '..', '..', 'config.json'), sync = syncCards } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const options = config.reminders?.preflightSync;
   if (options?.enabled === false) return { attempted: false, reason: 'disabled' };

@@ -7,10 +7,10 @@ import { test } from 'node:test';
 const directory = mkdtempSync(join(tmpdir(), 'codex-reset-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 const { openStore, saveCodexSnapshot, listCards, addManualCard, latestSync,
-  recordDelivery, scheduleSnooze } = await import('../store.mjs');
-const { runReminders } = await import('../remind.mjs');
-const { dueThreshold } = await import('../check.mjs');
-const { getSnoozeOptions, planSnooze } = await import('../later.mjs');
+  recordDelivery, scheduleSnooze } = await import('../legacy/node/store.mjs');
+const { runReminders } = await import('../legacy/node/remind.mjs');
+const { dueThreshold } = await import('../legacy/node/check.mjs');
+const { getSnoozeOptions, planSnooze } = await import('../legacy/node/later.mjs');
 const configPath = join(directory, 'config.json');
 writeFileSync(configPath, JSON.stringify({ codexScript: 'missing-codex', feishu: { enabled: true } }));
 

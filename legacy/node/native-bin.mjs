@@ -1,2 +1,2 @@
 // Compatibility shim: the module moved to core/.
-export * from './core/reminder-policy.mjs';
+export * from '../../core/native-bin.mjs';

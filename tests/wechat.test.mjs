@@ -6,10 +6,10 @@ import { test } from 'node:test';
 
 const directory = mkdtempSync(join(tmpdir(), 'codex-wechat-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
-const { saveCodexSnapshot, deliveryExists, getSnooze, openStore, scheduleSnooze } = await import('../store.mjs');
-const { planNextCheck } = await import('../plan-next.mjs');
-const { runReminders } = await import('../remind.mjs');
-const { buildWechatTemplate } = await import('../wechat.mjs');
+const { saveCodexSnapshot, deliveryExists, getSnooze, openStore, scheduleSnooze } = await import('../legacy/node/store.mjs');
+const { planNextCheck } = await import('../legacy/node/plan-next.mjs');
+const { runReminders } = await import('../legacy/node/remind.mjs');
+const { buildWechatTemplate } = await import('../legacy/node/wechat.mjs');
 
 const configPath = join(directory, 'config.json');
 const config = { feishu: { enabled: false }, wechat: { enabled: true, openId: 'receiver',

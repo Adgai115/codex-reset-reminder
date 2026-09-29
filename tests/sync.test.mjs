@@ -7,8 +7,8 @@ import { test } from 'node:test';
 const directory = mkdtempSync(join(tmpdir(), 'codex-sync-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 const { getCard, getFeishuMessage, openStore, recordFeishuMessage,
-  reportCardUsed, saveCodexSnapshot, setFeishuMessageStatus } = await import('../store.mjs');
-const { syncCards } = await import('../sync.mjs');
+  reportCardUsed, saveCodexSnapshot, setFeishuMessageStatus } = await import('../legacy/node/store.mjs');
+const { syncCards } = await import('../legacy/node/sync.mjs');
 const configPath = join(directory, 'config.json');
 writeFileSync(configPath, JSON.stringify({ codexScript: 'fake-codex', feishu: { enabled: true } }));
 

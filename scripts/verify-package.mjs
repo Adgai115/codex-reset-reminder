@@ -21,6 +21,7 @@ async function appDirectory() {
 
 const appRoot = await appDirectory();
 for (const name of ['desktop/main.mjs', 'desktop/diagnostics.mjs', 'core/store.mjs',
+  'legacy/node/sync.mjs', 'legacy/node/check.mjs', 'legacy/node/remind.mjs',
   'ui/manage/index.html', 'ui/manage/app.mjs', 'ui/manage/view-model.mjs',
   'desktop/cli-repair.mjs', 'desktop/reminder-items.mjs', 'desktop/reset-card.mjs', 'core/pending-reminders.mjs',
   'ui/reminder/index.html', 'ui/reminder/app.mjs', 'ui/setup/index.html', 'config.example.json']) {

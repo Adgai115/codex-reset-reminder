@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { quietHours } from './reminder-policy.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const defaultPath = join(directory, 'config.json');
+const defaultPath = join(directory, '..', '..', 'config.json');
 
 export function viewSettings(config) {
   const validClock = (value, fallback) => typeof value === 'string'

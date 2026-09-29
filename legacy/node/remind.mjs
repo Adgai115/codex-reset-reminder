@@ -5,8 +5,8 @@ import { dueThreshold, showNotification } from './check.mjs';
 import { sendFeishuReminder } from './feishu.mjs';
 import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
-import { safeDeliveryFailure } from './core/delivery-results.mjs';
-import { mayAttemptReminder, nextRetryAfter } from './core/delivery-retry.mjs';
+import { safeDeliveryFailure } from '../../core/delivery-results.mjs';
+import { mayAttemptReminder, nextRetryAfter } from '../../core/delivery-retry.mjs';
 import { clearSnooze, deliveryExists, getActiveAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
   beginReminderAttempt, getReminderAttempt, markSnoozeDelivered, openStore, recordDelivery,
   recordFeishuMessage, recordReminderResult } from './store.mjs';
@@ -14,7 +14,7 @@ import { clearSnooze, deliveryExists, getActiveAccountScope, getCard, getSnooze,
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
-  configPath = join(directory, 'config.json'), desktop = showNotification,
+  configPath = join(directory, '..', '..', 'config.json'), desktop = showNotification,
   feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false,
   trackAttempts = false, manualRetry = null, allowCodex = true, accountScopeId = null,
   batchDesktop = false } = {}) {
