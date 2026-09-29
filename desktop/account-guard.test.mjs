@@ -10,10 +10,10 @@ process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(directory, 'config.json');
 writeFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH,
   JSON.stringify({ codexScript: 'fake-codex', feishu: { enabled: false } }));
 const { getActiveAccountScope, getCard, openStore, saveCodexSnapshot,
-  recordFeishuMessage } = await import('../store.mjs');
+  recordFeishuMessage } = await import('../legacy/node/store.mjs');
 const { checkAccount, requireAccount, requireCardInScope } = await import('./account-guard.mjs');
-const { syncCards } = await import('../sync.mjs');
-const { consumeCredit, refreshCreditStatus } = await import('../consume.mjs');
+const { syncCards } = await import('../legacy/node/sync.mjs');
+const { consumeCredit, refreshCreditStatus } = await import('../legacy/node/consume.mjs');
 const { handleCardAction } = await import('../core/card-actions.mjs');
 const configPath = process.env.CODEX_RESET_MONITOR_CONFIG_PATH;
 const account = (email) => async (_script, method, params) => {

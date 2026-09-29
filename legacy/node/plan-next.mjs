@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dueThreshold } from './check.mjs';
-import { maxReminderAttempts } from './core/delivery-retry.mjs';
+import { maxReminderAttempts } from '../../core/delivery-retry.mjs';
 import { deliveryExists, getReminderAttempt, getSnooze, latestCompleteSync, listCards, openStore } from './store.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 
@@ -89,7 +89,7 @@ export function planNextCheck(db, { feishuEnabled = false, wechatEnabled = false
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   try {
-    const config = JSON.parse(readFileSync(join(directory, 'config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(directory, '..', '..', 'config.json'), 'utf8'));
     const db = openStore();
     try {
       const plan = planNextCheck(db, { channels: enabledChannels(config), quiet: quietHours(config) });

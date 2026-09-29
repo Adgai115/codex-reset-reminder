@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $directory = Split-Path -Parent $PSScriptRoot
 $config = Get-Content -LiteralPath (Join-Path $directory 'config.json') -Raw | ConvertFrom-Json
 
-& (Join-Path $directory 'schedule-next.ps1')
+& (Join-Path $directory 'legacy/schedule-next.ps1')
 
 $taskName = 'CodexResetCardFeishuActions'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
+import { consumeCredit, refreshCreditStatus } from '../legacy/node/consume.mjs';
 import { patchFeishuCard, updateFeishuCard } from './feishu.mjs';
 import { getSnoozeOptions, planSnooze } from './later.mjs';
 import { claimCardActionEvent, completeCardActionEvent, getActiveAccountScope, getCard, getFeishuMessage,

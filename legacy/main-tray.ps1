@@ -1,7 +1,7 @@
 function Get-ReminderTrayStatus {
     param([string]$Directory, [string]$NodePath)
 
-    $raw = & $NodePath (Join-Path $Directory 'cards.mjs') list 2>&1
+    $raw = & $NodePath (Join-Path $Directory 'legacy/node/cards.mjs') list 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($raw | Out-String) }
     $data = $raw | Out-String | ConvertFrom-Json
     $now = [DateTimeOffset]::Now.ToUnixTimeSeconds()

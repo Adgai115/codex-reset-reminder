@@ -7,7 +7,7 @@ function Show-ReminderSettings {
         [string]$ScreenshotPath
     )
 
-    $raw = & $NodePath (Join-Path $Directory 'settings.mjs') get 2>&1
+    $raw = & $NodePath (Join-Path $Directory 'legacy/node/settings.mjs') get 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($raw | Out-String) }
     $settings = $raw | Out-String | ConvertFrom-Json
 
@@ -242,7 +242,7 @@ function Show-ReminderSettings {
         try {
             $process = [System.Diagnostics.Process]::new()
             $process.StartInfo.FileName = $NodePath
-            $process.StartInfo.ArgumentList.Add((Join-Path $Directory 'test-reminder.mjs'))
+            $process.StartInfo.ArgumentList.Add((Join-Path $Directory 'legacy/node/test-reminder.mjs'))
             foreach ($channel in $channels) { $process.StartInfo.ArgumentList.Add($channel) }
             $process.StartInfo.UseShellExecute = $false
             $process.StartInfo.CreateNoWindow = $true
@@ -297,11 +297,11 @@ function Show-ReminderSettings {
             }
             $json = $values | ConvertTo-Json -Compress
             $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json))
-            $output = & $NodePath (Join-Path $Directory 'settings.mjs') apply $encoded 2>&1
+            $output = & $NodePath (Join-Path $Directory 'legacy/node/settings.mjs') apply $encoded 2>&1
             if ($LASTEXITCODE -ne 0) { throw ($output | Out-String) }
             $saved = $true
             $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-            $refreshScript = Join-Path $Directory 'run-refresh-settings.ps1'
+            $refreshScript = Join-Path $Directory 'legacy/run-refresh-settings.ps1'
             Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile', '-File', ('"{0}"' -f $refreshScript)) -WindowStyle Hidden
             $dialog.DialogResult = [System.Windows.Forms.DialogResult]::OK
         } catch {

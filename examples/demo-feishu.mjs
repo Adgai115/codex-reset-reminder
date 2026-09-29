@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendFeishuReminder } from '../feishu.mjs';
+import { sendFeishuReminder } from '../legacy/node/feishu.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 try {

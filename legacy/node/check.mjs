@@ -20,7 +20,7 @@ export async function callAppServer(codexScript, method, params) {
   return new Promise((resolveResponse, rejectResponse) => {
     const command = codexCommand(codexScript);
     const processHandle = spawn(command.executable, [...command.prefix, 'app-server', '--stdio'], {
-      cwd: directory,
+      cwd: join(directory, '..', '..'),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       ...(command.env ? { env: command.env } : {}),
@@ -89,7 +89,7 @@ export async function showNotification({ cardName, creditId, source = 'codex', e
   const readyPath = join(tmpdir(), `codex-reset-reminder-${randomUUID()}.ready`);
   const child = spawn(powershell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-    '-File', join(directory, 'notify.ps1'), '-CardName', cardName,
+    '-File', join(directory, '..', 'notify.ps1'), '-CardName', cardName,
     '-CreditId', creditId, '-ExpiresLocal', expiresLocal, '-Days', String(days),
     '-ReadyPath', readyPath, '-AutoCloseSeconds', String(autoCloseSeconds), '-StackIndex', String(stackIndex),
     ...(Number.isInteger(currentAvailableCount) ? ['-CurrentAvailableCount', String(currentAvailableCount)] : []),

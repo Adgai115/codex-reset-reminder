@@ -1,7 +1,7 @@
 param([switch]$SmokeTest)
 
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $config = Get-Content -LiteralPath (Join-Path $directory 'config.json') -Raw | ConvertFrom-Json
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -10,7 +10,7 @@ Add-Type -AssemblyName System.Drawing
 . (Join-Path $directory 'legacy/main-tray.ps1')
 
 function Invoke-Cards([string[]]$arguments) {
-    $output = & $config.nodePath (Join-Path $directory 'cards.mjs') @arguments 2>&1
+    $output = & $config.nodePath (Join-Path $directory 'legacy/node/cards.mjs') @arguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($output | Out-String) }
     return ($output | Out-String | ConvertFrom-Json)
 }

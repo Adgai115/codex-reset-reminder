@@ -27,7 +27,7 @@ if (process.env.NODE_TEST_CONTEXT) {
       .catch((error) => { result.desktop = `failed: ${error.message}`; }));
   }
   if (channels.has('feishu')) {
-    work.push(readFile(join(directory, 'config.json'), 'utf8')
+    work.push(readFile(join(directory, '..', '..', 'config.json'), 'utf8')
       .then((text) => JSON.parse(text))
       .then((config) => sendFeishuReminder({ ...config, feishu: { ...config.feishu, enabled: true } },
         card, 7, { simulation: true }))

@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$directory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$directory = Split-Path -Parent $PSScriptRoot
 $secretPath = Join-Path $directory '.state\wechat-appsecret.dpapi'
 $ptr = [IntPtr]::Zero
 try {

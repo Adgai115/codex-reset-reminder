@@ -7,9 +7,9 @@ import { test } from 'node:test';
 const directory = mkdtempSync(join(tmpdir(), 'codex-card-action-test-'));
 process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 const { addManualCard, getCard, getFeishuMessage, getSnooze, markCardUsed, openStore,
-  recordFeishuMessage, reportCardUsed, saveCodexSnapshot } = await import('../store.mjs');
-const { handleCardAction } = await import('../card-actions.mjs');
-const { buildFeishuCard } = await import('../feishu.mjs');
+  recordFeishuMessage, reportCardUsed, saveCodexSnapshot } = await import('../legacy/node/store.mjs');
+const { handleCardAction } = await import('../legacy/node/card-actions.mjs');
+const { buildFeishuCard } = await import('../legacy/node/feishu.mjs');
 const config = { feishu: { userId: 'ou_owner' } };
 const expiry = Math.floor(Date.now() / 1000) + 10 * 86400;
 const card = (id) => ({ id, status: 'available', title: id, expiresAt: expiry });

@@ -1,17 +1,17 @@
 // Electron 主进程和 Node sidecar 共用同一组数据库操作。
 import * as store from '../core/store.mjs';
 import { getSnoozeOptions, planSnooze } from '../core/later.mjs';
-import { syncCards } from '../sync.mjs';
-import { runReminders } from '../remind.mjs';
-import { preflightSync } from '../preflight-sync.mjs';
-import { planCardNextCheck, planNextCheck } from '../plan-next.mjs';
+import { syncCards } from '../legacy/node/sync.mjs';
+import { runReminders } from '../legacy/node/remind.mjs';
+import { preflightSync } from '../legacy/node/preflight-sync.mjs';
+import { planCardNextCheck, planNextCheck } from '../legacy/node/plan-next.mjs';
 import { enabledChannels, quietHours } from '../core/reminder-policy.mjs';
 import { deliveryTime } from '../core/reminder-policy.mjs';
-import { dueThreshold } from '../check.mjs';
+import { dueThreshold } from '../legacy/node/check.mjs';
 import { maxReminderAttempts } from '../core/delivery-retry.mjs';
 import { pendingReminder } from '../core/pending-reminders.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
-import { consumeCredit, refreshCreditStatus } from '../consume.mjs';
+import { consumeCredit, refreshCreditStatus } from '../legacy/node/consume.mjs';
 import { accountStatus, checkAccount, requireAccount, requireCardInScope } from './account-guard.mjs';
 import { resetCardFromReminder } from './reset-card.mjs';
 import { readFile } from 'node:fs/promises';

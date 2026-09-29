@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { callAppServer } from '../check.mjs';
+import { callAppServer } from '../legacy/node/check.mjs';
 
 // 只读检查；返回面向用户的摘要，不返回凭证或完整 Usage 数据。
 export async function probeCodex(codexScript, { appServer = callAppServer, exists = existsSync } = {}) {
