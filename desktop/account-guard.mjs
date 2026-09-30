@@ -2,8 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { callAppServer } from '../legacy/node/check.mjs';
-import { bindAccountScope, confirmAccountScope, countCodexCards,
-  getActiveAccountScope, getCard, openStore } from '../core/store.mjs';
+import { activateAccountScope, bindAccountScope, confirmAccountScope, countCodexCards,
+  getActiveAccountScope, getCard, listAccountScopes, openStore } from '../core/store.mjs';
 
 let sessionStatus = null;
 const candidateSalt = randomUUID();
@@ -55,7 +55,8 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
         boundDisplay: binding?.displayName ?? null, currentDisplay: null, verifiedAt: null };
       return accountStatus(db);
     }
-    if (!binding) {
+    const scopes = listAccountScopes(db);
+    if (!scopes.length) {
       const candidateToken = digest(candidateSalt, `${identity.email || ''}\0${identity.workspaceId || ''}`);
       if (countCodexCards(db) && (!confirmLegacy || expectedCandidateToken !== candidateToken)) {
         sessionStatus = { state: 'needsBinding', scopeId: null,
@@ -67,27 +68,38 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
       bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
         workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName });
       binding = getActiveAccountScope(db);
+    } else {
+      const workspaceMatches = identity.workspaceId
+        ? scopes.filter((scope) => scope.workspaceHash === digest(scope.scopeId, identity.workspaceId)) : [];
+      const emailMatches = identity.email
+        ? scopes.filter((scope) => scope.emailHash === digest(scope.scopeId, identity.email)) : [];
+      if (workspaceMatches.length) binding = workspaceMatches[0];
+      else if (identity.workspaceId) binding = emailMatches.find((scope) => !scope.workspaceHash) || null;
+      else if (emailMatches.length === 1 && !emailMatches[0].workspaceHash) binding = emailMatches[0];
+      else if (emailMatches.length) {
+        sessionStatus = { state: 'unidentified', scopeId: getActiveAccountScope(db)?.scopeId ?? null,
+          boundDisplay: getActiveAccountScope(db)?.displayName ?? null,
+          currentDisplay: identity.displayName, verifiedAt: null };
+        return accountStatus(db);
+      } else binding = null;
+      if (!binding) {
+        const scopeId = randomUUID();
+        bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
+          workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName });
+        binding = getActiveAccountScope(db);
+      } else if (!binding.active) {
+        activateAccountScope(db, binding.scopeId);
+      }
     }
     const emailHash = digest(binding.scopeId, identity.email);
     const workspaceHash = digest(binding.scopeId, identity.workspaceId);
-    let state = 'verified';
-    if (binding.workspaceHash) {
-      if (!workspaceHash) state = 'unidentified';
-      else if (binding.workspaceHash !== workspaceHash) state = 'mismatch';
-    } else if (binding.emailHash) {
-      if (!emailHash) state = 'unidentified';
-      else if (binding.emailHash !== emailHash) state = 'mismatch';
-    }
-    if (state === 'verified') {
-      confirmAccountScope(db, { scopeId: binding.scopeId,
-        emailHash: emailHash || binding.emailHash,
-        workspaceHash: workspaceHash || binding.workspaceHash,
-        displayName: identity.displayName });
-    }
-    sessionStatus = { state, scopeId: binding.scopeId,
-      boundDisplay: state === 'verified' ? identity.displayName : binding.displayName,
-      currentDisplay: identity.displayName,
-      verifiedAt: state === 'verified' ? Math.floor(Date.now() / 1000) : null };
+    confirmAccountScope(db, { scopeId: binding.scopeId,
+      emailHash: emailHash || binding.emailHash,
+      workspaceHash: workspaceHash || binding.workspaceHash,
+      displayName: identity.displayName });
+    sessionStatus = { state: 'verified', scopeId: binding.scopeId,
+      boundDisplay: identity.displayName, currentDisplay: identity.displayName,
+      verifiedAt: Math.floor(Date.now() / 1000) };
     return accountStatus(db);
   } finally { db.close(); }
 }
@@ -99,7 +111,6 @@ export function checkAccount(configPath, options = {}) {
 }
 
 const messages = {
-  mismatch: 'Codex 当前登录账号与已绑定账号不一致；请切回原账号后重新核对。',
   needsBinding: '现有 Codex 卡尚未绑定账号；请确认正在使用原 CLI 账号，再在管理页绑定。',
   unavailable: '暂时无法核实 Codex 登录账号；请检查连接后重新核对。',
   unidentified: 'Codex 未提供可辨认的账号身份；已暂停 Codex 卡操作。',

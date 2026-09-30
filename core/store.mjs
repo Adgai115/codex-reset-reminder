@@ -31,13 +31,13 @@ export function openStore() {
     );
     CREATE INDEX IF NOT EXISTS cards_active_expiry ON cards(status, expires_at);
     CREATE TABLE IF NOT EXISTS account_scopes (
-      slot INTEGER PRIMARY KEY CHECK (slot = 1),
       scope_id TEXT NOT NULL UNIQUE,
       email_hash TEXT,
       workspace_hash TEXT,
       display_name TEXT NOT NULL,
       bound_at INTEGER NOT NULL,
-      verified_at INTEGER NOT NULL
+      verified_at INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1))
     );
     CREATE TABLE IF NOT EXISTS reminder_deliveries (
       card_id TEXT NOT NULL,
@@ -113,6 +113,25 @@ export function openStore() {
   if (!cardColumns.has('reported_used_at')) db.exec('ALTER TABLE cards ADD COLUMN reported_used_at INTEGER');
   if (!cardColumns.has('reported_baseline_count')) db.exec('ALTER TABLE cards ADD COLUMN reported_baseline_count INTEGER');
   if (!cardColumns.has('account_scope_id')) db.exec('ALTER TABLE cards ADD COLUMN account_scope_id TEXT');
+  const scopeColumns = new Set(db.prepare('PRAGMA table_info(account_scopes)').all().map((column) => column.name));
+  if (scopeColumns.has('slot')) {
+    db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE account_scopes_next (scope_id TEXT PRIMARY KEY, email_hash TEXT,
+        workspace_hash TEXT, display_name TEXT NOT NULL, bound_at INTEGER NOT NULL,
+        verified_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)));
+      INSERT INTO account_scopes_next SELECT scope_id, email_hash, workspace_hash,
+        display_name, bound_at, verified_at, 1 FROM account_scopes;
+      DROP TABLE account_scopes;
+      ALTER TABLE account_scopes_next RENAME TO account_scopes;
+      COMMIT;`);
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS account_scopes_one_active ON account_scopes(active) WHERE active = 1');
+  const historyColumns = new Set(db.prepare('PRAGMA table_info(sync_history)').all().map((column) => column.name));
+  if (!historyColumns.has('account_scope_id')) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN account_scope_id TEXT');
+    const active = getActiveAccountScope(db);
+    if (active) db.prepare('UPDATE sync_history SET account_scope_id = ? WHERE account_scope_id IS NULL').run(active.scopeId);
+  }
   const snoozeColumns = new Set(db.prepare('PRAGMA table_info(snoozes)').all().map((column) => column.name));
   if (!snoozeColumns.has('wechat_delivered_at')) db.exec('ALTER TABLE snoozes ADD COLUMN wechat_delivered_at INTEGER');
   return db;
@@ -131,7 +150,7 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
   const complete = Array.isArray(credits) && availableCount === credits.length && rows.length === credits.length;
   const detailMessage = credits == null ? `Codex 只返回 ${availableCount} 张的数量，未提供逐卡到期详情`
     : complete ? null : `Codex 返回 ${availableCount} 张可用卡，其中 ${rows.length} 张有有效到期详情`;
-  const previousComplete = latestCompleteSync(db);
+  const previousComplete = latestCompleteSync(db, scopeId);
   const seenIds = new Set(rows.map((credit) => credit.id));
   const newlyUsed = [];
   const noLongerAvailable = [];
@@ -175,9 +194,9 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
         (confirmedUsed ? newlyUsed : noLongerAvailable).push(card.id);
       }
     }
-    db.prepare('INSERT INTO sync_history (checked_at, outcome, available_count, detailed_count, message) VALUES (?, ?, ?, ?, ?)')
+    db.prepare('INSERT INTO sync_history (checked_at, outcome, available_count, detailed_count, message, account_scope_id) VALUES (?, ?, ?, ?, ?, ?)')
       .run(checkedAt, complete ? 'complete' : 'partial', availableCount, rows.length,
-        detailMessage);
+        detailMessage, scopeId);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -188,9 +207,9 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
     newlyUsed, noLongerAvailable };
 }
 
-export function recordSyncFailure(db, message, checkedAt = Math.floor(Date.now() / 1000)) {
-  db.prepare('INSERT INTO sync_history (checked_at, outcome, message) VALUES (?, ?, ?)')
-    .run(checkedAt, 'failed', String(message).slice(0, 300));
+export function recordSyncFailure(db, message, checkedAt = Math.floor(Date.now() / 1000), scopeId = null) {
+  db.prepare('INSERT INTO sync_history (checked_at, outcome, message, account_scope_id) VALUES (?, ?, ?, ?)')
+    .run(checkedAt, 'failed', String(message).slice(0, 300), scopeId);
 }
 
 export function listCards(db, includeInactive = false) {
@@ -212,8 +231,26 @@ export function getCard(db, id) {
 export function getActiveAccountScope(db) {
   return db.prepare(`SELECT scope_id AS scopeId, email_hash AS emailHash,
     workspace_hash AS workspaceHash, display_name AS displayName,
-    bound_at AS boundAt, verified_at AS verifiedAt
-    FROM account_scopes ORDER BY bound_at ASC LIMIT 1`).get() || null;
+    bound_at AS boundAt, verified_at AS verifiedAt, active
+    FROM account_scopes WHERE active = 1 LIMIT 1`).get() || null;
+}
+
+export function listAccountScopes(db) {
+  return db.prepare(`SELECT scope_id AS scopeId, email_hash AS emailHash,
+    workspace_hash AS workspaceHash, display_name AS displayName,
+    bound_at AS boundAt, verified_at AS verifiedAt, active
+    FROM account_scopes ORDER BY bound_at ASC`).all();
+}
+
+export function activateAccountScope(db, scopeId) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!db.prepare('SELECT 1 FROM account_scopes WHERE scope_id = ?').get(scopeId))
+      throw new Error('账号不存在');
+    db.prepare('UPDATE account_scopes SET active = 0 WHERE active = 1').run();
+    db.prepare('UPDATE account_scopes SET active = 1 WHERE scope_id = ?').run(scopeId);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 export function countCodexCards(db) {
@@ -225,11 +262,16 @@ export function bindAccountScope(db, { scopeId, emailHash, workspaceHash, displa
   nowSeconds = Math.floor(Date.now() / 1000) }) {
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare(`INSERT INTO account_scopes (slot, scope_id, email_hash, workspace_hash,
-      display_name, bound_at, verified_at) VALUES (1, ?, ?, ?, ?, ?, ?)`)
+    const firstAccount = listAccountScopes(db).length === 0;
+    db.prepare('UPDATE account_scopes SET active = 0 WHERE active = 1').run();
+    db.prepare(`INSERT INTO account_scopes (scope_id, email_hash, workspace_hash,
+      display_name, bound_at, verified_at, active) VALUES (?, ?, ?, ?, ?, ?, 1)`)
       .run(scopeId, emailHash, workspaceHash, displayName, nowSeconds, nowSeconds);
-    db.prepare("UPDATE cards SET account_scope_id = ? WHERE source = 'codex' AND account_scope_id IS NULL")
-      .run(scopeId);
+    if (firstAccount) {
+      db.prepare("UPDATE cards SET account_scope_id = ? WHERE source = 'codex' AND account_scope_id IS NULL")
+        .run(scopeId);
+      db.prepare('UPDATE sync_history SET account_scope_id = ? WHERE account_scope_id IS NULL').run(scopeId);
+    }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
@@ -246,23 +288,27 @@ export function reportCardUsed(db, id, reportedAt = Math.floor(Date.now() / 1000
   if (!card || card.source !== 'codex' || card.status !== 'available' || card.expiresAt <= reportedAt) {
     throw new Error('这张 Codex 重置卡已不可用');
   }
-  const baseline = latestCompleteSync(db)?.availableCount ?? null;
+  const baseline = latestCompleteSync(db, card.accountScopeId)?.availableCount ?? null;
   db.prepare(`UPDATE cards SET reported_used_at = COALESCE(reported_used_at, ?),
     reported_baseline_count = COALESCE(reported_baseline_count, ?), updated_at = ? WHERE id = ?`)
     .run(reportedAt, baseline, reportedAt, id);
   return getCard(db, id);
 }
 
-export function listDueUsageVerifications(db, nowSeconds = Math.floor(Date.now() / 1000), delaySeconds = 600) {
+export function listDueUsageVerifications(db, nowSeconds = Math.floor(Date.now() / 1000), delaySeconds = 600,
+  scopeId = null) {
   return db.prepare(`SELECT c.id, c.reported_used_at AS reportedUsedAt
     FROM cards c
     WHERE c.source = 'codex' AND c.status = 'available' AND c.expires_at > ?
+      AND (? IS NULL OR c.account_scope_id = ?)
       AND c.reported_used_at IS NOT NULL AND c.reported_used_at + ? <= ?
       AND NOT EXISTS (
         SELECT 1 FROM sync_history s
         WHERE s.outcome = 'complete' AND s.checked_at >= c.reported_used_at + ?
+          AND (s.account_scope_id = c.account_scope_id OR (s.account_scope_id IS NULL AND c.account_scope_id IS NULL))
       )
-    ORDER BY c.reported_used_at ASC`).all(nowSeconds, delaySeconds, nowSeconds, delaySeconds);
+    ORDER BY c.reported_used_at ASC`).all(nowSeconds, scopeId, scopeId,
+    delaySeconds, nowSeconds, delaySeconds);
 }
 
 // 仅供测试构造旧版记录；正式界面、CLI、提醒调度均不再使用手动卡。
@@ -456,10 +502,16 @@ export function listReminderResults(db, cardId) {
     .sort((a, b) => b.nodeAt - a.nodeAt || b.attemptedAt - a.attemptedAt);
 }
 
-export function latestSync(db) {
-  return db.prepare('SELECT checked_at AS checkedAt, outcome, available_count AS availableCount, detailed_count AS detailedCount, message FROM sync_history ORDER BY checked_at DESC, id DESC LIMIT 1').get() || null;
+export function latestSync(db, scopeId = null) {
+  return db.prepare(`SELECT checked_at AS checkedAt, outcome, available_count AS availableCount,
+    detailed_count AS detailedCount, message FROM sync_history
+    WHERE (? IS NULL OR account_scope_id = ?) ORDER BY checked_at DESC, id DESC LIMIT 1`)
+    .get(scopeId, scopeId) || null;
 }
 
-export function latestCompleteSync(db) {
-  return db.prepare("SELECT checked_at AS checkedAt, outcome, available_count AS availableCount, detailed_count AS detailedCount FROM sync_history WHERE outcome = 'complete' ORDER BY checked_at DESC, id DESC LIMIT 1").get() || null;
+export function latestCompleteSync(db, scopeId = null) {
+  return db.prepare(`SELECT checked_at AS checkedAt, outcome, available_count AS availableCount,
+    detailed_count AS detailedCount FROM sync_history WHERE outcome = 'complete'
+    AND (? IS NULL OR account_scope_id = ?) ORDER BY checked_at DESC, id DESC LIMIT 1`)
+    .get(scopeId, scopeId) || null;
 }

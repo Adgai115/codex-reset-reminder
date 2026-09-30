@@ -228,6 +228,12 @@ if (!gotLock) {
       let syncError = null;
       try { syncResult = await scheduler?.sync('account-confirmed') || null; }
       catch (error) { syncError = error.message; }
+      // A check may switch accounts while an earlier sync is still running.
+      // Once that request settles, immediately fetch the newly active account.
+      if (scheduler && (syncError || syncResult?.accountScopeId !== result.scopeId)) {
+        try { syncResult = await scheduler.sync('account-switched'); syncError = null; }
+        catch (error) { syncError = error.message; }
+      }
       scheduler?.check('account-confirmed');
       return { ...result, syncResult, syncError };
     }
