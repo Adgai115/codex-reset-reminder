@@ -22,7 +22,11 @@ export function resetCardFromReminder({ cardId, expectedExpiresAt },
       const card = getCard(db, cardId);
       if (card?.source !== 'codex' || card.accountScopeId !== scopeId
         || card.expiresAt !== expectedExpiresAt || card.expiresAt <= Date.now() / 1000
-        || card.status !== 'available') throw new Error('这张卡已变化，请重新查看卡片列表');
+        || card.status !== 'available') {
+        const error = new Error('这张卡已变化，请重新查看卡片列表');
+        error.code = 'ACCOUNT_CARD_CHANGED';
+        throw error;
+      }
       key = desktopResetKey(db, cardId, expectedExpiresAt, newKey());
     } finally { db.close(); }
     // consumeCredit 会在请求前后重新核对账号，并核对卡片归属。

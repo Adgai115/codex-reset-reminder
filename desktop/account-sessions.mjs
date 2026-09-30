@@ -53,15 +53,17 @@ export function createAccountSessions({ directory, crypto, createSession = creat
     next.finally(() => { if (queues.get(scopeId) === next) queues.delete(scopeId); }).catch(() => {});
     return next;
   }
-  async function persist(scopeId, home, sourceHash = null) {
+  async function persist(scopeId, home, sourceHash = null, validate = () => {}) {
+    validate();
     if (!secure()) throw new Error('系统凭据保护不可用，请解锁系统钥匙串后重新登录');
     let auth;
     try { auth = await readFile(join(home, 'auth.json'), 'utf8'); JSON.parse(auth); }
     catch { throw new Error('未获得可保存的登录会话，请重新登录此账号'); }
+    validate();
     const path = validateScope(scopeId);
     const encrypted = crypto.encryptString(JSON.stringify({ version: 1, scopeId, auth, sourceHash }));
     const temporary = `${path}.${randomUUID()}.tmp`;
-    try { await writeFile(temporary, encrypted, { mode: 0o600 }); await rename(temporary, path); }
+    try { await writeFile(temporary, encrypted, { mode: 0o600 }); validate(); await rename(temporary, path); }
     finally { await rm(temporary, { force: true }); }
   }
   async function withHome(script, auth, run) {
@@ -135,59 +137,81 @@ export function createAccountSessions({ directory, crypto, createSession = creat
   }
   async function cleanupLogin(record) {
     clearTimeout(record.timer);
-    await record.session.close(); await removeRuntime(record.home);
+    await record.session?.close();
+    if (record.home) await removeRuntime(record.home);
     if (login === record) login = null;
+  }
+  const loginIsCurrent = (record) => login === record && !record.cancelled && !stopped;
+  function requireCurrentLogin(record) {
+    if (!loginIsCurrent(record)) throw new Error('登录会话已结束');
   }
   async function cancelLogin() {
     const record = login;
     if (!record) return;
     record.cancelled = true;
     await cleanupLogin(record);
-    publicLogin = { state: 'idle' }; onChanged();
+    if (!login) { publicLogin = { state: 'idle' }; onChanged(); }
   }
   async function startLogin({ script, expectedScopeId = null, onComplete }) {
     await initialized;
+    if (stopped) throw new Error('账号服务已停止');
     if (!secure()) throw new Error('系统凭据保护不可用，请解锁系统钥匙串后再添加账号');
     if (login) throw new Error('已有账号正在登录，请完成或取消后再试');
-    const home = await mkdtemp(join(runtime, 'login-'));
     const token = randomUUID();
-    const record = { home, token, expectedScopeId, cancelled: false, completing: false, session: null, timer: null };
+    // 在第一个异步步骤前占用登录位置，避免两个请求各自打开登录窗口。
+    const record = { home: null, token, expectedScopeId, cancelled: false, completing: false, session: null, timer: null };
     login = record;
     const failLogin = async () => {
-      if (login !== record || record.cancelled || record.completing) return;
+      if (!loginIsCurrent(record) || record.completing) return;
       record.cancelled = true; await cleanupLogin(record);
-      publicLogin = { state: 'failed', message: '登录未完成，请重试' }; onChanged();
+      if (!login) { publicLogin = { state: 'failed', message: '登录未完成，请重试' }; onChanged(); }
     };
-    record.session = createSession(script, { home, onExit: () => { failLogin().catch(() => {}); },
+    try {
+      record.home = await mkdtemp(join(runtime, 'login-'));
+      requireCurrentLogin(record);
+      record.session = createSession(script, { home: record.home, onExit: () => { failLogin().catch(() => {}); },
       onNotification: (method, params) => {
-        if (method !== 'account/login/completed' || record.cancelled || record.completing) return;
+        if (method !== 'account/login/completed' || !loginIsCurrent(record) || record.completing) return;
         if (!params?.success) { failLogin().catch(() => {}); return; }
         record.completing = true;
-        Promise.resolve().then(() => onComplete({ loginToken: token, expectedScopeId })).then(() => {
-          publicLogin = { state: 'complete' };
-        }, () => { publicLogin = { state: 'failed', message: '登录账号不匹配或会话未保存，请重试' }; })
+        Promise.resolve().then(() => {
+          requireCurrentLogin(record);
+          return onComplete({ loginToken: token, expectedScopeId });
+        }).then(() => {
+          if (loginIsCurrent(record)) publicLogin = { state: 'complete' };
+        }, () => {
+          if (loginIsCurrent(record)) publicLogin = { state: 'failed', message: '登录账号不匹配或会话未保存，请重试' };
+        })
           .finally(async () => { await cleanupLogin(record); onChanged(); });
       } });
-    record.timer = setTimeout(() => { failLogin().catch(() => {}); }, loginTimeoutMs);
-    try {
+      record.timer = setTimeout(() => { failLogin().catch(() => {}); }, loginTimeoutMs);
       const result = await record.session.request('account/login/start', { type: 'chatgpt' });
+      requireCurrentLogin(record);
       const url = new URL(result.authUrl);
       if (result.type !== 'chatgpt' || url.protocol !== 'https:'
         || !['auth.openai.com', 'auth0.openai.com', 'chatgpt.com'].includes(url.hostname))
         throw new Error('Codex 登录地址无效');
       publicLogin = { state: 'waiting', scopeId: expectedScopeId }; onChanged();
       await openLogin(url.href);
+      if (record.cancelled || stopped) throw new Error('登录会话已结束');
       return { state: 'waiting' };
-    } catch { await failLogin(); throw new Error('无法打开账号登录，请重试'); }
+    } catch {
+      const cancelled = record.cancelled || stopped;
+      await failLogin(); await cleanupLogin(record);
+      throw new Error(cancelled ? '登录会话已结束' : '无法打开账号登录，请重试');
+    }
   }
   async function loginRequest({ loginToken, script, binding }) {
     const record = login;
-    if (!record || record.token !== loginToken || record.cancelled) throw new Error('登录会话已结束');
+    if (!record || record.token !== loginToken) throw new Error('登录会话已结束');
+    requireCurrentLogin(record);
     const response = await record.session.request('account/read', {});
+    requireCurrentLogin(record);
     if (binding) {
       if (!identityMatches(binding, response)) throw new Error('登录的账号与所选账号不匹配');
-      await enqueue(binding.scopeId, () => persist(binding.scopeId, record.home));
+      await enqueue(binding.scopeId, () => persist(binding.scopeId, record.home, null, () => requireCurrentLogin(record)));
     }
+    requireCurrentLogin(record);
     return response;
   }
   return { has, request, capture, startLogin, cancelLogin, loginRequest,

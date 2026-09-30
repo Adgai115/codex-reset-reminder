@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
 import { runCoreOperation } from './core-operations.mjs';
+import { restoreCoreError } from './error-protocol.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = join(directory, '..');
@@ -18,7 +19,7 @@ rl.on('line', async (line) => {
   if (request.type === 'account-result') {
     const pending = pendingAccounts.get(request.eventId);
     if (pending) { pendingAccounts.delete(request.eventId);
-      if (request.ok) pending.resolve(request.result); else pending.reject(new Error(request.error)); }
+      if (request.ok) pending.resolve(request.result); else pending.reject(restoreCoreError(request)); }
     return;
   }
   if (request.type === 'desktop-result') {
@@ -45,7 +46,8 @@ rl.on('line', async (line) => {
     process.stdout.write(`${JSON.stringify({ type: 'result', id, ok: true, result })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ type: 'result', id, ok: false, error: error.message,
-      afterRequest: error.afterRequest === true })}\n`);
+      afterRequest: error.afterRequest === true,
+      ...(/^ACCOUNT_[A-Z_]{1,48}$/.test(error.code || '') ? { code: error.code } : {}) })}\n`);
   }
 });
 process.stdout.write(`${JSON.stringify({ type: 'ready' })}\n`);

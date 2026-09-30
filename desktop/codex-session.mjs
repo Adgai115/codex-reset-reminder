@@ -1,7 +1,10 @@
 // 独立的 stdio 会话：只调用账号接口，不创建对话或使用模型。
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
+import { createRequire } from 'node:module';
 import { codexCommand } from '../core/native-bin.mjs';
+
+const { version } = createRequire(import.meta.url)('../package.json');
 
 export function createCodexSession(script, { home = null, onNotification = () => {},
   onExit = () => {}, timeoutMs = 45_000, managed = true } = {}) {
@@ -17,14 +20,19 @@ export function createCodexSession(script, { home = null, onNotification = () =>
   let nextId = 1;
   let closed = false;
   let exited = false;
-  const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+  const send = (message) => {
+    try { child.stdin.write(`${JSON.stringify(message)}\n`); }
+    catch { fail(); }
+  };
   const fail = () => {
+    if (exited) return;
     exited = true;
     for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('Codex 连接已中断')); }
     pending.clear(); lines.close(); onExit();
   };
   child.on('error', fail);
-  const exitPromise = new Promise((resolve) => child.once('exit', () => { fail(); resolve(); }));
+  child.stdin.on('error', fail);
+  const exitPromise = new Promise((resolve) => child.once('close', () => { fail(); resolve(); }));
   function requestRaw(method, params) {
     if (closed || exited) return Promise.reject(new Error('Codex 会话已关闭'));
     return new Promise((resolve, reject) => {
@@ -46,7 +54,7 @@ export function createCodexSession(script, { home = null, onNotification = () =>
     } else if (message.method) onNotification(message.method, message.params);
   });
   const ready = requestRaw('initialize', { clientInfo: { name: 'codex_reset_card_reminder',
-    title: 'Codex Reset Card Reminder', version: '2.2.0' } }).then(() => send({ method: 'initialized', params: {} }));
+    title: 'Codex Reset Card Reminder', version } }).then(() => send({ method: 'initialized', params: {} }));
   ready.catch(() => {});
   return { request: async (method, params) => { await ready; return requestRaw(method, params); },
     async close() {

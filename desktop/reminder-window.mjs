@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getSnoozeOptions } from '../core/later.mjs';
 import { mergeReminderItems, reminderStillActive } from './reminder-items.mjs';
+import { resetFailureResult } from './error-protocol.mjs';
 
 const reminderPage = join(import.meta.dirname, '..', 'ui', 'reminder', 'index.html');
 
@@ -59,8 +60,10 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
           detail: `账号：${item.accountDisplay || record.accountDisplay || '待核对'}\n卡片：#${(item.originalCreditId || item.creditId).slice(-6)}\n确认后会向 Codex 发起正式用卡请求；成功后无法撤销。`,
         });
         if (confirmation.response !== 1) return { outcome: 'cancelled' };
-        const result = await coreRequest('resetCardFromReminder', {
-          cardId: item.creditId, expectedExpiresAt: item.expiresAt });
+        let result;
+        try { result = await coreRequest('resetCardFromReminder', {
+          cardId: item.creditId, expectedExpiresAt: item.expiresAt }); }
+        catch (error) { return resetFailureResult(error); }
         if (['reset', 'alreadyRedeemed'].includes(result.outcome)) {
           record.items = record.items.filter((current) => current !== item);
           if (record.items.length) update(record);
