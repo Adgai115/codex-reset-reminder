@@ -30,11 +30,10 @@
   .toolbar { display:flex; gap:8px; flex-shrink:0; }
   .account-select { display:flex; align-items:center; gap:8px; margin-bottom:8px; min-width:0; }
   #account-select { max-width:280px; min-width:190px; padding:5px 8px; text-overflow:ellipsis; }
-  .account-select button { padding:5px 9px; font-size:12px; flex:none; }
-  .listbar { display:flex; flex-direction:column; align-items:stretch; }
-  .viewbar { display:flex; gap:6px; margin:4px 0 8px; }
-  .viewbar button { font-size:13px; padding:6px 10px; background:transparent; border-color:transparent; }
-  .viewbar button[aria-pressed=true] { color:var(--accent); border-color:var(--line); background:var(--surface); }
+  .listbar { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:8px 0 12px; min-width:0; }
+  .listbar select { font-size:13px; padding:6px 10px; }
+  .record-tools { display:flex; align-items:center; gap:12px; }
+  #back-to-cards { padding:6px 0; font-size:13px; color:var(--accent); border-color:transparent; background:transparent; }
   .records th:first-child { width:130px; }
   .records.sync-records th:nth-child(2) { width:110px; }
   .records.sync-records th:nth-child(3), .records.sync-records th:nth-child(4) { width:85px; }
@@ -70,10 +69,6 @@
   button:disabled, select:disabled { opacity:.5; cursor:not-allowed; }
   button.primary { background:#245bcc; color:white; border-color:#245bcc; }
   button.primary:hover:not(:disabled) { background:#194dab; }
-  .filterbar { display:flex; justify-content:space-between; align-items:center; padding:8px 0 12px; gap:16px; min-width:0; }
-  .filters { display:flex; gap:5px; }
-  .filters button { background:transparent; border-color:transparent; }
-  .filters button[aria-pressed=true] { background:var(--surface); border-color:var(--line); font-weight:600; }
   #channel-status { color:var(--danger); font-size:12px; padding:4px 8px; background:transparent; border:0; }
   #notice-box { margin-bottom:12px; color:var(--muted); font-size:12px; }
   #notice { display:list-item; list-style-position:inside; }
@@ -138,7 +133,7 @@
 <body>
 <header>
   <div class="heading"><h1>重置卡管理</h1>
-    <div class="account-select"><select id="account-select" aria-label="查看账号"></select><button id="manage-accounts">账号管理</button></div>
+    <div class="account-select"><select id="account-select" aria-label="查看或管理账号"><option value="" disabled selected>等待获取账号</option><optgroup label="管理"><option value="@manage">账号管理…</option></optgroup></select></div>
     <div class="status-row"><details id="sync-info"><summary id="sync-status" role="status">读取中…</summary>
       <div class="detail-text"><p id="sync-detail"></p><p id="automation-status"></p></div></details>
     <div class="account-bar"><details id="account-info"><summary id="account-status">核对账号…</summary>
@@ -147,11 +142,13 @@
   <div class="toolbar"><button id="sync" title="后台每 15 分钟自动同步，也可立即刷新">刷新</button><button id="settings">提醒设置</button></div>
 </header>
 <main>
-  <div class="listbar"><nav class="viewbar" aria-label="账号信息"><button id="cards-view" aria-pressed="true">卡片</button><button id="sync-view" aria-pressed="false">同步记录</button><button id="reminders-view" aria-pressed="false">提醒记录</button></nav>
-  <div class="filterbar">
-    <div class="filters" aria-label="卡片范围"><button id="active-filter" aria-pressed="true">可用卡</button><button id="pending-filter" aria-pressed="false" hidden>已提醒</button><button id="history-filter" aria-pressed="false">已结束</button></div>
-    <button id="channel-status" hidden>提醒已关闭</button>
-  </div></div>
+  <div class="listbar">
+    <select id="card-filter" aria-label="卡片范围"><option id="active-filter" value="active">可用卡</option><option id="pending-filter" value="pending" hidden>已提醒</option><option id="history-filter" value="history">已结束</option></select>
+    <button id="back-to-cards" hidden>← 卡片</button>
+    <div class="record-tools"><button id="channel-status" hidden>提醒已关闭</button>
+      <select id="record-select" aria-label="查看当前账号记录"><option value="" disabled selected>记录</option><option value="sync">同步记录</option><option value="reminders">提醒记录</option></select>
+    </div>
+  </div>
   <details id="notice-box" hidden><summary id="notice" class="single-line" role="status" aria-live="polite"></summary><p id="notice-detail"></p></details>
   <div class="table-wrap" tabindex="0" role="region" aria-label="卡片列表">
     <table id="cards"><thead><tr><th scope="col">卡片</th><th scope="col" title="电脑本地时间">到期时间</th><th scope="col" class="state-cell">状态</th><th scope="col">提醒</th><th scope="col">操作</th></tr></thead><tbody></tbody></table>

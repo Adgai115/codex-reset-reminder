@@ -14,7 +14,8 @@ let lastFocusCheckAt = Date.now();
 let lastRenderedScopeId = null;
 let detailContext = null;
 let detailFingerprint = '';
-const interacting = () => document.activeElement?.tagName === 'SELECT';
+let interactionTimer;
+const interacting = () => document.activeElement?.matches('select:open') === true;
 const text = (parent, tag, content, className = '') => {
   const element = document.createElement(tag);
   element.textContent = content;
@@ -219,13 +220,18 @@ function render() {
     option.value = account.scopeId;
     option.selected = account.scopeId === snapshot.account.scopeId;
   }
-  if (!selector.options.length) text(selector, 'option', '等待获取账号').value = '';
+  if (!selector.options.length) {
+    const placeholder = text(selector, 'option', '等待获取账号');
+    placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
+  }
+  const management = text(selector, 'optgroup', ''); management.label = '管理';
+  text(management, 'option', '账号管理…').value = '@manage';
   selector.title = selector.selectedOptions[0]?.textContent || '';
-  selector.dataset.unavailable = String(selector.options.length === 0);
   renderAccounts();
   renderRecords();
-  for (const name of ['cards', 'sync', 'reminders']) $(`${name}-view`).setAttribute('aria-pressed', String(view === name));
-  document.querySelector('.filterbar').hidden = view !== 'cards';
+  $('card-filter').hidden = view !== 'cards';
+  $('back-to-cards').hidden = view === 'cards';
+  $('record-select').value = view === 'cards' ? '' : view;
   document.querySelector('#cards').closest('.table-wrap').hidden = view !== 'cards';
   $('record-wrap').hidden = view === 'cards';
   const active = snapshot.cards.filter((card) => cardState(card).active);
@@ -234,8 +240,7 @@ function render() {
   $('history-filter').textContent = `已结束 ${snapshot.cards.length - active.length}`;
   $('pending-filter').textContent = `已提醒 ${pending.length}`;
   $('pending-filter').hidden = !pending.length && filter !== 'pending';
-  for (const name of ['active', 'history', 'pending'])
-    $(`${name}-filter`).setAttribute('aria-pressed', String(filter === name));
+  $('card-filter').value = filter;
   const cards = filter === 'pending' ? pending
     : snapshot.cards.filter((card) => cardState(card).active === (filter === 'active'));
   const tbody = document.querySelector('#cards tbody');
@@ -300,7 +305,7 @@ function renderAccounts() {
   // 编辑名称时保留焦点和输入；后台更新不会清空草稿。
   if (!list.contains(document.activeElement)) {
     list.replaceChildren();
-    for (const account of snapshot.accounts || []) {
+    for (const account of snapshot?.accounts || []) {
       const row = text(list, 'div', '', 'account-row');
       row.dataset.scope = account.scopeId;
       const info = text(row, 'div', '');
@@ -323,7 +328,7 @@ function renderAccounts() {
     }
     if (!list.children.length) text(list, 'div', '暂无账号', 'empty');
   }
-  const login = snapshot.login || {};
+  const login = snapshot?.login || {};
   $('login-status').textContent = login.state === 'waiting' ? '请在浏览器完成登录'
     : login.state === 'failed' ? login.message : login.state === 'complete' ? '账号已添加' : '';
   $('cancel-login').hidden = login.state !== 'waiting';
@@ -382,7 +387,15 @@ async function loginAccount(scopeId) {
   finally { busy = false; await load(true); controls(); }
 }
 async function load(force = false) {
-  if (loading || (!force && (busy || interacting()))) { reloadPending = true; return; }
+  if (loading || (!force && busy)) { reloadPending = true; return; }
+  if (!force && interacting()) {
+    reloadPending = true;
+    // 原生菜单关闭后处理积压更新，不让已聚焦但收起的选择框阻塞后台刷新。
+    clearTimeout(interactionTimer);
+    interactionTimer = setTimeout(() => load(), 250);
+    return;
+  }
+  clearTimeout(interactionTimer);
   loading = true;
   reloadPending = false;
   try { snapshot = await window.api.core('manageSnapshot'); render(); }
@@ -411,11 +424,16 @@ async function action(op, args, success, errorId) {
     if (reloadPending) load();
   }
 }
-for (const name of ['active', 'history', 'pending'])
-  $(`${name}-filter`).addEventListener('click', () => { filter = name; render(); });
-for (const name of ['cards', 'sync', 'reminders']) $(`${name}-view`).addEventListener('click', () => { view = name; render(); });
-$('account-select').addEventListener('change', () => selectAccount($('account-select').value));
-$('manage-accounts').addEventListener('click', () => { renderAccounts(); controls(); $('account-notice').textContent = ''; $('accounts-dialog').showModal(); });
+$('card-filter').addEventListener('change', () => { filter = $('card-filter').value; render(); });
+$('record-select').addEventListener('change', () => { view = $('record-select').value; render(); });
+$('back-to-cards').addEventListener('click', () => { view = 'cards'; render(); $('card-filter').focus(); });
+$('account-select').addEventListener('change', () => {
+  const selector = $('account-select');
+  if (selector.value !== '@manage') { selectAccount(selector.value); return; }
+  // 管理入口不是账号；保留真实查看范围，包括尚无账号的首次启动。
+  selector.value = snapshot?.account?.scopeId || '';
+  renderAccounts(); controls(); $('account-notice').textContent = ''; $('accounts-dialog').showModal();
+});
 $('close-accounts').addEventListener('click', () => $('accounts-dialog').close());
 $('close-detail').addEventListener('click', () => $('detail-dialog').close());
 $('detail-dialog').addEventListener('close', () => {

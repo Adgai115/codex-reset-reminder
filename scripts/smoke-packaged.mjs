@@ -104,6 +104,15 @@ async function until(tab, expression, description, timeout = 12000, send) {
   throw new Error(`界面未更新：${description}`);
 }
 
+async function choose(tab, id, value) {
+  await evaluate(tab, `(() => {
+    const select = document.getElementById(${JSON.stringify(id)});
+    select.value = ${JSON.stringify(value)};
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+}
+
 async function screenshot(tab, name, send = (method, params) => command(tab, method, params)) {
   const directory = process.env.CODEX_RESET_SMOKE_SCREENSHOTS;
   if (!directory) return;
@@ -123,6 +132,8 @@ async function untilClosed(port, suffix, timeout = 15000) {
 }
 
 async function checkCompactLayout(tab) {
+  assert.equal(await evaluate(tab, `CSS.supports('selector(select:open)')`), true,
+    '安装包的 Chromium 必须能够区分已展开菜单与仅保留焦点的选择框');
   // Emulation belongs to its debugging session. Keep that connection open until
   // measurements and screenshots finish; detaching may restore the native size.
   await debuggerSession(tab, async (send) => {
@@ -418,7 +429,7 @@ try {
     const firstId = first.account.scopeId;
     await writeFile(sourceAuth, JSON.stringify({ mockProfile: accountB.replaceAll('\\', '/') }));
     await evaluate(manage, `window.api.core('checkAccount')`);
-    await until(manage, `document.querySelector('#account-select').options.length === 2
+    await until(manage, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
       && document.querySelector('#cards tbody').textContent.includes('工作号卡片')`, '换号后自动显示新账号官方卡');
     const second = await evaluate(manage, `window.api.core('manageSnapshot')`);
     const secondId = second.account.scopeId;
@@ -444,14 +455,16 @@ try {
     const checkedAccount = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.equal(checkedAccount.account.scopeId, firstId);
     assert.equal(checkedAccount.account.state, 'verified', '手动核对旧账号必须保持真实连接状态');
-    await evaluate(manage, `document.querySelector('#sync-view').click();true`);
+    await choose(manage, 'record-select', 'sync');
     await until(manage, `document.querySelector('#records tbody').textContent.includes('已同步')`, '当前账号同步记录');
     await screenshot(manage, 'accounts-sync-history');
-    await evaluate(manage, `document.querySelector('#reminders-view').click();true`);
+    await choose(manage, 'record-select', 'reminders');
     await until(manage, `document.querySelector('#records tbody').textContent.includes('个人号卡片')
       && !document.querySelector('#records tbody').textContent.includes('工作号卡片')`, '提醒记录按账号展示');
     await screenshot(manage, 'accounts-reminder-history');
-    await evaluate(manage, `document.querySelector('#manage-accounts').click();true`);
+    await choose(manage, 'account-select', '@manage');
+    assert.equal(await evaluate(manage, `document.querySelector('#account-select').value`), firstId,
+      '账号管理入口不能改变当前查看账号');
     await until(manage, `document.querySelectorAll('.account-row').length === 2`, '账号管理列表');
     const locked = await evaluate(manage, `(()=>{
       const field=[...document.querySelectorAll('.account-name input')].find(el=>el.dataset.scope===${JSON.stringify(firstId)});
@@ -464,7 +477,10 @@ try {
     assert.equal(namedAccount.account.nickname, 'Smoke Personal');
     assert.equal(namedAccount.account.state, 'verified', '保存昵称不应使已连接账号失联');
     await screenshot(manage, 'accounts-manager');
-    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#cards-view').click();true`);
+    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#back-to-cards').click();true`);
+    assert.equal(await evaluate(manage, `document.querySelector('#record-select').value`), '',
+      '返回卡片后记录入口恢复占位');
+    assert.equal(await evaluate(manage, `document.activeElement.id`), 'card-filter');
     await rm(join(accountA, 'mock-usage.json'));
     await evaluate(manage, `window.api.core('syncCards',{scopeId:${JSON.stringify(firstId)}}).catch(()=>null)`);
     const bUsage = JSON.parse(await readFile(join(accountB, 'mock-usage.json'), 'utf8'));
@@ -485,7 +501,7 @@ try {
       '多账号正常退出应关闭所有会话且进程结束');
     await stopTree(child); port=await freePort(); launch();
     const restarted = await page(port, '/ui/manage/index.html', child, Date.now()+60000);
-    await until(restarted, `document.querySelector('#account-select')?.options.length === 2
+    await until(restarted, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
       && document.querySelector('#pending-filter')?.textContent === '已提醒 3'`, '重启后恢复多个账号和提醒记录');
     await evaluate(restarted, `window.api.core('selectAccount',{scopeId:${JSON.stringify(firstId)}})`);
     await until(restarted, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '登录失败账号仍可查看缓存');
@@ -574,7 +590,8 @@ try {
     await sleep(1000);
     assert.equal((await reminderTabs()).length, 0, '重启恢复待处理时不重复弹出已发送节点');
     assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 3);
-    await evaluate(manage, `document.querySelector('#pending-filter').click(); document.querySelector('.pending-reminder').click(); true`);
+    await choose(manage, 'card-filter', 'pending');
+    await evaluate(manage, `document.querySelector('.pending-reminder').click(); true`);
     reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
     await until(reminder, `document.querySelector('#name')?.textContent.includes('CI 合并提醒')
       && document.querySelector('#pager').hidden`, '可从卡片重新查看提醒');
@@ -778,9 +795,9 @@ try {
       reported: Boolean(card.reportedUsedAt), unchanged: card.title === before.title && card.expiresAt === before.expiresAt };
   })()`);
   assert.deepEqual(flow, { cleared: true, status: 'available', reported: false, unchanged: true });
-  await evaluate(manage, `document.querySelector('#history-filter').click(); true`);
+  await choose(manage, 'card-filter', 'history');
   assert.equal(await evaluate(manage, `document.querySelector('#cards tbody').textContent.includes('CI 过期卡') && document.querySelector('#cards tbody').textContent.includes('已使用')`), true);
-  await evaluate(manage, `document.querySelector('#active-filter').click(); true`);
+  await choose(manage, 'card-filter', 'active');
   await until(manage, `!document.querySelector('#sync').disabled`, '启动同步结束');
   assert.equal(await evaluate(manage, `document.querySelector('#sync').click(); document.querySelector('#sync').textContent`), '同步中…');
   await until(manage, `!document.querySelector('#sync').disabled && document.querySelector('#notice').textContent.includes('刷新暂不可用')`, '同步失败后恢复按钮和缓存列表');
