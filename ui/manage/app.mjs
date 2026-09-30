@@ -9,6 +9,7 @@ let loading = false;
 let reloadPending = false;
 let filter = 'active';
 let noticeTimer;
+let lastFocusCheckAt = Date.now();
 const expandedCards = new Set();
 const interacting = () => document.activeElement?.tagName === 'SELECT';
 const text = (parent, tag, content, className = '') => {
@@ -186,7 +187,8 @@ function render() {
   }
   $('cards').hidden = cards.length === 0;
   $('empty').hidden = cards.length > 0;
-  $('empty').textContent = filter === 'pending' ? '暂无已提醒卡片'
+  $('empty').textContent = snapshot.account?.state === 'mismatch'
+    ? '当前账号未绑定，原账号卡已隐藏' : filter === 'pending' ? '暂无已提醒卡片'
     : filter === 'history' ? '暂无已结束卡片' : '暂无可用卡片';
   controls();
 }
@@ -266,7 +268,13 @@ $('sync').addEventListener('click', async () => {
   finally { busy = false; await load(true); controls(); }
 });
 window.api.onStateChanged(() => load());
-window.addEventListener('focus', () => load());
+window.addEventListener('focus', () => {
+  load();
+  if (busy || Date.now() - lastFocusCheckAt < 30_000) return;
+  lastFocusCheckAt = Date.now();
+  window.api.core('checkAccount').then(() => load(true))
+    .catch((error) => notice('账号核对失败', true, error.message));
+});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 // 仅刷新本地时间和状态，不会轮询 Codex。
 setInterval(() => { if (!document.hidden) load(); }, 60_000);

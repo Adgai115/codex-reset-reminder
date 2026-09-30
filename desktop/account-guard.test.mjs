@@ -12,6 +12,7 @@ writeFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH,
 const { getActiveAccountScope, getCard, openStore, saveCodexSnapshot,
   recordFeishuMessage } = await import('../legacy/node/store.mjs');
 const { checkAccount, requireAccount, requireCardInScope } = await import('./account-guard.mjs');
+const { runCoreOperation } = await import('./core-operations.mjs');
 const { syncCards } = await import('../legacy/node/sync.mjs');
 const { consumeCredit, refreshCreditStatus } = await import('../legacy/node/consume.mjs');
 const { handleCardAction } = await import('../core/card-actions.mjs');
@@ -52,6 +53,11 @@ test('switch and network failure remain distinct and block merge or official use
   const scope = await requireAccount(configPath, { appServer: account('old@example.com') });
   const switched = await checkAccount(configPath, { appServer: account('new@example.com') });
   assert.equal(switched.state, 'mismatch');
+  const hidden = await runCoreOperation('manageSnapshot');
+  assert.equal(hidden.account.currentDisplay, 'n***@example.com');
+  assert.deepEqual(hidden.cards, []);
+  assert.deepEqual(await runCoreOperation('listCards'), []);
+  assert.equal(await runCoreOperation('getCard', { cardId: 'old-card' }), null);
   let rateLimitCalls = 0;
   await assert.rejects(syncCards(configPath, {
     accountGuard: () => requireAccount(configPath, { appServer: account('new@example.com') }),
@@ -71,6 +77,7 @@ test('switch and network failure remain distinct and block merge or official use
   const restored = await checkAccount(configPath, { appServer: account('old@example.com') });
   assert.equal(restored.state, 'verified');
   assert.equal(restored.scopeId, scope);
+  assert.equal((await runCoreOperation('manageSnapshot')).cards[0].id, 'old-card');
 });
 
 test('a switch between Usage read and cache write cannot merge the new account', async () => {
