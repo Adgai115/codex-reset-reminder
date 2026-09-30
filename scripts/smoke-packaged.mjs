@@ -390,6 +390,22 @@ try {
       second.cards.find(card => card.creditId === activeCardId).id, '相同官方卡号按账号隔离');
     await evaluate(manage, `const choose=document.querySelector('#account-select');choose.value=${JSON.stringify(firstId)};choose.dispatchEvent(new Event('change'));true`);
     await until(manage, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '不用切换 CLI 即可查看旧账号');
+    await until(manage, `!document.querySelector('#sync').disabled`, '所选账号刷新完成');
+    const recordsBefore = await evaluate(manage, `Promise.all([
+      window.api.core('manageSnapshot',{scopeId:${JSON.stringify(firstId)}}),
+      window.api.core('manageSnapshot',{scopeId:${JSON.stringify(secondId)}})
+    ]).then(rows=>rows.map(row=>row.syncHistory.length))`);
+    await evaluate(manage, `document.querySelector('#check-account').click();true`);
+    await until(manage, `!document.querySelector('#sync').disabled`, '所选账号手动核对完成');
+    const recordsAfter = await evaluate(manage, `Promise.all([
+      window.api.core('manageSnapshot',{scopeId:${JSON.stringify(firstId)}}),
+      window.api.core('manageSnapshot',{scopeId:${JSON.stringify(secondId)}})
+    ]).then(rows=>rows.map(row=>({scopeId:row.account.scopeId,history:row.syncHistory.length})))`);
+    assert.ok(recordsAfter[0].history > recordsBefore[0], '手动核对必须同步所选账号');
+    assert.equal(recordsAfter[1].history, recordsBefore[1], '手动核对不能同步另一个 CLI 账号');
+    const checkedAccount = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(checkedAccount.account.scopeId, firstId);
+    assert.equal(checkedAccount.account.state, 'verified', '手动核对旧账号必须保持真实连接状态');
     await evaluate(manage, `document.querySelector('#sync-view').click();true`);
     await until(manage, `document.querySelector('#records tbody').textContent.includes('已同步')`, '当前账号同步记录');
     await screenshot(manage, 'accounts-sync-history');
@@ -399,6 +415,16 @@ try {
     await screenshot(manage, 'accounts-reminder-history');
     await evaluate(manage, `document.querySelector('#manage-accounts').click();true`);
     await until(manage, `document.querySelectorAll('.account-row').length === 2`, '账号管理列表');
+    const locked = await evaluate(manage, `(()=>{
+      const field=[...document.querySelectorAll('.account-name input')].find(el=>el.dataset.scope===${JSON.stringify(firstId)});
+      field.value='Smoke Personal';field.dispatchEvent(new Event('change'));
+      return [...document.querySelectorAll('#account-list input')].every(el=>el.disabled);
+    })()`);
+    assert.equal(locked, true, '账号保存期间必须锁定昵称和提醒开关');
+    await until(manage, `!document.querySelector('#sync').disabled`, '账号昵称保存完成');
+    const namedAccount = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(namedAccount.account.nickname, 'Smoke Personal');
+    assert.equal(namedAccount.account.state, 'verified', '保存昵称不应使已连接账号失联');
     await screenshot(manage, 'accounts-manager');
     await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#cards-view').click();true`);
     await rm(join(accountA, 'mock-usage.json'));

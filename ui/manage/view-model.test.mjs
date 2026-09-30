@@ -45,3 +45,18 @@ test('同步失败保留完整核对时间，旧数据和同步中的状态可�
   assert.match(syncDescription({ latest: { outcome: 'complete', checkedAt: 100, availableCount: 2 } }, 86501), /超过 24 小时/);
   assert.match(syncDescription({ syncing: true }), /正在同步/);
 });
+
+test('需登录账号的缓存和暂停提醒不会显示为正在自动恢复或待发送', () => {
+  const snapshot = { account: { state: 'loginRequired' },
+    confirmed: { checkedAt: 100 }, latest: { outcome: 'complete', checkedAt: 100 } };
+  assert.equal(syncSummary(snapshot), '缓存 · 登录后同步');
+  assert.equal(automationSummary(snapshot), '登录后恢复自动同步');
+  assert.match(syncDescription(snapshot), /显示此账号缓存/);
+  const card = { status: 'available', expiresAt: 10000, plan: { dueAt: 50, dueKind: '1d' } };
+  assert.equal(nextReminder(card, ['desktop'], 100, snapshot.account), '登录后恢复提醒');
+  const paused = { state: 'verified', independent: true, remindersEnabled: false };
+  assert.equal(nextReminder(card, ['desktop'], 100, paused), '此账号提醒已暂停');
+  assert.equal(nextReminder(card, ['desktop'], 10001, paused), '不再提醒');
+  assert.equal(accountSummary(paused), '已连接 · 提醒暂停');
+  assert.match(automationSummary({ account: paused }), /自动同步.*提醒已暂停/);
+});

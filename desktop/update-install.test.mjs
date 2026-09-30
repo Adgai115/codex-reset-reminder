@@ -55,3 +55,50 @@ test('current or older releases never enter the install flow', async () => {
   assert.equal((await flow.check()).state, 'current');
   assert.equal(fake.downloaded, 0);
 });
+
+test('rechecking a verified download keeps it installable, including while offline', async () => {
+  const fake = new FakeUpdater();
+  const flow = createWindowsUpdater({ updater: fake, currentVersion: '2.0.2' });
+  await flow.check();
+  await flow.download('2.0.3');
+  assert.equal((await flow.check()).phase, 'ready');
+  fake.checkForUpdates = async () => { throw new Error('模拟离线'); };
+  assert.equal((await flow.check()).canInstall, true);
+  assert.equal(flow.status().phase, 'ready');
+  assert.equal(fake.downloaded, 1);
+  flow.install('2.0.3');
+  assert.equal(fake.installed, 1);
+  await assert.rejects(flow.check(), /升级正在启动/);
+});
+
+test('a newer release requires its own verified download', async () => {
+  const fake = new FakeUpdater();
+  const flow = createWindowsUpdater({ updater: fake, currentVersion: '2.0.2' });
+  await flow.check();
+  await flow.download('2.0.3');
+  fake.version = '2.0.4';
+  await flow.check();
+  assert.equal(flow.status().phase, 'available');
+  assert.throws(() => flow.install('2.0.3'), /先完成下载/);
+  assert.throws(() => flow.install('2.0.4'), /先完成下载/);
+});
+
+test('installer launch failures preserve the download and permit explicit retry', async () => {
+  const fake = new FakeUpdater();
+  const flow = createWindowsUpdater({ updater: fake, currentVersion: '2.0.2' });
+  await flow.check();
+  await flow.download('2.0.3');
+  fake.quitAndInstall = () => { throw new Error('模拟启动失败'); };
+  assert.throws(() => flow.install('2.0.3'), /模拟启动失败/);
+  assert.equal(flow.status().phase, 'ready');
+  fake.quitAndInstall = () => fake.emit('error', new Error('模拟安装错误'));
+  assert.throws(() => flow.install('2.0.3'), /升级未开始/);
+  assert.equal(flow.status().phase, 'ready');
+  fake.quitAndInstall = () => fake.installed++;
+  flow.install('2.0.3');
+  fake.emit('error', new Error('模拟异步错误'));
+  assert.equal(flow.status().phase, 'ready');
+  assert.equal(fake.downloaded, 1);
+  flow.install('2.0.3');
+  assert.equal(fake.installed, 2);
+});

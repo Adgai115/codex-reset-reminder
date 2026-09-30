@@ -22,6 +22,7 @@ function render(next) {
   $('heading').textContent = next.simulated ? 'Codex 测试提醒'
     : card.reviewOnly && card.accountReady === false ? 'Codex 重置卡 · 缓存' : 'Codex 重置卡';
   $('account').textContent = card.accountDisplay || next.accountDisplay || (next.simulated ? '演示账号' : '账号待核对');
+  $('account').title = $('account').textContent;
   const index = next.cards.findIndex((item) => item.creditId === card.creditId);
   $('pager').hidden = next.cards.length < 2;
   $('position').textContent = `${index + 1} / ${next.cards.length}`;
@@ -67,6 +68,8 @@ async function act(action, args = {}) {
     else if (result?.outcome === 'nothingToReset') feedback('当前没有可重置的额度，卡片未消耗');
     else if (result?.outcome === 'noCredit') feedback('Codex 未找到可用的重置卡，请刷新列表', true);
     else if (result?.outcome === 'reset' || result?.outcome === 'alreadyRedeemed') feedback('Codex 已确认重置');
+    else if (result?.outcome === 'blocked') feedback(`未发起重置：${result.message}`, true);
+    else if (result?.outcome === 'unconfirmed') feedback(`结果未确认：${result.message}；请先核对 Codex，勿连续重试`, true);
     else feedback('');
   } catch (error) { feedback(action === 'reset'
     ? `结果未确认：${error.message}；请先核对 Codex，勿连续重试` : error.message, true); }

@@ -13,6 +13,7 @@ import { pendingReminder } from '../core/pending-reminders.mjs';
 import { handleCardAction } from '../core/card-actions.mjs';
 import { consumeCredit, refreshCreditStatus } from '../legacy/node/consume.mjs';
 import { accountStatus, checkAccount, requireAccount, requireCardInScope } from './account-guard.mjs';
+import { accountDisplayLabels } from '../core/account-labels.mjs';
 import { resetCardFromReminder } from './reset-card.mjs';
 import { callAppServer } from '../legacy/node/check.mjs';
 import { readFile } from 'node:fs/promises';
@@ -70,6 +71,31 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     }
   };
   const accountForCard = (id) => readDb((db) => store.getCard(db, id)?.accountScopeId || null);
+  const enabledScopes = () => scopes().filter((scope) => scope.remindersEnabled
+    && (!args.scopeId || scope.scopeId === args.scopeId));
+  const preflightScope = (scope) => preflightSync({ configPath: configPath(),
+    sync: (path, options) => protectedSync(path, { ...options, accountScopeId: scope.scopeId }),
+    ...args, accountScopeId: scope.scopeId });
+  const remindScope = async (scope) => {
+    const accountReady = accounts ? await profileExists(scope.scopeId) : true;
+    return runReminders({ configPath: configPath(), desktop: desktop && ((payload) => desktop({ ...payload,
+      cards: (payload.cards || [payload]).map((card) => ({ ...card, accountReady })) })),
+      trackAttempts: true, batchDesktop: true, ...args, allowCodex: true,
+      accountScopeId: scope.scopeId, verifyScope: () => {
+        if (!readDb((db) => store.getAccountScope(db, scope.scopeId)?.remindersEnabled))
+          throw new Error('此账号提醒已暂停');
+        return verifiedScope(scope.scopeId);
+      } });
+  };
+  const snapshotInputs = async () => {
+    const accountScopes = scopes();
+    const [config, profiles] = await Promise.all([
+      readFile(configPath(), 'utf8').then(JSON.parse),
+      Promise.all(accountScopes.map(async (scope) => [scope.scopeId, await profileExists(scope.scopeId)])),
+    ]);
+    return { accountScopes, config, scopeProfiles: new Map(profiles),
+      labels: accountDisplayLabels(accountScopes), cards: readDb((db) => store.listCards(db, true)) };
+  };
   const consumeForCard = async (id, key) => {
     const scopeId = accountForCard(id);
     if (accounts && !(await profileExists(scopeId))) {
@@ -92,14 +118,18 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     return protectedSync(configPath(), { accountScopeId: id });
   }
   if (op === 'syncAllAccounts') {
-    const current = await discoverCurrent();
+    const knownScopes = scopes();
+    const discovering = discoverCurrent();
     const results = [];
     const now = Math.floor(Date.now() / 1000);
-    await Promise.all(scopes().map(async (scope) => {
+    const synchronize = async (scope) => {
       if (!args.force && scope.nextSyncAt > now) return;
       try { results.push({ scopeId: scope.scopeId, ...await protectedSync(configPath(), { accountScopeId: scope.scopeId }) }); }
       catch { results.push({ scopeId: scope.scopeId, complete: false, error: '账号同步失败' }); }
-    }));
+    };
+    const synchronizing = Promise.all(knownScopes.map(synchronize));
+    const current = await discovering;
+    await Promise.all([synchronizing, ...scopes().filter((scope) => !knownScopes.some((known) => known.scopeId === scope.scopeId)).map(synchronize)]);
     const nextSyncAt = Math.min(...scopes().map((scope) => scope.nextSyncAt || now + 60));
     return { complete: results.length ? results.every((result) => result.complete) : current.state === 'verified',
       accounts: results, nextSyncAt: Number.isFinite(nextSyncAt) ? nextSyncAt : now + 60 };
@@ -107,37 +137,39 @@ export async function runCoreOperation(op, args = {}, context = {}) {
   if (op === 'completeAccountLogin') {
     const appServer = (script) => accounts('loginRequest', { loginToken: args.loginToken, script });
     const status = await checkAccount(configPath(), { appServer,
+      beforeConfirm: (binding) => accounts('loginRequest', { loginToken: args.loginToken, binding }),
       ...(args.expectedScopeId ? { expectedScopeId: args.expectedScopeId, activate: false } : {}) });
     if (status.state !== 'verified') throw new Error('登录的账号与所选账号不匹配');
-    const binding = readDb((db) => store.getAccountScope(db, status.scopeId));
-    await accounts('loginRequest', { loginToken: args.loginToken, binding });
     return status;
   }
+  if (op === 'checkReminders') {
+    // 每个账号独立执行核验、提醒前同步和发送；慢账号不占用其他账号的发送机会。
+    const results = await Promise.all(enabledScopes().map(async (scope) => {
+      try {
+        if (readDb((db) => store.listDueUsageVerifications(db,
+          Math.floor(Date.now() / 1000), 600, scope.scopeId)).length) {
+          try { await protectedSync(configPath(), { accountScopeId: scope.scopeId }); }
+          catch { /* 继续按账号身份核对和缓存提醒规则处理。 */ }
+        }
+        await verifiedScope(scope.scopeId);
+        await preflightScope(scope);
+        return await remindScope(scope);
+      } catch { return { accountScopeId: scope.scopeId, due: [], unavailable: true }; }
+    }));
+    return { due: results.flatMap((result) => result.due), accounts: results };
+  }
   if (op === 'runReminders') {
-    const results = [];
-    for (const scope of scopes().filter((scope) => scope.remindersEnabled)) {
-      try { await verifiedScope(scope.scopeId); }
-      catch { continue; }
-      const accountReady = accounts ? await profileExists(scope.scopeId) : true;
-      results.push(await runReminders({ configPath: configPath(), desktop: desktop && ((payload) => desktop({ ...payload,
-        cards: (payload.cards || [payload]).map((card) => ({ ...card, accountReady })) })),
-        trackAttempts: true, batchDesktop: true, ...args, allowCodex: true,
-        accountScopeId: scope.scopeId, verifyScope: () => {
-          if (!readDb((db) => store.getAccountScope(db, scope.scopeId)?.remindersEnabled))
-            throw new Error('此账号提醒已暂停');
-          return verifiedScope(scope.scopeId);
-        } }));
-    }
+    const results = await Promise.all(enabledScopes().map(async (scope) => {
+      try { await verifiedScope(scope.scopeId); return await remindScope(scope); }
+      catch { return { accountScopeId: scope.scopeId, due: [], unavailable: true }; }
+    }));
     return { due: results.flatMap((result) => result.due), accounts: results };
   }
   if (op === 'preflightSync') {
-    const results = [];
-    for (const scope of scopes().filter((scope) => scope.remindersEnabled)) {
-      const accountScopeId = await verifiedScope(scope.scopeId).catch(() => null);
-      if (!accountScopeId) continue;
-      results.push(await preflightSync({ configPath: configPath(),
-        sync: (path, options) => protectedSync(path, { ...options, accountScopeId }), accountScopeId, ...args }));
-    }
+    const results = await Promise.all(enabledScopes().map(async (scope) => {
+      try { await verifiedScope(scope.scopeId); return await preflightScope(scope); }
+      catch { return { attempted: false, reason: 'account_unavailable', accountScopeId: scope.scopeId }; }
+    }));
     return { attempted: results.some((result) => result.attempted), accounts: results };
   }
   if (op === 'handleCardAction') {
@@ -164,7 +196,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
       && (!args.cardId || card.id === args.cardId)).map((card) => ({
       creditId: card.id, originalCreditId: card.creditId, accountScopeId: card.accountScopeId,
       reviewOnly: true,
-      accountDisplay: card.accountDisplay || snapshot.account.boundDisplay,
+      accountDisplay: card.accountDisplay || snapshot.account.displayLabel || snapshot.account.boundDisplay,
       accountReady: card.accountReady ?? (snapshot.account.state === 'verified'
         && (!accounts || snapshot.account.independent)),
       cardName: card.title, source: card.source, expiresAt: card.expiresAt,
@@ -174,31 +206,30 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     })) };
   }
   if (op === 'allAccountsSnapshot') {
-    const snapshots = [];
-    for (const scope of scopes()) snapshots.push(await recurse('manageSnapshot', { scopeId: scope.scopeId }));
+    const snapshotBatch = await snapshotInputs();
+    const snapshots = await Promise.all(snapshotBatch.accountScopes.map((scope) => runCoreOperation(
+      'manageSnapshot', { scopeId: scope.scopeId }, { ...context, snapshotBatch })));
     return { account: { state: 'verified', boundDisplay: null }, accounts: snapshots.map((snapshot) => snapshot.account),
       cards: snapshots.flatMap((snapshot) => snapshot.cards.map((card) => ({ ...card,
-        accountDisplay: snapshot.account.nickname || snapshot.account.boundDisplay,
+        accountDisplay: snapshot.account.displayLabel || snapshot.account.boundDisplay,
         accountReady: snapshot.account.state === 'verified' && snapshot.account.remindersEnabled
           && (!accounts || snapshot.account.independent) }))) };
   }
 
-  const scopeProfiles = new Map();
-  if (op === 'manageSnapshot') {
-    for (const scope of scopes()) scopeProfiles.set(scope.scopeId, await profileExists(scope.scopeId));
-  }
+  const snapshotBatch = op === 'manageSnapshot' ? context.snapshotBatch || await snapshotInputs() : null;
 
   const db = store.openStore();
   try {
     switch (op) {
       case 'manageSnapshot': {
         // 一次读取列表与提醒计划，界面沿用核心规则，不另算一套到期节点。
-        const config = JSON.parse(await readFile(configPath(), 'utf8'));
+        const { config, scopeProfiles, accountScopes, labels, cards } = snapshotBatch;
         const channels = enabledChannels(config);
         const nowSeconds = Math.floor(Date.now() / 1000);
         const selected = args.scopeId ? store.getAccountScope(db, args.scopeId) : store.getActiveAccountScope(db);
         if (args.scopeId && !selected) throw new Error('账号不存在');
         const describe = (scope) => ({ ...accountStatus(db, scope.scopeId),
+          displayLabel: labels.get(scope.scopeId), boundDisplay: labels.get(scope.scopeId),
           nickname: scope.nickname, remindersEnabled: Boolean(scope.remindersEnabled),
           nextSyncAt: scope.nextSyncAt, recovering: scope.syncFailures > 0,
           currentCli: scope.scopeId === store.currentCliScopeId(db),
@@ -226,9 +257,9 @@ export async function runCoreOperation(op, args = {}, context = {}) {
         };
         return { channels, latest: boundScopeId || legacyUnbound
           ? store.latestSync(db, boundScopeId) : null,
-          confirmed, account, syncing: syncingAccounts.has(boundScopeId), accounts: store.listAccountScopes(db).map(describe),
+          confirmed, account, syncing: syncingAccounts.has(boundScopeId), accounts: accountScopes.map(describe),
           syncHistory: boundScopeId ? store.listSyncHistory(db, boundScopeId) : [],
-          cards: store.listCards(db, true).filter((card) => card.source === 'codex'
+          cards: cards.filter((card) => card.source === 'codex'
             && (legacyUnbound ? card.accountScopeId === null : card.accountScopeId === boundScopeId)).map((card) => {
             const snooze = store.getSnooze(db, card.id);
             const results = store.listReminderResults(db, card.id);

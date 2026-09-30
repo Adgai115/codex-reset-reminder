@@ -18,6 +18,10 @@ export function createWindowsUpdater({ updater, currentVersion, emit = () => {} 
   });
   updater.on('error', (error) => {
     if (busy) return; // the awaited operation reports its own error
+    if (state.phase === 'installing') {
+      setState({ phase: 'ready', message: '升级未开始，可重试' });
+      return;
+    }
     setState({ phase: 'error', message: `更新失败：${error.message}` });
   });
 
@@ -25,6 +29,8 @@ export function createWindowsUpdater({ updater, currentVersion, emit = () => {} 
     status: () => ({ ...state }),
     async check() {
       if (busy) throw new Error('更新操作正在进行');
+      if (state.phase === 'installing') throw new Error('升级正在启动');
+      const downloaded = state.phase === 'ready' ? { ...state } : null;
       busy = true;
       setState({ phase: 'checking', version: null, percent: null, message: '正在检查更新…' });
       try {
@@ -36,10 +42,20 @@ export function createWindowsUpdater({ updater, currentVersion, emit = () => {} 
           setState({ phase: 'current', message: `当前已是最新版本（${currentVersion}）` });
           return { state: 'current', currentVersion, latestVersion: `v${version}`, message: state.message };
         }
+        if (downloaded?.version === version) {
+          setState(downloaded);
+          return { state: 'available', phase: 'ready', currentVersion, latestVersion: `v${version}`,
+            canInstall: true, message: state.message };
+        }
         setState({ phase: 'available', version, message: `发现新版本 v${version}` });
         return { state: 'available', currentVersion, latestVersion: `v${version}`,
           canInstall: true, message: state.message };
       } catch (error) {
+        if (downloaded) {
+          setState({ ...downloaded, message: `检查失败；v${downloaded.version} 已下载，可升级` });
+          return { state: 'available', phase: 'ready', currentVersion,
+            latestVersion: `v${downloaded.version}`, canInstall: true, message: state.message };
+        }
         setState({ phase: 'error', message: `检查失败：${error.message}` });
         throw error;
       } finally { busy = false; }
@@ -62,8 +78,13 @@ export function createWindowsUpdater({ updater, currentVersion, emit = () => {} 
         throw new Error('请先完成下载和校验');
       }
       setState({ phase: 'installing', message: '正在启动原位升级…' });
-      updater.quitAndInstall(true, true);
-      if (state.phase === 'error') throw new Error(state.message);
+      try {
+        updater.quitAndInstall(true, true);
+        if (state.phase !== 'installing') throw new Error(state.message);
+      } catch (error) {
+        setState({ phase: 'ready', message: '升级未开始，可重试' });
+        throw error;
+      }
     },
   };
 }
