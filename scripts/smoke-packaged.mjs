@@ -137,14 +137,43 @@ async function checkCompactLayout(tab) {
           tableScrolls: table.scrollWidth > table.clientWidth,
           oneLine: [...document.querySelectorAll('.card-name, .time, .badge, button, select')]
             .every(element => getComputedStyle(element).whiteSpace === 'nowrap'),
-          actionsFit: [...document.querySelectorAll('.actions select')].every(element =>
+          actionsFit: [...document.querySelectorAll('.actions select, .actions button')].every(element =>
             element.getBoundingClientRect().right <= element.closest('td').getBoundingClientRect().right - 5),
           toolbarFits: document.querySelector('.toolbar').getBoundingClientRect().right <= window.innerWidth,
         };
       })()`, send);
-      assert.deepEqual(layout, { viewportWidth: width, pageFits: true, tableScrolls: width === 800, oneLine: true, actionsFit: true, toolbarFits: true });
+      assert.deepEqual(layout, { viewportWidth: width, pageFits: true, tableScrolls: false, oneLine: true, actionsFit: true, toolbarFits: true });
       await screenshot(tab, `manage-${width}`, send);
     }
+    await send('Emulation.clearDeviceMetricsOverride');
+  });
+}
+
+async function checkWindowPresentation(tab, kind, sizes) {
+  await debuggerSession(tab, async (send) => {
+    for (const mode of ['light', 'dark']) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode }] });
+      for (const [width, height] of sizes) {
+        await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+        const layout = await evaluate(tab, `(() => {
+          const visible = [...document.querySelectorAll('button, select, input')].filter(element => element.checkVisibility());
+          return {
+            pageFits: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
+            controlsFit: visible.every(element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }),
+            actionFits: document.querySelector('#${kind === 'setup' ? 'connect' : kind === 'settings' ? 'save' : 'reset'}').getBoundingClientRect().bottom <= innerHeight,
+            theme: getComputedStyle(document.body).backgroundColor,
+          };
+        })()`, send);
+        assert.deepEqual(layout, { pageFits: true, controlsFit: true, actionFits: true,
+          theme: mode === 'dark' ? kind === 'reminder' ? 'rgb(32, 39, 52)' : 'rgb(23, 28, 37)'
+            : kind === 'reminder' ? 'rgb(255, 255, 255)' : 'rgb(245, 247, 251)' });
+        if (kind === 'settings') assert.equal(await evaluate(tab,
+          `document.querySelector('main').scrollHeight <= document.querySelector('main').clientHeight`, send), true,
+        '设置默认内容应完整显示');
+        await screenshot(tab, `${kind}-${mode}-${width}`, send);
+      }
+    }
+    await send('Emulation.setEmulatedMedia', { features: [] });
     await send('Emulation.clearDeviceMetricsOverride');
   });
 }
@@ -269,6 +298,15 @@ try {
         ] }, now - 200, scopeId);
         markCardUsed(db, 'RateLimitResetCredit_ciUsed');
         saveCodexSnapshot(db, { availableCount: 2, credits: active }, now - 100, scopeId);
+        // 只写隔离数据库的历史结果，覆盖多渠道窄窗口；不调用任何真实发送器。
+        const node = { cardId: 'RateLimitResetCredit_ciNear', expiresAt: active[1].expiresAt,
+          nodeKind: 'fixed', nodeAt: active[1].expiresAt - 86400, thresholdDays: 1 };
+        if (!accountsOnly && !recoveryOnly) {
+          for (const channel of ['desktop', 'feishu', 'wechat']) recordReminderResult(db, node, channel, {
+            state: channel === 'feishu' ? 'failed' : 'sent', attemptedAt: now - 50,
+            errorText: channel === 'feishu' ? '模拟渠道失败；完整原因通过键盘打开详情查看。'.repeat(8) : null,
+          });
+        }
       }
       addManualCard(db, { title: 'CI 旧手动记录', expiresAt: now + 86400 });
     }
@@ -348,6 +386,7 @@ try {
     assert.ok(setupState.bridge, '首次安装窗口 preload 没有加载');
     assert.match(setupState.title, /安装与连接/);
     assert.equal(await evaluate(setup, `document.querySelector('#connection-help').open`), false);
+    await checkWindowPresentation(setup, 'setup', [[560, 480]]);
     await screenshot(setup, 'setup-clean');
     console.log('首次安装窗口已加载，检查 Codex 诊断按钮');
     const probe = await evaluate(setup,
@@ -619,28 +658,29 @@ try {
     const initial = await evaluate(manage, `({
       account: document.querySelector('#account-info').dataset.state,
       retry: Array.from(document.querySelectorAll('#cards tbody button')).some(button => button.textContent === '重试失败渠道' && !button.disabled),
-      error: document.querySelector('#cards tbody').textContent.includes('桌面弹窗失败')
+      error: [...document.querySelectorAll('.delivery-summary')].some(line => line.title.includes('桌面弹窗失败'))
     })`);
     assert.equal(initial.account, 'verified');
     assert.equal(initial.retry, true);
     assert.equal(initial.error, true);
     await screenshot(manage, 'p0-waiting');
-    await evaluate(manage, `document.querySelector('.delivery-details').open = true; true`);
-    await until(manage, `document.querySelector('.delivery-details').open`, '可展开完整发送记录');
-    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').textContent.includes('展开详情可查看完整原因')`), true);
+    await evaluate(manage, `document.querySelector('.card-details').click(); true`);
+    await until(manage, `document.querySelector('#detail-dialog').open`, '可查看完整发送记录');
+    assert.equal(await evaluate(manage, `document.querySelector('#detail-body').textContent.includes('展开详情可查看完整原因')`), true);
     await screenshot(manage, 'p0-details');
     await rm(accountFile);
-    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    // 模拟后台核对：详情打开时用户无需关闭它即可收到账号和发送状态更新。
+    await evaluate(manage, `window.api.core('checkAccount')`);
     await until(manage, `document.querySelector('#account-info').dataset.state === 'unavailable'
       && document.querySelector('#account-status').checkVisibility()`, '账号异常保留可见提示');
     assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道')`), false);
     await writeFile(accountFile, JSON.stringify(mockAccount));
-    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    await evaluate(manage, `window.api.core('checkAccount')`);
     await until(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道' && !button.disabled)`, '账号恢复后可重试');
-    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').open`), true, '自动刷新保留展开状态');
-    await evaluate(manage, `document.querySelector('.delivery-details').open = false; true`);
+    assert.equal(await evaluate(manage, `document.querySelector('#detail-dialog').open`), true, '自动刷新保留详情');
+    await evaluate(manage, `document.querySelector('#close-detail').click(); true`);
     const progress = await evaluate(manage, `(() => {
       const button = Array.from(document.querySelectorAll('#cards tbody button'))
         .find(item => item.textContent === '重试失败渠道');
@@ -693,7 +733,7 @@ try {
     accountDetailVisible: document.querySelector('#account-detail').checkVisibility(),
     footerCopy: Boolean(document.querySelector('.footnote')),
     firstCardVisible: document.querySelector('.card-name').checkVisibility(),
-    expiryVisible: document.querySelector('td.time').checkVisibility()
+    expiryVisible: document.querySelector('.expiry-time').checkVisibility()
   })`), { automationVisible: false, accountDetailVisible: false, footerCopy: false, firstCardVisible: true, expiryVisible: true });
   const blocked = await evaluate(manage, `(async () => {
     const errors = [];
@@ -706,6 +746,15 @@ try {
   assert.equal(blocked.length, 4);
   assert.ok(blocked.every(message => message.includes('不允许的页面操作')));
   await checkCompactLayout(manage);
+  await evaluate(manage, `[...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === '${activeCardId}').click(); true`);
+  await until(manage, `document.querySelector('#detail-dialog').open`, '完整卡片详情');
+  assert.equal(await evaluate(manage, `document.querySelector('#detail-body').textContent.includes('${activeCardId}')`), true);
+  // 用后台状态事件刷新真实 renderer；关闭后焦点应回到新 DOM 中同一卡片入口。
+  await evaluate(manage, `window.__detailOpener = [...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === '${activeCardId}');
+    window.dispatchEvent(new Event('focus')); true`);
+  await until(manage, `!window.__detailOpener.isConnected && document.querySelector('#detail-dialog').open`, '刷新后详情保留');
+  await evaluate(manage, `document.querySelector('#close-detail').click(); true`);
+  await until(manage, `document.activeElement?.dataset.cardId === '${activeCardId}'`, '详情关闭后键盘焦点恢复');
   await evaluate(manage, `(() => {
     const select = Array.from(document.querySelectorAll('#cards tbody tr'))
       .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('select');
@@ -774,6 +823,7 @@ try {
   })`), { diagnosticsVisible: false, listenerVisible: false, versionVisible: false,
     channelsVisible: true, quietVisible: true, saveVisible: true });
   await screenshot(settingsTab, 'settings-clean');
+  await checkWindowPresentation(settingsTab, 'settings', [[660, 700], [560, 500]]);
   await evaluate(settingsTab, `document.querySelector('#feishu-state').click(); true`);
   assert.equal(await evaluate(settingsTab, `document.querySelector('#feishu-connection').open`), true, '连接状态入口应展开对应设置');
   await evaluate(settingsTab, `document.querySelector('#feishu-connection').open = false;
@@ -811,6 +861,7 @@ try {
   } while (Date.now() < deadline);
   assert.match(reminder.name, /演示重置卡/);
   assert.match(reminder.expiry, /到期/);
+  await checkWindowPresentation(reminderTab, 'reminder', [[420, 230]]);
   assert.deepEqual(await evaluate(reminderTab, `({
     accountVisible: document.querySelector('#account').textContent === '演示账号',
     resetDisabled: document.querySelector('#reset').disabled,
