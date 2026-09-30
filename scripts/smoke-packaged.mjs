@@ -448,6 +448,11 @@ try {
     await until(reminder, `document.querySelector('#pager').hidden
       && document.querySelector('#name').textContent.includes('CI 合并提醒 3')`, '官方不可用卡从弹窗移除');
     await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 1'`, '自动清理失效待处理');
+    const firstAccountUsage = await readFile(join(profile, 'mock-usage.json'), 'utf8');
+    await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
+      availableCount: 1, credits: [{ id: 'RateLimitResetCredit_secondAccount',
+        title: 'CI 第二账号卡', status: 'available', expiresAt: Math.floor(Date.now() / 1000) + 8 * 86400 }],
+    } }));
     await writeFile(accountFile, JSON.stringify({ ...mockAccount, account: { type: 'chatgpt', email: 'different@example.invalid' } }));
     await evaluate(manage, `(() => {
       const clock = Date.now;
@@ -456,21 +461,25 @@ try {
       Date.now = clock;
       return true;
     })()`);
-    await until(manage, `document.querySelector('#account-info').dataset.state === 'mismatch'
-      && document.querySelector('#cards tbody').children.length === 0`, '换号后隐藏原账号卡');
-    assert.match(await evaluate(manage, `document.querySelector('#account-status').textContent`), /当前 d\*\*\*@example.invalid/);
-    assert.match(await evaluate(manage, `document.querySelector('#empty').textContent`), /原账号卡已隐藏/);
+    await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'
+      && document.querySelector('#cards tbody').textContent.includes('CI 第二账号卡')
+      && !document.querySelector('#cards tbody').textContent.includes('CI 合并提醒')`, '换号后自动同步第二账号卡');
+    assert.match(await evaluate(manage, `document.querySelector('#account-status').textContent`), /d\*\*\*@example.invalid/);
+    assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 0);
     await untilClosed(port, '/ui/reminder/index.html');
-    assert.match(await evaluate(manage, `window.api.openPendingReminders().then(() => 'unexpected', error => error.message)`), /账号不一致/);
-    assert.equal((await reminderTabs()).length, 0, '换号时不可重新展示旧账号待处理');
+    assert.equal(await evaluate(manage, `window.api.openPendingReminders()`), 0);
+    assert.equal((await reminderTabs()).length, 0, '第二账号不可重新展示第一账号待处理');
+    await writeFile(join(profile, 'mock-usage.json'), firstAccountUsage);
     await writeFile(accountFile, JSON.stringify(mockAccount));
     await evaluate(manage, `window.api.core('checkAccount')`);
-    await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'`, '恢复原账号');
+    await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'
+      && document.querySelector('#cards tbody').textContent.includes('CI 合并提醒 3')
+      && !document.querySelector('#cards tbody').textContent.includes('CI 第二账号卡')`, '恢复原账号卡');
     await evaluate(manage, `window.api.openPendingReminders()`);
     reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
     await until(reminder, `document.querySelector('#name')?.textContent.includes('CI 合并提醒 3')`, '剩余待处理仍可找回');
     await screenshot(reminder, 'pending-restored');
-    console.log('合并、独立延期、重启和账号保护通过；等待实际 90 秒自动收起，核对待处理不会丢失');
+    console.log('合并、独立延期、重启和多账号切换通过；等待实际 90 秒自动收起，核对待处理不会丢失');
     await untilClosed(port, '/ui/reminder/index.html', 100000);
     const after = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.equal(after.cards.filter((card) => card.pendingReminder).length, 1, JSON.stringify(after));

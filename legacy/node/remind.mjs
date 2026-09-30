@@ -17,7 +17,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   configPath = join(directory, '..', '..', 'config.json'), desktop = showNotification,
   feishu = sendFeishuReminder, wechat = sendWechatReminder, dryRun = false,
   trackAttempts = false, manualRetry = null, allowCodex = true, accountScopeId = null,
-  batchDesktop = false } = {}) {
+  batchDesktop = false, verifyScope = null } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
@@ -72,7 +72,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     };
     // 旧版手动记录保留在数据库中，但不代表官方额度，也不参与提醒。
     const cards = listCards(db).filter((card) => card.source === 'codex');
-    const lastCompleteSync = latestCompleteSync(db);
+    const lastCompleteSync = latestCompleteSync(db, accountScopeId);
     const syncedCount = lastCompleteSync?.availableCount ?? null;
     const syncedAt = lastCompleteSync?.checkedAt ?? null;
     for (const card of cards) {
@@ -96,6 +96,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         result.feishu = 'due';
         if (!dryRun) {
           try {
+            if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
             begin(node, 'feishu');
             const sent = await feishu(config, card, days, { currentAvailableCount: syncedCount, syncedAt, accountDisplay });
             if (sent?.messageId && config.feishu.userId) {
@@ -112,6 +113,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         result.wechat = 'due';
         if (!dryRun) {
           try {
+            if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
             begin(node, 'wechat');
             await wechat(config, card, days, { currentAvailableCount: syncedCount });
             recordDelivery(db, card.id, card.expiresAt, days, 'wechat');
@@ -158,6 +160,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       if (channels.includes('feishu') && !snooze.feishuDeliveredAt && !dryRun
         && maySend(node, 'feishu')) {
         try {
+          if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
           begin(node, 'feishu');
           const sent = await feishu(config, card, remainingDays,
             { currentAvailableCount: syncedCount, syncedAt, snoozeTargetAt: snooze.targetAt, accountDisplay });
@@ -173,6 +176,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       if (channels.includes('wechat') && !snooze.wechatDeliveredAt && !dryRun
         && maySend(node, 'wechat')) {
         try {
+          if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
           begin(node, 'wechat');
           await wechat(config, card, remainingDays,
             { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt });
@@ -190,6 +194,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
       results.push(result);
     }
     if (desktopJobs.length) {
+      if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
       // 其他渠道发送期间，用户可能已延期、用卡或关闭提醒。批次提交前重新核对。
       const latestConfig = JSON.parse(await readFile(configPath, 'utf8'));
       const batchNow = nowSeconds + Math.floor((Date.now() - startedAt) / 1000);
@@ -221,7 +226,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         for (const job of eligible) job.result.desktop = saveResult(job.node, 'desktop', 'failed', error);
       }
     }
-    return { checkedAt: new Date(nowSeconds * 1000).toISOString(), latestSync: latestSync(db),
+    return { checkedAt: new Date(nowSeconds * 1000).toISOString(), latestSync: latestSync(db, accountScopeId),
       cachedCards: cards.length, due: results };
   } finally { db.close(); }
 }

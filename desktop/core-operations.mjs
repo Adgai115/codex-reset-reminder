@@ -39,11 +39,14 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
       if (await verifiedScope() !== accountScopeId) throw new Error('账号已变更，暂停桌面提醒');
       return desktop({ ...payload, accountDisplay: currentAccountDisplay() });
     }), trackAttempts: true, batchDesktop: true,
-      ...args, allowCodex: Boolean(accountScopeId), accountScopeId });
+      ...args, allowCodex: Boolean(accountScopeId), accountScopeId,
+      verifyScope: verifiedScope });
   }
   if (op === 'preflightSync') {
+    const accountScopeId = await verifiedScope().catch(() => null);
+    if (!accountScopeId) return { attempted: false, reason: 'account_unverified' };
     return preflightSync({ configPath: configPath(),
-      sync: protectedSync, ...args });
+      sync: protectedSync, accountScopeId, ...args });
   }
   if (op === 'handleCardAction') {
     return handleCardAction(args.event, args.config, {
@@ -77,10 +80,11 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
         const channels = enabledChannels(config);
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const confirmed = store.latestCompleteSync(db);
         const account = accountStatus(db);
-        const boundScopeId = store.getActiveAccountScope(db)?.scopeId ?? null;
-        const switchedAccount = account.state === 'mismatch';
+        const boundScopeId = account.scopeId;
+        const legacyUnbound = !store.getActiveAccountScope(db);
+        const confirmed = boundScopeId || legacyUnbound
+          ? store.latestCompleteSync(db, boundScopeId) : null;
         const options = { channels, quiet: quietHours(config), nowSeconds,
           completeSyncAt: confirmed?.checkedAt ?? 0 };
         const nodeIsCurrent = (card, snooze, result) => {
@@ -93,9 +97,11 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
             && nowSeconds >= deliveryTime(snooze.targetAt, card.expiresAt, options.quiet)
             && (days === null || snooze.targetAt >= card.expiresAt - days * 86400);
         };
-        return { channels, latest: store.latestSync(db), confirmed, account,
-          cards: store.listCards(db, true).filter((card) => !switchedAccount && card.source === 'codex'
-            && (!boundScopeId || card.accountScopeId === boundScopeId)).map((card) => {
+        return { channels, latest: boundScopeId || legacyUnbound
+          ? store.latestSync(db, boundScopeId) : null,
+          confirmed, account,
+          cards: store.listCards(db, true).filter((card) => card.source === 'codex'
+            && (legacyUnbound ? card.accountScopeId === null : card.accountScopeId === boundScopeId)).map((card) => {
             const snooze = store.getSnooze(db, card.id);
             const results = store.listReminderResults(db, card.id);
             return { ...card, snooze,
@@ -120,23 +126,30 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
           }) };
       }
       case 'listCards': {
-        if (accountStatus(db).state === 'mismatch') return [];
-        const boundScopeId = store.getActiveAccountScope(db)?.scopeId ?? null;
+        const boundScopeId = accountStatus(db).scopeId;
+        const legacyUnbound = !store.getActiveAccountScope(db);
         return store.listCards(db, args.includeInactive === true).filter((card) =>
-          card.source === 'codex' && (!boundScopeId || card.accountScopeId === boundScopeId));
+          card.source === 'codex' && (legacyUnbound ? card.accountScopeId === null
+            : card.accountScopeId === boundScopeId));
       }
       case 'getCard': {
-        if (accountStatus(db).state === 'mismatch') return null;
+        const boundScopeId = accountStatus(db).scopeId;
         const card = store.getCard(db, value(args.cardId));
-        return card?.source === 'codex' ? card : null;
+        return card?.source === 'codex' && (store.getActiveAccountScope(db)
+          ? card.accountScopeId === boundScopeId : card.accountScopeId === null) ? card : null;
       }
-      case 'latestSync': return store.latestSync(db);
-      case 'latestCompleteSync': return store.latestCompleteSync(db);
-      case 'dueUsageVerifications': return store.listDueUsageVerifications(db);
+      case 'latestSync': return accountStatus(db).scopeId
+        ? store.latestSync(db, accountStatus(db).scopeId) : null;
+      case 'latestCompleteSync': return accountStatus(db).scopeId
+        ? store.latestCompleteSync(db, accountStatus(db).scopeId) : null;
+      case 'dueUsageVerifications': return accountStatus(db).state === 'verified'
+        ? store.listDueUsageVerifications(db, Math.floor(Date.now() / 1000), 600,
+          accountStatus(db).scopeId) : [];
       case 'planNextCheck': {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
+        if (accountStatus(db).state !== 'verified') return { nextAt: null, reason: null };
         return planNextCheck(db, { channels: enabledChannels(config), quiet: quietHours(config),
-          accountScopeId: store.getActiveAccountScope(db)?.scopeId ?? null });
+          accountScopeId: accountStatus(db).scopeId });
       }
       case 'snooze': return store.getSnooze(db, value(args.cardId));
       case 'scheduleSnooze': {

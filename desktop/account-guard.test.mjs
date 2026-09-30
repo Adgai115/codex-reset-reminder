@@ -9,11 +9,13 @@ process.env.CODEX_RESET_MONITOR_DATA_DIR = directory;
 process.env.CODEX_RESET_MONITOR_CONFIG_PATH = join(directory, 'config.json');
 writeFileSync(process.env.CODEX_RESET_MONITOR_CONFIG_PATH,
   JSON.stringify({ codexScript: 'fake-codex', feishu: { enabled: false } }));
-const { getActiveAccountScope, getCard, openStore, saveCodexSnapshot,
+const { getActiveAccountScope, getCard, listAccountScopes, latestCompleteSync,
+  openStore, saveCodexSnapshot,
   recordFeishuMessage } = await import('../legacy/node/store.mjs');
 const { checkAccount, requireAccount, requireCardInScope } = await import('./account-guard.mjs');
 const { runCoreOperation } = await import('./core-operations.mjs');
 const { syncCards } = await import('../legacy/node/sync.mjs');
+const { runReminders } = await import('../legacy/node/remind.mjs');
 const { consumeCredit, refreshCreditStatus } = await import('../legacy/node/consume.mjs');
 const { handleCardAction } = await import('../core/card-actions.mjs');
 const configPath = process.env.CODEX_RESET_MONITOR_CONFIG_PATH;
@@ -49,54 +51,71 @@ test('old cards require explicit first binding to the rechecked candidate', asyn
   } finally { after.close(); }
 });
 
-test('switch and network failure remain distinct and block merge or official use', async () => {
+test('switching accounts keeps cards and sync history isolated; returning restores the first account', async () => {
   const scope = await requireAccount(configPath, { appServer: account('old@example.com') });
   const switched = await checkAccount(configPath, { appServer: account('new@example.com') });
-  assert.equal(switched.state, 'mismatch');
+  assert.equal(switched.state, 'verified');
+  assert.notEqual(switched.scopeId, scope);
   const hidden = await runCoreOperation('manageSnapshot');
   assert.equal(hidden.account.currentDisplay, 'n***@example.com');
   assert.deepEqual(hidden.cards, []);
   assert.deepEqual(await runCoreOperation('listCards'), []);
   assert.equal(await runCoreOperation('getCard', { cardId: 'old-card' }), null);
-  let rateLimitCalls = 0;
-  await assert.rejects(syncCards(configPath, {
+  const synced = await syncCards(configPath, {
     accountGuard: () => requireAccount(configPath, { appServer: account('new@example.com') }),
-    appServer: async () => { rateLimitCalls++; return {}; },
-  }), /账号不一致/);
-  assert.equal(rateLimitCalls, 0);
+    appServer: async () => ({ rateLimitResetCredits: { availableCount: 1, credits: [
+      { id: 'new-card', status: 'available', title: '新账号卡', expiresAt: expiry },
+    ] } }),
+  });
+  assert.equal(synced.complete, true);
+  assert.deepEqual((await runCoreOperation('listCards')).map((card) => card.id), ['new-card']);
+  const checkAt = expiry - 7 * 86400;
+  assert.deepEqual((await runReminders({ configPath, nowSeconds: checkAt, dryRun: true,
+    accountScopeId: switched.scopeId })).due.map((row) => row.id), ['new-card']);
+  assert.deepEqual((await runReminders({ configPath, nowSeconds: checkAt, dryRun: true,
+    accountScopeId: scope })).due.map((row) => row.id), ['old-card']);
+  const afterSync = openStore();
+  try {
+    assert.equal(getCard(afterSync, 'old-card').accountScopeId, scope);
+    assert.equal(getCard(afterSync, 'new-card').accountScopeId, switched.scopeId);
+    assert.equal(latestCompleteSync(afterSync, switched.scopeId).availableCount, 1);
+    assert.equal(listAccountScopes(afterSync).length, 2);
+  } finally { afterSync.close(); }
   let consumeCalls = 0;
   await assert.rejects(consumeCredit('old-card', 'test-key', {
     verifyAccount: () => requireAccount(configPath, { appServer: account('new@example.com') }),
     verifyCard: requireCardInScope,
     appServer: async () => { consumeCalls++; return { outcome: 'reset' }; },
-  }), /账号不一致/);
+  }), /不属于当前绑定账号/);
   assert.equal(consumeCalls, 0);
   const offline = await checkAccount(configPath, { appServer: async () => { throw new Error('offline'); } });
   assert.equal(offline.state, 'unavailable');
-  assert.equal(offline.boundDisplay, 'o***@example.com');
+  assert.equal(offline.boundDisplay, 'n***@example.com');
   const restored = await checkAccount(configPath, { appServer: account('old@example.com') });
   assert.equal(restored.state, 'verified');
   assert.equal(restored.scopeId, scope);
-  assert.equal((await runCoreOperation('manageSnapshot')).cards[0].id, 'old-card');
+  assert.deepEqual((await runCoreOperation('manageSnapshot')).cards.map((card) => card.id), ['old-card']);
 });
 
 test('a switch between Usage read and cache write cannot merge the new account', async () => {
   let identityReads = 0;
-  let consumed = 0;
+  let statusReads = 0;
   const guard = () => requireAccount(configPath, { appServer: account(++identityReads === 1
     ? 'old@example.com' : 'new@example.com') });
   await assert.rejects(syncCards(configPath, { accountGuard: guard,
     appServer: async () => ({ rateLimitResetCredits: { availableCount: 1, credits: [
       { id: 'foreign-card', status: 'available', title: '另一账号卡', expiresAt: expiry },
     ] } }),
-  }), /账号不一致/);
+  }), /账号在同步期间发生变化/);
   const db = openStore();
   try { assert.equal(getCard(db, 'foreign-card'), null); } finally { db.close(); }
+  let statusIdentityReads = 0;
   await assert.rejects(refreshCreditStatus({
-    verifyAccount: () => requireAccount(configPath, { appServer: account('new@example.com') }),
-    appServer: async () => { consumed++; return {}; },
-  }), /账号不一致/);
-  assert.equal(consumed, 0);
+    verifyAccount: () => requireAccount(configPath, { appServer: account(++statusIdentityReads === 1
+      ? 'old@example.com' : 'new@example.com') }),
+    appServer: async () => { statusReads++; return {}; },
+  }), /账号在读取期间发生变化/);
+  assert.equal(statusReads, 1);
 });
 
 test('Feishu callback for a Codex card is blocked before a consume or feedback mutation', async () => {
@@ -109,7 +128,8 @@ test('Feishu callback for a Codex card is blocked before a consume or feedback m
     event_id: 'blocked-event', message_id: 'om_account_guard', operator_id: 'ou_owner',
     token: 'fake', action_value: JSON.stringify({ action: 'consume' }) },
   { feishu: { userId: 'ou_owner' } }, {
-    verifyCardAction: async () => { await requireAccount(configPath, { appServer: account('new@example.com') }); },
+    verifyCardAction: async (card) => requireCardInScope(card.id,
+      await requireAccount(configPath, { appServer: account('new@example.com') })),
     consume: async () => { consumeCalls++; }, update: async () => ({}),
   });
   assert.equal(result, 'account_blocked');
@@ -147,9 +167,13 @@ test('fresh install binds automatically; missing identity never uses card count 
 test('workspace identity takes precedence when the protocol provides it', async () => {
   const read = (id) => async () => ({ account: { type: 'chatgpt', email: 'fresh@example.com',
     planType: 'plus' }, workspaceRouting: id ? { chatgptAccountId: id } : null });
-  assert.equal((await checkAccount(configPath, { appServer: read('workspace-a') })).state, 'verified');
-  assert.equal((await checkAccount(configPath, { appServer: read('workspace-b') })).state, 'mismatch');
+  const first = await checkAccount(configPath, { appServer: read('workspace-a') });
+  assert.equal(first.state, 'verified');
+  const second = await checkAccount(configPath, { appServer: read('workspace-b') });
+  assert.equal(second.state, 'verified');
+  assert.notEqual(second.scopeId, first.scopeId);
   assert.equal((await checkAccount(configPath, { appServer: read(null) })).state, 'unidentified');
+  assert.equal((await checkAccount(configPath, { appServer: read('workspace-a') })).scopeId, first.scopeId);
 });
 
 test('a newly unscoped Codex row cannot be silently merged into the bound scope', () => {

@@ -13,9 +13,10 @@ export async function syncCards(configPath = join(directory, '..', '..', 'config
   { appServer = callAppServer, patchCard = patchFeishuCard, patchMessages = true,
     accountGuard = null } = {}) {
   const db = openStore();
+  let scopeId = null;
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
-    const scopeId = accountGuard ? await accountGuard() : null;
+    scopeId = accountGuard ? await accountGuard() : null;
     const response = await appServer(resolve(config.codexScript), 'account/rateLimits/read');
     if (accountGuard && await accountGuard() !== scopeId) throw new Error('Codex 账号在同步期间发生变化');
     const result = saveCodexSnapshot(db, response?.rateLimitResetCredits,
@@ -24,8 +25,9 @@ export async function syncCards(configPath = join(directory, '..', '..', 'config
     if (patchMessages && config.feishu?.enabled) {
       for (const message of listPendingFeishuConfirmations(db)) {
         const card = getCard(db, message.cardId);
+        if (scopeId && card?.accountScopeId !== scopeId) continue;
         if (card.status === 'available' && (!result.complete || !card.reportedUsedAt
-          || latestCompleteSync(db).checkedAt < card.reportedUsedAt + 600)) continue;
+          || latestCompleteSync(db, scopeId).checkedAt < card.reportedUsedAt + 600)) continue;
         const state = card.status === 'used' ? 'used'
           : card.status === 'available' ? 'available' : 'unavailable';
         const notice = state === 'used'
@@ -35,16 +37,16 @@ export async function syncCards(configPath = join(directory, '..', '..', 'config
         try {
           await patchCard(config, message.messageId, card, message.thresholdDays,
             state, null, notice, null,
-            { currentAvailableCount: latestCompleteSync(db)?.availableCount ?? null });
+            { currentAvailableCount: latestCompleteSync(db, scopeId)?.availableCount ?? null });
           setFeishuMessageStatus(db, message.messageId, state);
         } catch {
           cardUpdateFailures.push(message.messageId);
         }
       }
     }
-    return { ...result, cardUpdateFailures };
+    return { ...result, accountScopeId: scopeId, cardUpdateFailures };
   } catch (error) {
-    recordSyncFailure(db, error.message);
+    recordSyncFailure(db, error.message, Math.floor(Date.now() / 1000), scopeId);
     throw error;
   } finally {
     db.close();

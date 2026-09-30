@@ -9,7 +9,8 @@ import { deliveryExists, getSnooze, latestSync, listCards, openStore } from './s
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function preflightSync({ nowSeconds = Math.floor(Date.now() / 1000),
-  configPath = join(directory, '..', '..', 'config.json'), sync = syncCards } = {}) {
+  configPath = join(directory, '..', '..', 'config.json'), sync = syncCards,
+  accountScopeId = null } = {}) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const options = config.reminders?.preflightSync;
   if (options?.enabled === false) return { attempted: false, reason: 'disabled' };
@@ -19,13 +20,13 @@ export async function preflightSync({ nowSeconds = Math.floor(Date.now() / 1000)
   const db = openStore();
   let due = false;
   try {
-    const lastAttempt = latestSync(db)?.checkedAt ?? 0;
+    const lastAttempt = latestSync(db, accountScopeId)?.checkedAt ?? 0;
     const retrySeconds = Math.max(60, Number(options?.retryMinutes ?? 60) * 60);
     if (nowSeconds - lastAttempt < retrySeconds) {
       return { attempted: false, reason: 'recent_sync' };
     }
     for (const card of listCards(db)) {
-      if (card.source !== 'codex') continue;
+      if (card.source !== 'codex' || (accountScopeId && card.accountScopeId !== accountScopeId)) continue;
       const days = dueThreshold(card.expiresAt, nowSeconds);
       const snooze = getSnooze(db, card.id);
       const activeSnooze = snooze?.expiresAt === card.expiresAt ? snooze : null;

@@ -57,8 +57,10 @@ export async function handleCardAction(event, config, { db = openStore(),
     let card = getCard(db, message.cardId);
     const updateCard = async (state, notice = null, statusInfo = null, display = {}) => {
       if (!card) return;
-      const options = { currentAvailableCount: latestCompleteSync(db)?.availableCount ?? null,
-        accountDisplay: card.source === 'codex' ? getActiveAccountScope(db)?.displayName : null, ...display };
+      const active = getActiveAccountScope(db);
+      const options = { currentAvailableCount: latestCompleteSync(db, card.accountScopeId)?.availableCount ?? null,
+        accountDisplay: card.source === 'codex' && active?.scopeId === card.accountScopeId
+          ? active.displayName : null, ...display };
       try {
         await update(config, event.token, card, message.thresholdDays, state,
           null, notice, statusInfo, options);

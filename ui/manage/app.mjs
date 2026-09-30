@@ -10,6 +10,7 @@ let reloadPending = false;
 let filter = 'active';
 let noticeTimer;
 let lastFocusCheckAt = Date.now();
+let lastRenderedScopeId = null;
 const expandedCards = new Set();
 const interacting = () => document.activeElement?.tagName === 'SELECT';
 const text = (parent, tag, content, className = '') => {
@@ -130,6 +131,11 @@ async function retryNode(result) {
 }
 function render() {
   if (!snapshot) return;
+  if (snapshot.account?.scopeId && lastRenderedScopeId !== snapshot.account.scopeId) {
+    filter = 'active';
+    expandedCards.clear();
+    lastRenderedScopeId = snapshot.account.scopeId;
+  }
   $('sync-status').textContent = syncSummary(snapshot);
   $('sync-status').title = syncDescription(snapshot);
   $('sync-detail').textContent = syncDescription(snapshot);
@@ -187,8 +193,7 @@ function render() {
   }
   $('cards').hidden = cards.length === 0;
   $('empty').hidden = cards.length > 0;
-  $('empty').textContent = snapshot.account?.state === 'mismatch'
-    ? '当前账号未绑定，原账号卡已隐藏' : filter === 'pending' ? '暂无已提醒卡片'
+  $('empty').textContent = filter === 'pending' ? '暂无已提醒卡片'
     : filter === 'history' ? '暂无已结束卡片' : '暂无可用卡片';
   controls();
 }
