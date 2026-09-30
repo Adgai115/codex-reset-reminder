@@ -7,15 +7,15 @@
 <title>Codex 重置卡到期提醒</title>
 <style>
   :root { color-scheme:light dark; --surface:#fff; --ink:#202f43; --muted:#607089;
-    --line:#dce3ed; --accent:#245bcc; --tint:#edf3ff; --danger:#b84221; }
+    --line:#dce3ed; --accent:#b44a10; --tint:#fff3e8; --danger:#e45815; --header-ink:#9a410d; --primary:#c34c0f; --primary-ink:#fff; }
   @media (prefers-color-scheme:dark) { :root { --surface:#202734; --ink:#e2e9f4; --muted:#a5b3c8;
-    --line:#3b475a; --accent:#91b4ff; --tint:#293852; --danger:#ffb49e; } }
+    --line:#3b475a; --accent:#ffb49e; --tint:#342b25; --danger:#ffb49e; --header-ink:#ffd6ba; --primary:#f1a670; --primary-ink:#231a14; } }
   * { box-sizing:border-box; }
   body { margin:0; width:100%; height:100vh; display:flex; flex-direction:column; overflow:hidden;
     font:14px/1.5 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink);
     background:var(--surface); border:1px solid var(--line); border-radius:12px; }
   header { display:flex; align-items:center; gap:8px; padding:10px 15px; background:var(--tint);
-    color:var(--ink); -webkit-app-region:drag; }
+    color:var(--header-ink); -webkit-app-region:drag; }
   #heading { white-space:nowrap; }
   #account { min-width:0; margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   #close, #prev, #next { -webkit-app-region:no-drag; border:0; background:transparent; color:inherit; cursor:pointer; }
@@ -23,8 +23,7 @@
   #close:hover, .pager button:hover { background:color-mix(in srgb,var(--accent) 12%,transparent); }
   main { flex:1; min-height:0; padding:15px 17px 7px; overflow:hidden; }
   .top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-  #days { font-size:24px; line-height:1.25; font-weight:600; white-space:nowrap; }
-  #days.urgent { color:var(--danger); }
+  #days { font-size:24px; line-height:1.25; font-weight:700; color:var(--danger); white-space:nowrap; }
   .pager { display:flex; align-items:center; gap:2px; color:var(--muted); font-size:12px; white-space:nowrap; }
   .pager button { padding:4px 7px; font-size:15px; }
   #name-row { display:flex; gap:7px; min-width:0; margin:9px 0 5px; align-items:baseline; }
@@ -37,8 +36,8 @@
   button, select { font:inherit; white-space:nowrap; }
   footer button, select { color:var(--ink); border:1px solid var(--line); background:var(--surface); border-radius:7px; padding:8px 10px; cursor:pointer; }
   footer button:hover:not(:disabled), select:hover:not(:disabled) { border-color:var(--accent); }
-  #reset { flex:1; background:#245bcc; border-color:#245bcc; color:#fff; }
-  #reset:hover:not(:disabled) { background:#194dab; }
+  #reset { flex:1; background:var(--primary); border-color:var(--primary); color:var(--primary-ink); }
+  #reset:hover:not(:disabled) { filter:brightness(.94); }
   #option { width:125px; }
   button:disabled, select:disabled { opacity:.5; cursor:not-allowed; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }

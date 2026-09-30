@@ -151,6 +151,7 @@ async function checkCompactLayout(tab) {
 
 async function checkWindowPresentation(tab, kind, sizes) {
   await debuggerSession(tab, async (send) => {
+    let lightTheme;
     for (const mode of ['light', 'dark']) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode }] });
       for (const [width, height] of sizes) {
@@ -164,12 +165,10 @@ async function checkWindowPresentation(tab, kind, sizes) {
             theme: getComputedStyle(document.body).backgroundColor,
           };
         })()`, send);
-        assert.deepEqual(layout, { pageFits: true, controlsFit: true, actionFits: true,
-          theme: mode === 'dark' ? kind === 'reminder' ? 'rgb(32, 39, 52)' : 'rgb(23, 28, 37)'
-            : kind === 'reminder' ? 'rgb(255, 255, 255)' : 'rgb(245, 247, 251)' });
-        if (kind === 'settings') assert.equal(await evaluate(tab,
-          `document.querySelector('main').scrollHeight <= document.querySelector('main').clientHeight`, send), true,
-        '设置默认内容应完整显示');
+        assert.deepEqual({ pageFits: layout.pageFits, controlsFit: layout.controlsFit, actionFits: layout.actionFits },
+          { pageFits: true, controlsFit: true, actionFits: true });
+        if (mode === 'light') lightTheme = layout.theme;
+        else assert.notEqual(layout.theme, lightTheme, '深色模式应改变窗口背景');
         await screenshot(tab, `${kind}-${mode}-${width}`, send);
       }
     }

@@ -12,12 +12,12 @@
     --muted:#a5b3c8; --line:#3b475a; --accent:#91b4ff; --tint:#293852; --danger:#ffb49e; } }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; }
-  header { padding:20px 24px 14px; }
-  .topbar { display:flex; align-items:center; gap:24px; }
-  h1 { font-size:21px; margin:0; letter-spacing:-.5px; font-weight:600; white-space:nowrap; }
+  header { padding:22px 24px 14px; display:flex; justify-content:space-between; gap:20px; align-items:start; }
+  .heading { flex:1; min-width:0; }
+  h1 { font-size:23px; margin:0 0 10px; letter-spacing:-.5px; font-weight:600; white-space:nowrap; }
   h2 { font-size:20px; margin:0 0 16px; }
   p { margin:4px 0; }
-  .status-row { display:flex; gap:18px; align-items:start; margin-top:12px; font-size:12px; color:var(--muted); }
+  .status-row { display:flex; gap:18px; align-items:start; font-size:12px; color:var(--muted); }
   #sync-info { min-width:0; }
   .detail-text { max-width:52ch; margin-top:7px; overflow-wrap:anywhere; }
   #automation-status { margin-top:5px; }
@@ -28,13 +28,13 @@
   #account-detail { max-width:64ch; padding:6px 0; overflow-wrap:anywhere; }
   .account-bar button { font-size:12px; padding:3px 8px; }
   .toolbar { display:flex; gap:8px; flex-shrink:0; }
-  .account-select { display:flex; align-items:center; gap:8px; flex:1; min-width:0; }
-  #account-select { width:280px; max-width:100%; min-width:0; padding:7px 10px; text-overflow:ellipsis; }
-  .account-select button { padding:7px 9px; font-size:12px; flex:none; }
-  .listbar { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:12px; }
-  .viewbar { display:flex; gap:4px; flex:none; }
-  .viewbar button { font-size:13px; padding:7px 10px; background:transparent; border-color:transparent; }
-  .viewbar button[aria-pressed=true] { color:var(--accent); background:var(--tint); font-weight:600; }
+  .account-select { display:flex; align-items:center; gap:8px; margin-bottom:8px; min-width:0; }
+  #account-select { max-width:280px; min-width:190px; padding:5px 8px; text-overflow:ellipsis; }
+  .account-select button { padding:5px 9px; font-size:12px; flex:none; }
+  .listbar { display:flex; flex-direction:column; align-items:stretch; }
+  .viewbar { display:flex; gap:6px; margin:4px 0 8px; }
+  .viewbar button { font-size:13px; padding:6px 10px; background:transparent; border-color:transparent; }
+  .viewbar button[aria-pressed=true] { color:var(--accent); border-color:var(--line); background:var(--surface); }
   .records th:first-child { width:130px; }
   .records.sync-records th:nth-child(2) { width:110px; }
   .records.sync-records th:nth-child(3), .records.sync-records th:nth-child(4) { width:85px; }
@@ -70,10 +70,10 @@
   button:disabled, select:disabled { opacity:.5; cursor:not-allowed; }
   button.primary { background:#245bcc; color:white; border-color:#245bcc; }
   button.primary:hover:not(:disabled) { background:#194dab; }
-  .filterbar { display:flex; align-items:center; gap:10px; min-width:0; }
-  .filters { display:flex; gap:2px; padding:3px; background:color-mix(in srgb,var(--line) 35%,var(--bg)); border-radius:8px; }
-  .filters button { background:transparent; border-color:transparent; font-size:12px; padding:4px 9px; }
-  .filters button[aria-pressed=true] { background:var(--surface); color:var(--ink); font-weight:600; }
+  .filterbar { display:flex; justify-content:space-between; align-items:center; padding:8px 0 12px; gap:16px; min-width:0; }
+  .filters { display:flex; gap:5px; }
+  .filters button { background:transparent; border-color:transparent; }
+  .filters button[aria-pressed=true] { background:var(--surface); border-color:var(--line); font-weight:600; }
   #channel-status { color:var(--danger); font-size:12px; padding:4px 8px; background:transparent; border:0; }
   #notice-box { margin-bottom:12px; color:var(--muted); font-size:12px; }
   #notice { display:list-item; list-style-position:inside; }
@@ -81,11 +81,11 @@
   .error, #notice.error { color:var(--danger); }
   .table-wrap { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:auto; }
   table { width:100%; border-collapse:collapse; table-layout:fixed; }
-  th, td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th, td { text-align:left; padding:14px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-size:12px; font-weight:500; padding-top:11px; padding-bottom:11px; }
   tr:last-child td { border-bottom:0; }
-  #cards th:nth-child(2) { width:145px; } #cards th:nth-child(3) { width:28%; }
-  #cards th:nth-child(4) { width:154px; }
+  #cards th:nth-child(1) { width:26%; } #cards th:nth-child(2) { width:15%; }
+  #cards th:nth-child(3) { width:12%; } #cards th:nth-child(4) { width:30%; } #cards th:nth-child(5) { width:17%; }
   th { white-space:nowrap; }
   .card-name { font-weight:600; }
   .card-label { display:flex; align-items:baseline; min-width:0; gap:6px; }
@@ -93,8 +93,9 @@
   .card-key { flex:none; color:var(--muted); font-size:11px; white-space:nowrap; }
   .sub { color:var(--muted); font-size:12px; margin-top:5px; }
   .single-line { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
-  .time { font-variant-numeric:tabular-nums; font-size:12px; white-space:nowrap; }
-  .expiry-time { display:block; margin-top:4px; color:var(--muted); }
+  .time { font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+  .expiry-time { display:block; }
+  #cards .expiry-status { display:none; }
   .badge { display:inline-block; white-space:nowrap; padding:2px 7px; border-radius:4px; background:var(--tint); color:var(--accent); font-size:12px; }
   .badge.urgent { color:var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
   .badge.normal, .badge.pending { color:var(--ink); background:transparent; padding-left:0; }
@@ -106,11 +107,11 @@
   summary { cursor:pointer; color:var(--muted); }
   .delivery-compact { font-size:12px; }
   .delivery-actions { display:flex; align-items:center; gap:10px; margin-top:6px; }
-  .pending-reminder { color:var(--accent); background:transparent; border:0; padding:0; font-size:12px; white-space:nowrap; }
+  .pending-reminder { color:var(--danger); background:transparent; border:0; padding:0; font-size:12px; font-weight:600; white-space:nowrap; }
   .delivery-summary { display:flex; align-items:baseline; justify-content:space-between; gap:8px; white-space:nowrap; }
   .delivery-summary > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .delivery-summary .time { color:var(--muted); font-size:12px; flex:none; }
-  .retry-button { color:var(--danger); background:transparent; border:0; font-size:12px; padding:0; }
+  .retry-button { font-size:12px; padding:3px 7px; }
   .delivery-node { margin-bottom:10px; padding-bottom:9px; border-bottom:1px solid var(--line); }
   .delivery-node:last-child { margin-bottom:0; padding-bottom:0; border-bottom:0; }
   .delivery-title { font-size:12px; font-weight:600; }
@@ -126,23 +127,24 @@
   #detail-dialog .detail-message { white-space:pre-wrap; font-size:13px; }
   .empty { padding:44px 20px; text-align:center; color:var(--muted); }
   [hidden] { display:none !important; }
-  @media (max-width:850px) { header { padding:16px 16px 12px; } main { padding:0 16px 18px; }
-    .topbar { gap:16px; } h1 { font-size:19px; } .toolbar { gap:6px; } .toolbar button { padding:7px 10px; }
-    .listbar { gap:8px; } .viewbar button { padding:7px 8px; } }
+  @media (max-width:850px) { header { padding:18px 16px 12px; gap:12px; } main { padding:0 16px 18px; } .toolbar { gap:6px; }
+    #cards th:first-child { width:auto; } #cards th:nth-child(2) { width:145px; }
+    #cards th:nth-child(4) { width:28%; } #cards th:nth-child(5) { width:154px; }
+    #cards .state-cell { display:none; } #cards .expiry-status { display:inline-block; }
+    .expiry-time { margin-top:4px; } }
   @media (prefers-reduced-motion:reduce) { button { transition:none; } }
 </style>
 </head>
 <body>
 <header>
-  <div class="topbar"><h1>重置卡管理</h1>
+  <div class="heading"><h1>重置卡管理</h1>
     <div class="account-select"><select id="account-select" aria-label="查看账号"></select><button id="manage-accounts">账号管理</button></div>
-    <div class="toolbar"><button id="sync" title="后台每 15 分钟自动同步，也可立即刷新">刷新</button><button id="settings">提醒设置</button></div>
-  </div>
     <div class="status-row"><details id="sync-info"><summary id="sync-status" role="status">读取中…</summary>
       <div class="detail-text"><p id="sync-detail"></p><p id="automation-status"></p></div></details>
     <div class="account-bar"><details id="account-info"><summary id="account-status">核对账号…</summary>
       <p id="account-detail"></p><button id="check-account">重新核对账号</button></details>
-      <button id="bind-account" hidden>确认账号</button></div></div>
+      <button id="bind-account" hidden>确认账号</button></div></div></div>
+  <div class="toolbar"><button id="sync" title="后台每 15 分钟自动同步，也可立即刷新">刷新</button><button id="settings">提醒设置</button></div>
 </header>
 <main>
   <div class="listbar"><nav class="viewbar" aria-label="账号信息"><button id="cards-view" aria-pressed="true">卡片</button><button id="sync-view" aria-pressed="false">同步记录</button><button id="reminders-view" aria-pressed="false">提醒记录</button></nav>
@@ -152,7 +154,7 @@
   </div></div>
   <details id="notice-box" hidden><summary id="notice" class="single-line" role="status" aria-live="polite"></summary><p id="notice-detail"></p></details>
   <div class="table-wrap" tabindex="0" role="region" aria-label="卡片列表">
-    <table id="cards"><thead><tr><th scope="col">卡片</th><th scope="col" title="状态与到期时间；电脑本地时间">到期</th><th scope="col">提醒</th><th scope="col">操作</th></tr></thead><tbody></tbody></table>
+    <table id="cards"><thead><tr><th scope="col">卡片</th><th scope="col" title="电脑本地时间">到期时间</th><th scope="col" class="state-cell">状态</th><th scope="col">提醒</th><th scope="col">操作</th></tr></thead><tbody></tbody></table>
     <div id="empty" class="empty" hidden></div>
   </div>
   <div id="record-wrap" class="table-wrap" hidden tabindex="0" role="region" aria-label="当前账号记录">

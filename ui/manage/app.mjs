@@ -247,10 +247,12 @@ function render() {
     const label = text(name, 'div', '', 'card-label');
     text(label, 'span', card.title, 'card-name single-line').title = card.title;
     text(label, 'span', cardShortId(card.creditId || card.id), 'card-key').title = card.creditId || card.id;
-    const status = text(row, 'td', '');
+    const expiry = text(row, 'td', '');
+    text(expiry, 'span', state.label, `badge expiry-status ${state.tone}`);
+    text(expiry, 'span', formatShortTime(card.expiresAt), 'time expiry-time').title = formatTime(card.expiresAt);
+    const status = text(row, 'td', '', 'state-cell');
     const badge = text(status, 'span', state.label, `badge ${state.tone}`);
     if (state.active && card.reportedUsedAt) badge.title = '后台自动读取 Codex 核验；不会直接扣减卡片。';
-    text(status, 'span', formatShortTime(card.expiresAt), 'time expiry-time').title = formatTime(card.expiresAt);
     renderDelivery(text(row, 'td', ''), card);
     const actions = text(text(row, 'td', ''), 'div', '', 'actions');
     if (!state.active) {

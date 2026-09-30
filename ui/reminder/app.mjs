@@ -27,7 +27,6 @@ function render(next) {
   $('pager').hidden = next.cards.length < 2;
   $('position').textContent = `${index + 1} / ${next.cards.length}`;
   const hours = Math.ceil((card.expiresAt * 1000 - Date.now()) / 3600000);
-  $('days').classList.toggle('urgent', hours <= 72);
   $('days').textContent = hours <= 0 ? '已到期' : hours < 24
     ? `不足 ${Math.max(1, hours)} 小时` : `${Math.ceil(hours / 24)} 天后到期`;
   $('name').textContent = card.cardName;
