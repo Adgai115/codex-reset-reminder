@@ -2,37 +2,46 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <title>Codex 重置卡到期提醒</title>
 <style>
+  :root { color-scheme:light dark; --surface:#fff; --ink:#202f43; --muted:#607089;
+    --line:#dce3ed; --accent:#245bcc; --tint:#edf3ff; --danger:#b84221; }
+  @media (prefers-color-scheme:dark) { :root { --surface:#202734; --ink:#e2e9f4; --muted:#a5b3c8;
+    --line:#3b475a; --accent:#91b4ff; --tint:#293852; --danger:#ffb49e; } }
   * { box-sizing:border-box; }
   body { margin:0; width:100%; height:100vh; display:flex; flex-direction:column; overflow:hidden;
-    font:14px 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; color:#1e293b;
-    background:#fff; border:1px solid #dbe2ee; border-radius:12px; }
-  header { display:flex; align-items:center; gap:8px; padding:11px 15px; background:#fff3e8;
-    color:#9a410d; -webkit-app-region:drag; }
+    font:14px/1.5 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink);
+    background:var(--surface); border:1px solid var(--line); border-radius:12px; }
+  header { display:flex; align-items:center; gap:8px; padding:10px 15px; background:var(--tint);
+    color:var(--ink); -webkit-app-region:drag; }
   #heading { white-space:nowrap; }
   #account { min-width:0; margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   #close, #prev, #next { -webkit-app-region:no-drag; border:0; background:transparent; color:inherit; cursor:pointer; }
-  #close { font-size:19px; line-height:1; }
+  #close { font-size:19px; line-height:1; border-radius:4px; padding:2px 5px; }
+  #close:hover, .pager button:hover { background:color-mix(in srgb,var(--accent) 12%,transparent); }
   main { flex:1; min-height:0; padding:15px 17px 7px; overflow:hidden; }
   .top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-  #days { font-size:24px; font-weight:700; color:#e45815; white-space:nowrap; }
-  .pager { display:flex; align-items:center; gap:2px; color:#64748b; font-size:12px; white-space:nowrap; }
+  #days { font-size:24px; line-height:1.25; font-weight:600; white-space:nowrap; }
+  #days.urgent { color:var(--danger); }
+  .pager { display:flex; align-items:center; gap:2px; color:var(--muted); font-size:12px; white-space:nowrap; }
   .pager button { padding:4px 7px; font-size:15px; }
   #name-row { display:flex; gap:7px; min-width:0; margin:9px 0 5px; align-items:baseline; }
   #name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
-  #card-key { flex:none; color:#64748b; font-size:12px; white-space:nowrap; }
-  #expiry { color:#64748b; font-size:12px; white-space:nowrap; }
-  #feedback { color:#64748b; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 17px 5px; }
-  #feedback.error { color:#b42318; }
+  #card-key { flex:none; color:var(--muted); font-size:12px; white-space:nowrap; }
+  #expiry { color:var(--muted); font-size:12px; white-space:nowrap; }
+  #feedback { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 17px 5px; }
+  #feedback.error { color:var(--danger); }
   footer { display:flex; gap:8px; padding:0 17px 15px; }
   button, select { font:inherit; white-space:nowrap; }
-  footer button, select { border:1px solid #cad3df; background:#fff; border-radius:7px; padding:8px 10px; cursor:pointer; }
-  #reset { flex:1; background:#ee641b; border-color:#ee641b; color:#fff; }
+  footer button, select { color:var(--ink); border:1px solid var(--line); background:var(--surface); border-radius:7px; padding:8px 10px; cursor:pointer; }
+  footer button:hover:not(:disabled), select:hover:not(:disabled) { border-color:var(--accent); }
+  #reset { flex:1; background:#245bcc; border-color:#245bcc; color:#fff; }
+  #reset:hover:not(:disabled) { background:#194dab; }
   #option { width:125px; }
   button:disabled, select:disabled { opacity:.5; cursor:not-allowed; }
-  :focus-visible { outline:2px solid #b44a10; outline-offset:2px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   [hidden] { display:none !important; }
 </style>
 </head>
