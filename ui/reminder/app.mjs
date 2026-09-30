@@ -19,7 +19,8 @@ function render(next) {
   if (!next.cards.some((card) => card.creditId === selectedId)) selectedId = next.cards[0]?.creditId || null;
   const card = currentCard();
   if (!card) return;
-  $('heading').textContent = next.simulated ? 'Codex 测试提醒' : 'Codex 重置卡';
+  $('heading').textContent = next.simulated ? 'Codex 测试提醒'
+    : card.reviewOnly && card.accountReady === false ? 'Codex 重置卡 · 缓存' : 'Codex 重置卡';
   $('account').textContent = card.accountDisplay || next.accountDisplay || (next.simulated ? '演示账号' : '账号待核对');
   const index = next.cards.findIndex((item) => item.creditId === card.creditId);
   $('pager').hidden = next.cards.length < 2;

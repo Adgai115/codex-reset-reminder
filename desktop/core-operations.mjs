@@ -163,6 +163,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     return { accountDisplay: snapshot.account.boundDisplay, cards: snapshot.cards.filter((card) => card.pendingReminder
       && (!args.cardId || card.id === args.cardId)).map((card) => ({
       creditId: card.id, originalCreditId: card.creditId, accountScopeId: card.accountScopeId,
+      reviewOnly: true,
       accountDisplay: card.accountDisplay || snapshot.account.boundDisplay,
       accountReady: card.accountReady ?? (snapshot.account.state === 'verified'
         && (!accounts || snapshot.account.independent)),
@@ -203,7 +204,8 @@ export async function runCoreOperation(op, args = {}, context = {}) {
           currentCli: scope.scopeId === store.currentCliScopeId(db),
           independent: scopeProfiles.get(scope.scopeId) === true,
           latest: store.latestSync(db, scope.scopeId),
-          ...(accounts && !scopeProfiles.get(scope.scopeId) && scope.scopeId !== store.currentCliScopeId(db)
+          ...(accounts && !scopeProfiles.get(scope.scopeId) && store.currentCliScopeId(db)
+            && scope.scopeId !== store.currentCliScopeId(db)
             ? { state: 'loginRequired' } : {}) });
         const account = selected ? describe(selected) : accountStatus(db);
         const boundScopeId = account.scopeId;

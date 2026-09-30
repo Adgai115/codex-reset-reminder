@@ -135,8 +135,15 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     reconcile(snapshot) {
       const record = windows.get('real');
       if (!record) return;
-      const remaining = record.items.filter((item) => reminderStillActive(item, snapshot));
-      if (remaining.length !== record.items.length) { record.items = remaining; update(record); }
+      const remaining = record.items.filter((item) => reminderStillActive(item, snapshot)).map((item) => {
+        const card = snapshot.cards.find((card) => card.id === item.creditId);
+        return { ...item, accountReady: card.accountReady ?? item.accountReady,
+          accountDisplay: card.accountDisplay || item.accountDisplay };
+      });
+      if (remaining.length !== record.items.length || remaining.some((item, i) =>
+        item.accountReady !== record.items[i].accountReady || item.accountDisplay !== record.items[i].accountDisplay)) {
+        record.items = remaining; update(record);
+      }
     },
     closeAll() {
       stopped = true;
