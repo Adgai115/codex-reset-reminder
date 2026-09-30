@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { consumeCredit, refreshCreditStatus } from '../legacy/node/consume.mjs';
 import { patchFeishuCard, updateFeishuCard } from './feishu.mjs';
 import { getSnoozeOptions, planSnooze } from './later.mjs';
-import { claimCardActionEvent, completeCardActionEvent, getActiveAccountScope, getCard, getFeishuMessage,
+import { claimCardActionEvent, completeCardActionEvent, getAccountScope, getCard, getFeishuMessage,
   getSnooze, latestCompleteSync, openStore, recordFeishuMessage,
   reportCardUsed, scheduleSnooze, setFeishuMessageStatus } from './store.mjs';
 
@@ -35,7 +35,10 @@ function recoverMessageFromCardContent(db, event, config) {
   const id = event.card_content.match(/(?:RateLimitResetCredit_[A-Za-z0-9]+|manual:[0-9a-f-]{36})/)?.[0]
     || event.card_content.match(/卡片编号\s*[:：]?\s*([A-Za-z0-9_:-]+)/)?.[1];
   if (!id) return null;
-  const card = getCard(db, id);
+  // 缺少本地消息索引时，重复的官方卡号无法确定归属；不要猜测另一账号。
+  const owners = db.prepare("SELECT id FROM cards WHERE id = ? OR credit_id = ?").all(id, id);
+  if (owners.length !== 1) return null;
+  const card = getCard(db, owners[0].id);
   if (!card) return null;
   const daysMatch = event.card_content.match(/(\d+)\s*天(?:后到期|天后)/);
   const thresholdDays = daysMatch ? Number(daysMatch[1]) : 7;
@@ -57,10 +60,9 @@ export async function handleCardAction(event, config, { db = openStore(),
     let card = getCard(db, message.cardId);
     const updateCard = async (state, notice = null, statusInfo = null, display = {}) => {
       if (!card) return;
-      const active = getActiveAccountScope(db);
+      const owner = getAccountScope(db, card.accountScopeId);
       const options = { currentAvailableCount: latestCompleteSync(db, card.accountScopeId)?.availableCount ?? null,
-        accountDisplay: card.source === 'codex' && active?.scopeId === card.accountScopeId
-          ? active.displayName : null, ...display };
+        accountDisplay: card.source === 'codex' ? owner?.nickname || owner?.displayName : null, ...display };
       try {
         await update(config, event.token, card, message.thresholdDays, state,
           null, notice, statusInfo, options);
@@ -80,7 +82,7 @@ export async function handleCardAction(event, config, { db = openStore(),
       try { await verifyCardAction(card); }
       catch {
         await updateCard(card.status === 'used' ? 'used' : 'available',
-          'Codex 账号未确认或已切换。请先在桌面管理页恢复原账号并重新核对；没有执行卡片操作。');
+          '此卡所属账号暂不可用，请在桌面账号管理中为该账号重新登录；其他账号继续运行。');
         return 'account_blocked';
       }
     }

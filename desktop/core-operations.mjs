@@ -37,7 +37,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
       if (id !== currentId()) throw new Error('此账号需要登录，卡片与记录已保留');
       return accounts('request', { script, scopeId: null, method, params });
     }
-    return accounts('request', { script, scopeId: id, method, params });
+    return accounts('request', { script, scopeId: id, method, params, useCurrent: id === currentId() });
   };
   const verifiedScope = (id) => requireAccount(configPath(), { appServer: serverFor(id),
     ...(id ? { expectedScopeId: id, activate: false } : {}) });
@@ -70,8 +70,18 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     }
   };
   const accountForCard = (id) => readDb((db) => store.getCard(db, id)?.accountScopeId || null);
-  const consumeForCard = (id, key) => {
+  const consumeForCard = async (id, key) => {
     const scopeId = accountForCard(id);
+    if (accounts && !(await profileExists(scopeId))) {
+      const error = new Error('请先在账号管理中登录此账号，再确认立即重置');
+      error.code = 'ACCOUNT_LOGIN_REQUIRED'; throw error;
+    }
+    if (accounts && scopeId === currentId()) {
+      const config = JSON.parse(await readFile(configPath(), 'utf8'));
+      await serverFor(scopeId)(config.codexScript, 'account/rateLimits/read');
+      const binding = readDb((db) => store.getAccountScope(db, scopeId));
+      await accounts('capture', { binding, script: config.codexScript });
+    }
     return consumeCredit(id, key, { appServer: serverFor(scopeId),
       verifyAccount: () => verifiedScope(scopeId), verifyCard: requireCardInScope });
   };
@@ -108,7 +118,9 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     for (const scope of scopes().filter((scope) => scope.remindersEnabled)) {
       try { await verifiedScope(scope.scopeId); }
       catch { continue; }
-      results.push(await runReminders({ configPath: configPath(), desktop,
+      const accountReady = accounts ? await profileExists(scope.scopeId) : true;
+      results.push(await runReminders({ configPath: configPath(), desktop: desktop && ((payload) => desktop({ ...payload,
+        cards: (payload.cards || [payload]).map((card) => ({ ...card, accountReady })) })),
         trackAttempts: true, batchDesktop: true, ...args, allowCodex: true,
         accountScopeId: scope.scopeId, verifyScope: () => {
           if (!readDb((db) => store.getAccountScope(db, scope.scopeId)?.remindersEnabled))
@@ -152,7 +164,8 @@ export async function runCoreOperation(op, args = {}, context = {}) {
       && (!args.cardId || card.id === args.cardId)).map((card) => ({
       creditId: card.id, originalCreditId: card.creditId, accountScopeId: card.accountScopeId,
       accountDisplay: card.accountDisplay || snapshot.account.boundDisplay,
-      accountReady: card.accountReady ?? snapshot.account.state === 'verified',
+      accountReady: card.accountReady ?? (snapshot.account.state === 'verified'
+        && (!accounts || snapshot.account.independent)),
       cardName: card.title, source: card.source, expiresAt: card.expiresAt,
       expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
       currentAvailableCount: snapshot.confirmed?.availableCount ?? null,
@@ -165,7 +178,8 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     return { account: { state: 'verified', boundDisplay: null }, accounts: snapshots.map((snapshot) => snapshot.account),
       cards: snapshots.flatMap((snapshot) => snapshot.cards.map((card) => ({ ...card,
         accountDisplay: snapshot.account.nickname || snapshot.account.boundDisplay,
-        accountReady: snapshot.account.state === 'verified' && snapshot.account.remindersEnabled }))) };
+        accountReady: snapshot.account.state === 'verified' && snapshot.account.remindersEnabled
+          && (!accounts || snapshot.account.independent) }))) };
   }
 
   const scopeProfiles = new Map();

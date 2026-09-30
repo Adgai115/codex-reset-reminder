@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   coreStatus: () => invoke('core:status'),
   loginAccount: (scopeId) => invoke('accounts:login', scopeId),
   cancelAccountLogin: () => invoke('accounts:cancelLogin'),
+  quitApp: () => invoke('app:quit'),
   onStateChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('state:changed', listener);

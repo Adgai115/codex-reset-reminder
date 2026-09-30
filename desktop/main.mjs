@@ -51,6 +51,8 @@ if (!gotLock) {
   let accountTimer = null;
   let checkingCurrent = false;
   let lastCurrentScope = null;
+  let sessionsClosed = false;
+  let closingSessions = false;
 
   function stateChanged() {
     if (quitting) return;
@@ -176,13 +178,13 @@ if (!gotLock) {
       try {
         const snapshot = await coreRequest('allAccountsSnapshot');
         const cards = snapshot.cards.filter((card) => card.status === 'available' && card.expiresAt > Date.now() / 1000);
-        const latest = snapshot.latest;
+        const checkedAt = Math.max(0, ...snapshot.accounts.map((account) => account.latest?.checkedAt || 0));
         pendingCount = cards.filter((card) => card.pendingReminder).length;
         reminders?.reconcile(snapshot);
         const count = cards.length;
-        const next = cards[0];
+        const next = cards.reduce((earliest, card) => !earliest || card.expiresAt < earliest.expiresAt ? card : earliest, null);
         summary = `${count} 张可用`;
-        detail = `${summary}\n最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'}\n上次核对：${latest ? new Date(latest.checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
+        detail = `${summary}\n最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'}\n最近同步：${checkedAt ? new Date(checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
       } catch (error) { summary = '读取失败'; detail = error.message; }
       if (quitting || tray.isDestroyed()) return;
       tray.setToolTip(`Codex 重置卡提醒\n${detail}`);
@@ -271,6 +273,10 @@ if (!gotLock) {
   ipcMain.handle('accounts:cancelLogin', (event) => {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的账号操作');
     return accountSessions.cancelLogin();
+  });
+  ipcMain.handle('app:quit', (event) => {
+    if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
+    return requestQuit();
   });
   ipcMain.handle('core:status', (event) => {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
@@ -521,7 +527,7 @@ if (!gotLock) {
     await startRuntime();
   }).catch((error) => { dialog.showErrorBox('启动失败', error.message); app.quit(); });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
     quitting = true;
     scheduler?.stop();
     callbackListener?.stop();
@@ -529,7 +535,15 @@ if (!gotLock) {
     clearInterval(trayRefreshTimer);
     clearTimeout(stateTimer);
     clearInterval(accountTimer);
-    accountSessions?.close().catch(() => {});
+    if (accountSessions && !sessionsClosed) {
+      event.preventDefault();
+      if (!closingSessions) {
+        closingSessions = true;
+        accountSessions.close().catch(() => {}).finally(() => {
+          sessionsClosed = true; console.info('[accounts] 会话已关闭'); app.quit();
+        });
+      }
+    }
   });
   app.on('window-all-closed', () => { /* stay in tray */ });
   app.on('activate', () => {

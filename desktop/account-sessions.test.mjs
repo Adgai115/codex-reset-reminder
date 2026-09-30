@@ -86,3 +86,66 @@ test('browser login can be cancelled; late completion cannot save credentials', 
     assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
   } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('logging into a different identity cannot replace an existing protected account', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-login-identity-'));
+  const sourceHome = join(directory, 'source'); await mkdir(sourceHome);
+  await writeFile(join(sourceHome, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-original' }));
+  let notify;
+  let loginHome;
+  const sessions = createAccountSessions({ directory, crypto: protector(), sourceHome,
+    createSession: (_script, options) => {
+      if (options.onNotification) { notify = options.onNotification; loginHome = options.home; }
+      return { async request(method) {
+        if (method === 'account/login/start') {
+          await writeFile(join(options.home, 'auth.json'), JSON.stringify({ email: 'beta@example.invalid', secret: 'fake-wrong' }));
+          return { type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' };
+        }
+        return identity(JSON.parse(await readFile(join(options.home, 'auth.json'), 'utf8')).email);
+      }, close: async () => {} };
+    }, openLogin: async () => {} });
+  try {
+    const original = binding('first', 'alpha@example.invalid');
+    await sessions.capture({ binding: original, script: 'mock' });
+    const protectedBefore = await readFile(join(directory, 'accounts', 'credentials', 'first.bin'));
+    await sessions.startLogin({ script: 'mock', expectedScopeId: 'first', onComplete: (args) => sessions.loginRequest({ ...args, binding: original }) });
+    notify('account/login/completed', { success: true });
+    for (let i = 0; i < 100 && sessions.status().state === 'waiting'; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(sessions.status().state, 'failed');
+    assert.deepEqual(await readFile(join(directory, 'accounts', 'credentials', 'first.bin')), protectedBefore);
+    assert.equal((await sessions.request({ scopeId: 'first', script: 'mock', method: 'account/read' })).account.email, 'alpha@example.invalid');
+    await assert.rejects(readFile(join(loginHome, 'auth.json')), { code: 'ENOENT' });
+  } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('successful browser login stays independent when CLI changes or captures the same account again', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-login-independent-'));
+  const sourceHome = join(directory, 'source'); await mkdir(sourceHome);
+  const source = JSON.stringify({ email: 'beta@example.invalid', secret: 'fake-cli-secret' });
+  await writeFile(join(sourceHome, 'auth.json'), source);
+  let notify;
+  const sessions = createAccountSessions({ directory, crypto: protector(), sourceHome,
+    createSession: (_script, options) => {
+      if (options.onNotification) notify = options.onNotification;
+      return { async request(method) {
+        if (method === 'account/login/start') {
+          await writeFile(join(options.home, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-browser-secret' }));
+          return { type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' };
+        }
+        return identity(JSON.parse(await readFile(join(options.home, 'auth.json'), 'utf8')).email);
+      }, close: async () => {} };
+    }, openLogin: async () => {} });
+  try {
+    const first = binding('first', 'alpha@example.invalid');
+    await sessions.startLogin({ script: 'mock', onComplete: (args) => sessions.loginRequest({ ...args, binding: first }) });
+    notify('account/login/completed', { success: true });
+    for (let i = 0; i < 100 && sessions.status().state === 'waiting'; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(sessions.status().state, 'complete');
+    assert.equal(await sessions.has('first'), true);
+    await sessions.capture({ binding: first, script: 'mock' });
+    assert.equal((await sessions.request({ scopeId: 'first', useCurrent: true, script: 'mock', method: 'account/read' })).account.email,
+      'alpha@example.invalid', 'independent browser session is used even if a mutable CLI session is marked current');
+    assert.equal(await readFile(join(sourceHome, 'auth.json'), 'utf8'), source);
+    assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+  } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});

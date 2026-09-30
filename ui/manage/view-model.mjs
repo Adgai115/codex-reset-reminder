@@ -42,10 +42,11 @@ export function automationSummary(snapshot) {
 }
 
 export function accountSummary(account) {
-  if (account?.state === 'verified') return account.boundDisplay;
+  if (account?.state === 'verified') return account.independent === undefined ? account.boundDisplay : '已连接';
   if (account?.state === 'needsBinding') return '待确认账号';
   if (account?.state === 'unidentified') return '账号无法辨认';
   if (account?.state === 'unavailable') return '账号暂不可用';
+  if (account?.state === 'loginRequired' || account?.state === 'mismatch') return '此账号需要登录';
   return '核对账号…';
 }
 
@@ -105,6 +106,7 @@ export function syncDescription(snapshot, now = Date.now() / 1000) {
 }
 
 export function accountDescription(account) {
+  if (account?.state === 'loginRequired' || account?.state === 'mismatch') return '在“账号管理”中登录此账号即可恢复后台同步和提醒。卡片与记录仍可查看。';
   if (!account || account.state === 'checking') return 'Codex 账号待核对，Codex 卡操作暂不可用。';
   if (account.state === 'verified') return `当前账号 ${account.boundDisplay} · 最近核对 ${formatTime(account.verifiedAt)}`;
   if (account.state === 'needsBinding') return `发现现有 Codex 缓存。当前 CLI：${account.currentDisplay}。请确认这是原账号后绑定。`;

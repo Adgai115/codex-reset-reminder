@@ -21,6 +21,7 @@ export function createAccountSessions({ directory, crypto, createSession = creat
   const vault = join(root, 'credentials');
   const runtime = join(root, 'runtime');
   const queues = new Map();
+  const activeSessions = new Set();
   let login = null;
   let publicLogin = { state: 'idle' };
   let stopped = false;
@@ -69,18 +70,22 @@ export function createAccountSessions({ directory, crypto, createSession = creat
     try {
       if (auth) await writeFile(join(home, 'auth.json'), auth, { mode: 0o600 });
       session = createSession(script, { home });
+      activeSessions.add(session);
       return await run(session, home);
-    } finally { await session?.close(); await removeRuntime(home); }
+    } finally { await session?.close(); activeSessions.delete(session); await removeRuntime(home); }
   }
   async function has(scopeId) {
     await initialized;
     try { await readFile(validateScope(scopeId)); return true; }
     catch (error) { if (error.code === 'ENOENT') return false; throw new Error('无法读取账号登录会话'); }
   }
-  async function request({ scopeId, script, method, params }) {
+  async function request({ scopeId, script, method, params, useCurrent = false }) {
+    if (stopped) throw new Error('账号服务已停止');
     if (!scopeId) {
       const session = createSession(script, { home: sourceHome, managed: false });
-      try { return await session.request(method, params); } finally { await session.close(); }
+      activeSessions.add(session);
+      try { return await session.request(method, params); }
+      finally { await session.close(); activeSessions.delete(session); }
     }
     return enqueue(scopeId, async () => {
       if (!secure()) throw new Error('系统凭据保护不可用，账号缓存仍可查看');
@@ -88,10 +93,18 @@ export function createAccountSessions({ directory, crypto, createSession = creat
       try { saved = JSON.parse(crypto.decryptString(await readFile(validateScope(scopeId)))); }
       catch { throw new Error('此账号需要重新登录，卡片与记录已保留'); }
       if (saved.version !== 1 || saved.scopeId !== scopeId) throw new Error('账号登录会话不匹配，请重新登录');
+      if (useCurrent && saved.sourceHash && method !== 'account/rateLimitResetCredit/consume') {
+        // 文件会话在 CLI 当前使用期间共用其刷新机制，避免两个目录同时刷新。
+        const session = createSession(script, { home: sourceHome, managed: false });
+        activeSessions.add(session);
+        try { return await session.request(method, params); }
+        finally { await session.close(); activeSessions.delete(session); }
+      }
       return withHome(script, saved.auth, async (session, home) => {
         const result = await session.request(method, params);
         // OAuth 可能刷新凭据，成功后保存新值，下次启动继续使用。
-        await persist(scopeId, home, saved.sourceHash || null);
+        try { await persist(scopeId, home, saved.sourceHash || null); }
+        catch (error) { if (method === 'account/rateLimitResetCredit/consume') error.afterRequest = true; throw error; }
         return result;
       });
     });
@@ -99,6 +112,11 @@ export function createAccountSessions({ directory, crypto, createSession = creat
   async function capture({ binding, script }) {
     return enqueue(binding.scopeId, async () => {
       if (!secure()) return { saved: false, reason: 'secure_storage_unavailable' };
+      try {
+        const saved = JSON.parse(crypto.decryptString(await readFile(validateScope(binding.scopeId))));
+        // 浏览器独立授权的会话不被 CLI 登录覆盖。
+        if (saved.scopeId === binding.scopeId && !saved.sourceHash) return { saved: true };
+      } catch { /* 尚无会话。 */ }
       let auth;
       try { auth = await readFile(join(sourceHome, 'auth.json'), 'utf8'); JSON.parse(auth); }
       catch { return { saved: false, reason: 'login_required' }; }
@@ -174,5 +192,9 @@ export function createAccountSessions({ directory, crypto, createSession = creat
   }
   return { has, request, capture, startLogin, cancelLogin, loginRequest,
     status: () => ({ ...publicLogin, secureStorage: secure() }),
-    async close() { stopped = true; await cancelLogin(); await Promise.allSettled([...queues.values()]); } };
+    async close() {
+      stopped = true; await cancelLogin();
+      await Promise.allSettled([...activeSessions].map((session) => session.close()));
+      await Promise.allSettled([...queues.values()]);
+    } };
 }

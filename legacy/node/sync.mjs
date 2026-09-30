@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { callAppServer } from './check.mjs';
 import { patchFeishuCard } from './feishu.mjs';
 import { replanScheduledTask } from './replan.mjs';
-import { getCard, latestCompleteSync, listPendingFeishuConfirmations, openStore,
+import { getCard, getAccountScope, latestCompleteSync, listPendingFeishuConfirmations, openStore,
   recordSyncFailure, saveCodexSnapshot, setFeishuMessageStatus } from './store.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +37,9 @@ export async function syncCards(configPath = join(directory, '..', '..', 'config
         try {
           await patchCard(config, message.messageId, card, message.thresholdDays,
             state, null, notice, null,
-            { currentAvailableCount: latestCompleteSync(db, scopeId)?.availableCount ?? null });
+            { currentAvailableCount: latestCompleteSync(db, scopeId)?.availableCount ?? null,
+              accountDisplay: getAccountScope(db, card.accountScopeId)?.nickname
+                || getAccountScope(db, card.accountScopeId)?.displayName || null });
           setFeishuMessageStatus(db, message.messageId, state);
         } catch {
           cardUpdateFailures.push(message.messageId);

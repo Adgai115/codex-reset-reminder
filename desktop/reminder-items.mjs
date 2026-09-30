@@ -11,7 +11,8 @@ export function mergeReminderItems(previous, incoming, nowSeconds = Math.floor(D
 }
 
 export function reminderStillActive(item, snapshot, nowSeconds = Math.floor(Date.now() / 1000)) {
-  if (snapshot.account?.state !== 'verified') return false;
+  const account = snapshot.accounts?.find((scope) => scope.scopeId === item.accountScopeId) || snapshot.account;
+  if (account?.state !== 'verified' || account.remindersEnabled === false) return false;
   const card = snapshot.cards.find((candidate) => candidate.id === item.creditId);
   if (!card || card.status !== 'available' || card.expiresAt !== item.expiresAt || card.expiresAt <= nowSeconds) return false;
   const snooze = card.snooze?.expiresAt === card.expiresAt ? card.snooze : null;

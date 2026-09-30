@@ -57,7 +57,19 @@ test('all accounts continue synchronizing and reminding when CLI and displayed a
   const consume = calls.find((call) => call.method === 'account/rateLimitResetCredit/consume');
   assert.equal(consume.scopeId, first.scopeId, 'consume uses owning session although CLI and UI show second account');
   assert.equal(consume.params.creditId, 'shared-credit');
+  const savedSecond = profiles.get(second.scopeId);
+  profiles.delete(second.scopeId);
+  await assert.rejects(run('resetCardFromReminder', { cardId: other.cards[0].id, expectedExpiresAt: expiry }), /账号管理中登录/);
+  assert.equal(calls.filter((call) => call.method === 'account/rateLimitResetCredit/consume').length, 1,
+    'current CLI fallback is readable but cannot consume without a pinned account session');
+  profiles.set(second.scopeId, savedSecond);
   await run('updateAccount', { scopeId: first.scopeId, nickname: '工作号', remindersEnabled: false });
+  profiles.get(first.scopeId).usage.rateLimitResetCredits.credits.push({ id: 'paused-credit',
+    title: '暂停账号新卡', status: 'available', expiresAt: expiry + 60 });
+  profiles.get(first.scopeId).usage.rateLimitResetCredits.availableCount = 2;
+  await run('syncCards', { scopeId: first.scopeId });
+  await run('runReminders');
+  assert.equal(shown.length, 2, 'a paused account continues syncing but does not send new reminders');
   profiles.get(first.scopeId).fail = true;
   profiles.get(second.scopeId).usage.rateLimitResetCredits.credits.push({ id: 'next-credit',
     title: '第二账号新卡', status: 'available', expiresAt: expiry + 60 });
@@ -70,12 +82,13 @@ test('all accounts continue synchronizing and reminding when CLI and displayed a
   assert.equal(shown[2].cards[0].accountScopeId, second.scopeId);
   await run('selectAccount', { scopeId: first.scopeId });
   const offline = await run('manageSnapshot');
-  assert.equal(offline.cards.length, 1);
+  assert.equal(offline.cards.length, 2);
   assert.equal(offline.account.nickname, '工作号');
   assert.equal(offline.syncHistory[0].outcome, 'failed');
-  assert.equal(offline.cards[0].deliveryResults.length, 1);
-  await run('scheduleSnooze', { cardId: offline.cards[0].id, scopeId: first.scopeId, option: '1d' });
-  assert.ok((await run('manageSnapshot')).cards[0].snooze);
-  assert.equal((await run('allAccountsSnapshot')).cards.length, 3);
+  const original = offline.cards.find((card) => card.creditId === 'shared-credit');
+  assert.equal(original.deliveryResults.length, 1);
+  await run('scheduleSnooze', { cardId: original.id, scopeId: first.scopeId, option: '1d' });
+  assert.ok((await run('manageSnapshot')).cards.find((card) => card.id === original.id).snooze);
+  assert.equal((await run('allAccountsSnapshot')).cards.length, 4);
 });
 process.on('exit', () => rmSync(directory, { recursive: true, force: true }));

@@ -16,13 +16,20 @@ public static class MockCodex {
             string method = Regex.Match(line, "\"method\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value;
             File.AppendAllText(Path.Combine(root, "mock-requests.log"), method + "\n");
             try {
+                string dataRoot = root;
+                string home = Environment.GetEnvironmentVariable("CODEX_HOME");
+                if (!String.IsNullOrEmpty(home) && File.Exists(Path.Combine(home, "auth.json"))) {
+                    string auth = File.ReadAllText(Path.Combine(home, "auth.json"), Encoding.UTF8);
+                    Match profile = Regex.Match(auth, "\"mockProfile\"\\s*:\\s*\"([^\"]+)\"");
+                    if (profile.Success) dataRoot = profile.Groups[1].Value;
+                }
                 string result;
                 if (method == "initialize") result = "{}";
                 else {
                     string file = method == "account/read" ? "mock-account.json"
                         : method == "account/rateLimits/read" ? "mock-usage.json" : null;
                     if (file == null) throw new InvalidOperationException("unsupported");
-                    result = File.ReadAllText(Path.Combine(root, file), Encoding.UTF8);
+                    result = File.ReadAllText(Path.Combine(dataRoot, file), Encoding.UTF8);
                 }
                 Console.WriteLine("{\"id\":" + id.Groups[1].Value + ",\"result\":" + result + "}");
             } catch {
