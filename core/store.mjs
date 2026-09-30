@@ -113,6 +113,10 @@ export function openStore() {
   if (!cardColumns.has('reported_used_at')) db.exec('ALTER TABLE cards ADD COLUMN reported_used_at INTEGER');
   if (!cardColumns.has('reported_baseline_count')) db.exec('ALTER TABLE cards ADD COLUMN reported_baseline_count INTEGER');
   if (!cardColumns.has('account_scope_id')) db.exec('ALTER TABLE cards ADD COLUMN account_scope_id TEXT');
+  if (!cardColumns.has('credit_id')) {
+    db.exec('ALTER TABLE cards ADD COLUMN credit_id TEXT');
+    db.exec("UPDATE cards SET credit_id = id WHERE source = 'codex'");
+  }
   const scopeColumns = new Set(db.prepare('PRAGMA table_info(account_scopes)').all().map((column) => column.name));
   if (scopeColumns.has('slot')) {
     db.exec(`BEGIN IMMEDIATE;
@@ -126,6 +130,13 @@ export function openStore() {
       COMMIT;`);
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS account_scopes_one_active ON account_scopes(active) WHERE active = 1');
+  const currentScopeColumns = new Set(db.prepare('PRAGMA table_info(account_scopes)').all().map((column) => column.name));
+  for (const [name, definition] of [['reminders_enabled', 'INTEGER NOT NULL DEFAULT 1'],
+    ['nickname', 'TEXT'], ['next_sync_at', 'INTEGER'], ['sync_failures', 'INTEGER NOT NULL DEFAULT 0']]) {
+    if (!currentScopeColumns.has(name)) db.exec(`ALTER TABLE account_scopes ADD COLUMN ${name} ${definition}`);
+  }
+  db.exec('CREATE TABLE IF NOT EXISTS account_state (name TEXT PRIMARY KEY, value TEXT)');
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS cards_scope_credit ON cards(account_scope_id, credit_id) WHERE source = 'codex' AND account_scope_id IS NOT NULL");
   const historyColumns = new Set(db.prepare('PRAGMA table_info(sync_history)').all().map((column) => column.name));
   if (!historyColumns.has('account_scope_id')) {
     db.exec('ALTER TABLE sync_history ADD COLUMN account_scope_id TEXT');
@@ -144,9 +155,18 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
     throw new Error('Codex 未返回有效的重置卡数量');
   }
   if (credits != null && !Array.isArray(credits)) throw new Error('Codex 返回的重置卡详情格式无效');
-  const rows = (credits || []).filter((credit) => credit?.status === 'available'
+  const rawRows = (credits || []).filter((credit) => credit?.status === 'available'
     && typeof credit.id === 'string' && credit.id.length > 0
     && Number.isInteger(credit.expiresAt));
+  if (new Set(rawRows.map((credit) => credit.id)).size !== rawRows.length) throw new Error('Codex 返回了重复的卡片编号');
+  const rows = rawRows.map((credit) => {
+    if (!scopeId) return { ...credit, creditId: credit.id };
+    const same = db.prepare("SELECT id FROM cards WHERE source = 'codex' AND account_scope_id = ? AND credit_id = ?").get(scopeId, credit.id);
+    if (same) return { ...credit, creditId: credit.id, id: same.id };
+    const existing = db.prepare('SELECT source, account_scope_id AS scopeId FROM cards WHERE id = ?').get(credit.id);
+    if (existing && (!existing.scopeId || existing.source !== 'codex')) throw new Error('Codex 卡片归属账号不一致，已停止合并缓存');
+    return { ...credit, creditId: credit.id, id: existing ? `codex:${scopeId}:${credit.id}` : credit.id };
+  });
   const complete = Array.isArray(credits) && availableCount === credits.length && rows.length === credits.length;
   const detailMessage = credits == null ? `Codex 只返回 ${availableCount} 张的数量，未提供逐卡到期详情`
     : complete ? null : `Codex 返回 ${availableCount} 张可用卡，其中 ${rows.length} 张有有效到期详情`;
@@ -154,18 +174,9 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
   const seenIds = new Set(rows.map((credit) => credit.id));
   const newlyUsed = [];
   const noLongerAvailable = [];
-  if (scopeId) {
-    const owner = db.prepare('SELECT source, account_scope_id AS scopeId FROM cards WHERE id = ?');
-    for (const credit of rows) {
-      const existing = owner.get(credit.id);
-      if (existing && (existing.source !== 'codex' || existing.scopeId !== scopeId)) {
-        throw new Error('Codex 卡片归属账号不一致，已停止合并缓存');
-      }
-    }
-  }
   const upsert = db.prepare(`
-    INSERT INTO cards (id, source, title, granted_at, expires_at, status, updated_at, last_seen_at, account_scope_id)
-    VALUES (?, 'codex', ?, ?, ?, 'available', ?, ?, ?)
+    INSERT INTO cards (id, source, title, granted_at, expires_at, status, updated_at, last_seen_at, account_scope_id, credit_id)
+    VALUES (?, 'codex', ?, ?, ?, 'available', ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       source = 'codex', title = excluded.title, granted_at = excluded.granted_at,
       expires_at = excluded.expires_at,
@@ -177,7 +188,7 @@ export function saveCodexSnapshot(db, resetCredits, checkedAt = Math.floor(Date.
   try {
     for (const credit of rows) {
       upsert.run(credit.id, credit.title || '重置卡', Number.isInteger(credit.grantedAt) ? credit.grantedAt : null,
-        credit.expiresAt, checkedAt, checkedAt, scopeId);
+        credit.expiresAt, checkedAt, checkedAt, scopeId, credit.creditId);
     }
     if (complete) {
       const missing = db.prepare(`SELECT id, expires_at AS expiresAt,
@@ -215,7 +226,7 @@ export function recordSyncFailure(db, message, checkedAt = Math.floor(Date.now()
 export function listCards(db, includeInactive = false) {
   return db.prepare(`SELECT id, source, title, granted_at AS grantedAt, expires_at AS expiresAt,
     status, updated_at AS updatedAt, last_seen_at AS lastSeenAt,
-    account_scope_id AS accountScopeId,
+    account_scope_id AS accountScopeId, COALESCE(credit_id, id) AS creditId,
     reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount
     FROM cards ${includeInactive ? '' : "WHERE status = 'available'"} ORDER BY expires_at ASC`).all();
 }
@@ -223,7 +234,7 @@ export function listCards(db, includeInactive = false) {
 export function getCard(db, id) {
   return db.prepare(`SELECT id, source, title, granted_at AS grantedAt, expires_at AS expiresAt,
     status, updated_at AS updatedAt, last_seen_at AS lastSeenAt,
-    account_scope_id AS accountScopeId,
+    account_scope_id AS accountScopeId, COALESCE(credit_id, id) AS creditId,
     reported_used_at AS reportedUsedAt, reported_baseline_count AS reportedBaselineCount
     FROM cards WHERE id = ?`).get(id) || null;
 }
@@ -231,15 +242,54 @@ export function getCard(db, id) {
 export function getActiveAccountScope(db) {
   return db.prepare(`SELECT scope_id AS scopeId, email_hash AS emailHash,
     workspace_hash AS workspaceHash, display_name AS displayName,
-    bound_at AS boundAt, verified_at AS verifiedAt, active
+    bound_at AS boundAt, verified_at AS verifiedAt, active, nickname,
+    reminders_enabled AS remindersEnabled, next_sync_at AS nextSyncAt, sync_failures AS syncFailures
     FROM account_scopes WHERE active = 1 LIMIT 1`).get() || null;
 }
 
 export function listAccountScopes(db) {
   return db.prepare(`SELECT scope_id AS scopeId, email_hash AS emailHash,
     workspace_hash AS workspaceHash, display_name AS displayName,
-    bound_at AS boundAt, verified_at AS verifiedAt, active
+    bound_at AS boundAt, verified_at AS verifiedAt, active, nickname,
+    reminders_enabled AS remindersEnabled, next_sync_at AS nextSyncAt, sync_failures AS syncFailures
     FROM account_scopes ORDER BY bound_at ASC`).all();
+}
+
+export const getAccountScope = (db, scopeId) => listAccountScopes(db).find((scope) => scope.scopeId === scopeId) || null;
+
+export function currentCliScopeId(db) {
+  return db.prepare("SELECT value FROM account_state WHERE name = 'current_cli_scope'").get()?.value || null;
+}
+
+export function noteCurrentCliScope(db, scopeId) {
+  const previous = currentCliScopeId(db);
+  const selected = getActiveAccountScope(db)?.scopeId;
+  db.prepare("INSERT INTO account_state (name, value) VALUES ('current_cli_scope', ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value").run(scopeId);
+  if (!selected || (previous && selected === previous && previous !== scopeId)) activateAccountScope(db, scopeId);
+}
+
+export function updateAccountPreferences(db, scopeId, { nickname, remindersEnabled } = {}) {
+  const scope = getAccountScope(db, scopeId);
+  if (!scope) throw new Error('账号不存在');
+  const name = nickname === undefined ? scope.nickname : String(nickname).trim();
+  if (name && (name.length > 30 || /[\r\n\t]/.test(name))) throw new Error('账号名称最多 30 字，不能换行');
+  if (remindersEnabled !== undefined && typeof remindersEnabled !== 'boolean') throw new Error('提醒开关无效');
+  db.prepare('UPDATE account_scopes SET nickname = ?, reminders_enabled = ? WHERE scope_id = ?')
+    .run(name || null, remindersEnabled === undefined ? scope.remindersEnabled : Number(remindersEnabled), scopeId);
+}
+
+export function recordAccountSyncSchedule(db, scopeId, complete, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const scope = getAccountScope(db, scopeId);
+  const failures = complete ? 0 : Math.min((scope?.syncFailures || 0) + 1, 3);
+  const next = nowSeconds + (failures ? [60, 300, 900][failures - 1] : 900);
+  db.prepare('UPDATE account_scopes SET next_sync_at = ?, sync_failures = ? WHERE scope_id = ?').run(next, failures, scopeId);
+  return next;
+}
+
+export function listSyncHistory(db, scopeId, limit = 50) {
+  return db.prepare(`SELECT checked_at AS checkedAt, outcome, available_count AS availableCount,
+    detailed_count AS detailedCount, message FROM sync_history WHERE account_scope_id = ?
+    ORDER BY checked_at DESC, id DESC LIMIT ?`).all(scopeId, limit);
 }
 
 export function activateAccountScope(db, scopeId) {

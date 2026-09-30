@@ -11,6 +11,18 @@ test('合并按到期排序，相同卡和节点只保留一项，旧节点不�
   assert.deepEqual(mergeReminderItems([a], [changedExpiry], 100), [changedExpiry]);
 });
 
+test('manual review keeps offline cached reminders scoped; automatic alerts still require a connected account', () => {
+  const item = { creditId: 'a', accountScopeId: 'first', expiresAt: 200, nodeKind: 'fixed', nodeAt: 80 };
+  const card = { id: 'a', accountScopeId: 'first', expiresAt: 200, status: 'available' };
+  const snapshot = { account: { state: 'verified', scopeId: 'second' },
+    accounts: [{ state: 'loginRequired', scopeId: 'first' }, { state: 'verified', scopeId: 'second' }], cards: [card] };
+  assert.equal(reminderStillActive(item, snapshot, 100), false);
+  assert.equal(reminderStillActive({ ...item, reviewOnly: true }, snapshot, 100), true);
+  assert.equal(reminderStillActive({ ...item, reviewOnly: true, accountScopeId: 'second' }, snapshot, 100), false);
+  assert.equal(reminderStillActive({ ...item, reviewOnly: true }, { ...snapshot, accounts: [] }, 100), false);
+  assert.equal(reminderStillActive({ ...item, reviewOnly: true }, { ...snapshot, cards: [{ ...card, status: 'used' }] }, 100), false);
+});
+
 test('在途弹窗随账号、官方使用状态、有效期与单卡延期失效', () => {
   const item = { creditId: 'a', expiresAt: 200, nodeKind: 'fixed', nodeAt: 80 };
   const card = { id: 'a', expiresAt: 200, status: 'available' };

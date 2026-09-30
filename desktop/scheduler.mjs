@@ -9,10 +9,11 @@ export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}
   let exactTimer = null;
   let queue = Promise.resolve();
   const retrying = new Map();
+  const syncingScopes = new Map();
   const automatic = createAutoSync({
-    run: () => enqueue(async () => {
+    run: (reason) => enqueue(async () => {
       if (!running) return null;
-      try { return await coreRequest('syncCards'); }
+      try { return await coreRequest('syncAllAccounts', { force: ['startup', 'resume', 'manual'].includes(reason) }); }
       finally { await reschedule(); }
     }),
     onChanged,
@@ -41,8 +42,8 @@ export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}
     if (!running) return;
     try {
       const due = await coreRequest('dueUsageVerifications');
-      if (due.length) {
-        try { await coreRequest('syncCards'); }
+      for (const scopeId of new Set(due.map((card) => card.accountScopeId))) {
+        try { await coreRequest('syncCards', { scopeId }); }
         catch (error) { console.warn(`[scheduler] 使用核验暂不可用：${error.message}`); }
       }
       try { await coreRequest('preflightSync'); }
@@ -84,7 +85,19 @@ export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}
     clearTimeout(exactTimer);
     powerMonitor.removeListener('resume', resume);
   }
-  return { start, stop, check, retry, sync: automatic.sync, syncState: automatic.state,
+  function sync(reason, scopeId = null) {
+    if (!scopeId) return automatic.sync(reason);
+    if (syncingScopes.has(scopeId)) return syncingScopes.get(scopeId);
+    const pending = enqueue(async () => {
+      try { return await coreRequest('syncCards', { scopeId }); }
+      finally { await reschedule(); }
+    }).finally(() => { syncingScopes.delete(scopeId); onChanged(); check(`after-${reason}`).catch(() => {}); });
+    syncingScopes.set(scopeId, pending); onChanged();
+    return pending;
+  }
+  return { start, stop, check, retry, sync, syncState: (scopeId) => ({ ...automatic.state(),
+    syncing: automatic.state().syncing || syncingScopes.has(scopeId) }),
     isSyncing: () => automatic.state().syncing,
+    isSyncingScope: (scopeId) => syncingScopes.has(scopeId),
     isRetrying: () => retrying.size > 0, reschedule: () => enqueue(reschedule) };
 }

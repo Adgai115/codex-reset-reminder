@@ -13,9 +13,10 @@ export function createAutoSync({ run, onChanged = () => {}, onSettled = () => {}
   let nextAt = null;
   let lastStartedAt = -Infinity;
 
-  function schedule() {
+  function schedule(plannedAt = null) {
     if (!running) return;
-    const delay = failures ? retryDelays[Math.min(failures, retryDelays.length) - 1] : syncIntervalMs;
+    const delay = Number.isFinite(plannedAt) ? Math.max(1000, plannedAt * 1000 - now())
+      : failures ? retryDelays[Math.min(failures, retryDelays.length) - 1] : syncIntervalMs;
     nextAt = now() + delay;
     timer = setTimer(() => { sync('automatic').catch(onError); }, delay);
   }
@@ -25,7 +26,9 @@ export function createAutoSync({ run, onChanged = () => {}, onSettled = () => {}
     clearTimer(timer);
     nextAt = null;
     lastStartedAt = now();
-    pending = Promise.resolve().then(run).then((result) => {
+    let plannedAt = null;
+    pending = Promise.resolve().then(() => run(reason)).then((result) => {
+      plannedAt = result?.nextSyncAt ?? null;
       failures = result?.complete ? 0 : Math.min(failures + 1, retryDelays.length);
       return result;
     }, (error) => {
@@ -33,7 +36,7 @@ export function createAutoSync({ run, onChanged = () => {}, onSettled = () => {}
       throw error;
     }).finally(() => {
       pending = null;
-      schedule();
+      schedule(plannedAt);
       onChanged();
       if (running) onSettled(reason);
     });

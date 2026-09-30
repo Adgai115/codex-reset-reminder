@@ -9,11 +9,18 @@ const directory = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = join(directory, '..');
 let nextEventId = 1;
 const pendingDesktop = new Map();
+const pendingAccounts = new Map();
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', async (line) => {
   let request;
   try { request = JSON.parse(line); } catch { return; }
+  if (request.type === 'account-result') {
+    const pending = pendingAccounts.get(request.eventId);
+    if (pending) { pendingAccounts.delete(request.eventId);
+      if (request.ok) pending.resolve(request.result); else pending.reject(new Error(request.error)); }
+    return;
+  }
   if (request.type === 'desktop-result') {
     const pending = pendingDesktop.get(request.eventId);
     if (pending) {
@@ -25,14 +32,20 @@ rl.on('line', async (line) => {
   }
   const { id, op, args = {} } = request;
   try {
-    const result = await runCoreOperation(op, args, { desktop: (payload) => new Promise((resolve, reject) => {
+    const result = await runCoreOperation(op, args, {
+      accounts: (action, args) => new Promise((resolve, reject) => {
+        const eventId = nextEventId++;
+        pendingAccounts.set(eventId, { resolve, reject });
+        process.stdout.write(`${JSON.stringify({ type: 'account', eventId, action, args })}\n`);
+      }), desktop: (payload) => new Promise((resolve, reject) => {
       const eventId = nextEventId++;
       pendingDesktop.set(eventId, { resolve, reject });
       process.stdout.write(`${JSON.stringify({ type: 'desktop', eventId, payload })}\n`);
     }) });
     process.stdout.write(`${JSON.stringify({ type: 'result', id, ok: true, result })}\n`);
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ type: 'result', id, ok: false, error: error.message })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'result', id, ok: false, error: error.message,
+      afterRequest: error.afterRequest === true })}\n`);
   }
 });
 process.stdout.write(`${JSON.stringify({ type: 'ready' })}\n`);

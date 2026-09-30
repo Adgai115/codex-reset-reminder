@@ -1,12 +1,13 @@
 // Electron main process: single instance, tray + manage window. The app is
 // the cross-platform replacement for main-tray.ps1 / manage.ps1.
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, powerMonitor } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, powerMonitor, safeStorage } from 'electron';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { coreRequest, coreStatus, setDesktopPresenter } from './core-host.mjs';
+import { coreRequest, coreStatus, setDesktopPresenter, setAccountProvider } from './core-host.mjs';
+import { createAccountSessions } from './account-sessions.mjs';
 import { createReminderManager } from './reminder-window.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createCallbackListener } from './callback-listener.mjs';
@@ -46,6 +47,12 @@ if (!gotLock) {
   let settingsDraft = { dirty: false, working: false };
   let closingSettings = false;
   let choosingClose = false;
+  let accountSessions = null;
+  let accountTimer = null;
+  let checkingCurrent = false;
+  let lastCurrentScope = null;
+  let sessionsClosed = false;
+  let closingSessions = false;
 
   function stateChanged() {
     if (quitting) return;
@@ -169,15 +176,15 @@ if (!gotLock) {
       let detail = summary;
       let pendingCount = 0;
       try {
-        const snapshot = await coreRequest('manageSnapshot');
+        const snapshot = await coreRequest('allAccountsSnapshot');
         const cards = snapshot.cards.filter((card) => card.status === 'available' && card.expiresAt > Date.now() / 1000);
-        const latest = snapshot.latest;
+        const checkedAt = Math.max(0, ...snapshot.accounts.map((account) => account.latest?.checkedAt || 0));
         pendingCount = cards.filter((card) => card.pendingReminder).length;
         reminders?.reconcile(snapshot);
         const count = cards.length;
-        const next = cards[0];
+        const next = cards.reduce((earliest, card) => !earliest || card.expiresAt < earliest.expiresAt ? card : earliest, null);
         summary = `${count} 张可用`;
-        detail = `${summary}\n最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'}\n上次核对：${latest ? new Date(latest.checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
+        detail = `${summary}\n最近到期：${next ? new Date(next.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '无'}\n最近同步：${checkedAt ? new Date(checkedAt * 1000).toLocaleString('zh-CN', { hour12: false }) : '从未'}`;
       } catch (error) { summary = '读取失败'; detail = error.message; }
       if (quitting || tray.isDestroyed()) return;
       tray.setToolTip(`Codex 重置卡提醒\n${detail}`);
@@ -199,7 +206,7 @@ if (!gotLock) {
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
   async function openPendingReminders(cardId) {
     try {
-      const payload = await coreRequest('pendingReminders', { cardId });
+      const payload = await coreRequest('pendingReminders', { cardId, all: true });
       await reminders.present(payload);
       return payload.cards.length;
     } finally { stateChanged(); }
@@ -212,13 +219,16 @@ if (!gotLock) {
   const allowedOperations = new Set(['manageSnapshot', 'listCards', 'getCard', 'latestSync', 'latestCompleteSync',
     'snooze',
     'scheduleSnooze', 'clearSnooze', 'syncCards', 'retryFailedChannels',
-    'checkAccount', 'confirmLegacyBinding']);
-  const mutatingOperations = new Set(['scheduleSnooze', 'clearSnooze']);
+    'checkAccount', 'confirmLegacyBinding', 'selectAccount', 'updateAccount']);
+  const mutatingOperations = new Set(['scheduleSnooze', 'clearSnooze', 'selectAccount', 'updateAccount']);
   ipcMain.handle('core', async (event, op, args) => {
     if (event.senderFrame?.url !== managePage || !allowedOperations.has(op)) {
       throw new Error('不允许的页面操作');
     }
-    if (op === 'syncCards' && scheduler) return scheduler.sync('manual');
+    if (op === 'syncCards' && scheduler) {
+      const snapshot = await coreRequest('manageSnapshot');
+      return scheduler.sync('manual', args?.scopeId || snapshot.account.scopeId);
+    }
     if (op === 'retryFailedChannels' && scheduler) return scheduler.retry(args);
     const result = await coreRequest(op, args);
     if (op === 'checkAccount' || op === 'confirmLegacyBinding') {
@@ -226,21 +236,47 @@ if (!gotLock) {
       if (result.state !== 'verified') return result;
       let syncResult = null;
       let syncError = null;
-      try { syncResult = await scheduler?.sync('account-confirmed') || null; }
+      try { syncResult = await scheduler?.sync('account-confirmed', result.scopeId) || null; }
       catch (error) { syncError = error.message; }
       // A check may switch accounts while an earlier sync is still running.
       // Once that request settles, immediately fetch the newly active account.
       if (scheduler && (syncError || syncResult?.accountScopeId !== result.scopeId)) {
-        try { syncResult = await scheduler.sync('account-switched'); syncError = null; }
+        try { syncResult = await scheduler.sync('account-switched', result.scopeId); syncError = null; }
         catch (error) { syncError = error.message; }
       }
       scheduler?.check('account-confirmed');
       return { ...result, syncResult, syncError };
     }
-    if (op === 'manageSnapshot') return { ...result, ...scheduler?.syncState(),
+    if (op === 'manageSnapshot') return { ...result, ...scheduler?.syncState(result.account.scopeId),
+      syncing: result.syncing || scheduler?.isSyncingScope(result.account.scopeId) === true,
+      nextSyncAt: result.account.nextSyncAt || scheduler?.syncState().nextSyncAt,
+      recovering: result.account.recovering, login: accountSessions?.status(),
       retrying: scheduler?.isRetrying() === true };
-    if (mutatingOperations.has(op)) { stateChanged(); scheduler?.check('card-change'); }
+    if (mutatingOperations.has(op)) {
+      stateChanged();
+      if (op !== 'selectAccount') scheduler?.check('card-change');
+    }
     return result;
+  });
+  ipcMain.handle('accounts:login', async (event, scopeId) => {
+    if (event.senderFrame?.url !== managePage || (scopeId !== undefined && typeof scopeId !== 'string'))
+      throw new Error('不允许的账号操作');
+    if (scopeId) await coreRequest('manageSnapshot', { scopeId });
+    const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
+    return accountSessions.startLogin({ script: config.codexScript, expectedScopeId: scopeId || null,
+      onComplete: async (args) => {
+        const result = await coreRequest('completeAccountLogin', args);
+        stateChanged();
+        await scheduler?.sync('account-login', result.scopeId).catch(() => {});
+      } });
+  });
+  ipcMain.handle('accounts:cancelLogin', (event) => {
+    if (event.senderFrame?.url !== managePage) throw new Error('不允许的账号操作');
+    return accountSessions.cancelLogin();
+  });
+  ipcMain.handle('app:quit', (event) => {
+    if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
+    return requestQuit();
   });
   ipcMain.handle('core:status', (event) => {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
@@ -408,6 +444,13 @@ if (!gotLock) {
 
   async function startRuntime() {
     if (scheduler) return;
+    accountSessions = createAccountSessions({ directory: process.env.CODEX_RESET_MONITOR_DATA_DIR
+      || join(projectRoot, '.state'), crypto: safeStorage, openLogin: (url) => shell.openExternal(url), onChanged: stateChanged });
+    setAccountProvider((action, args) => {
+      if (action === 'has') return accountSessions.has(args.scopeId);
+      if (['request', 'capture', 'loginRequest'].includes(action)) return accountSessions[action](args);
+      throw new Error('不允许的账号会话操作');
+    });
     scheduler = createScheduler({ coreRequest, powerMonitor, onResult: () => stateChanged(),
       onChanged: stateChanged });
     const onChanged = () => { stateChanged(); scheduler.reschedule(); };
@@ -419,6 +462,20 @@ if (!gotLock) {
     if (!background || setupWindow) showManage();
     trayRefreshTimer = setInterval(refreshTray, 60_000);
     scheduler.start();
+    // CLI 换号后自动发现新账号；已保存账号的后台工作继续运行。
+    accountTimer = setInterval(async () => {
+      if (checkingCurrent || quitting) return;
+      checkingCurrent = true;
+      try {
+        const status = await coreRequest('checkAccount');
+        if (status.state === 'verified' && status.scopeId !== lastCurrentScope) {
+          lastCurrentScope = status.scopeId;
+          await scheduler.sync('cli-account-changed', status.scopeId);
+        }
+        stateChanged();
+      } catch { /* 后台同步有独立重试；不覆盖其他账号状态。 */ }
+      finally { checkingCurrent = false; }
+    }, 30_000);
     const { databasePath } = await import('../core/store.mjs');
     callbackListener = createCallbackListener({
       configPath: process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(projectRoot, 'config.json'),
@@ -470,13 +527,23 @@ if (!gotLock) {
     await startRuntime();
   }).catch((error) => { dialog.showErrorBox('启动失败', error.message); app.quit(); });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
     quitting = true;
     scheduler?.stop();
     callbackListener?.stop();
     reminders?.closeAll();
     clearInterval(trayRefreshTimer);
     clearTimeout(stateTimer);
+    clearInterval(accountTimer);
+    if (accountSessions && !sessionsClosed) {
+      event.preventDefault();
+      if (!closingSessions) {
+        closingSessions = true;
+        accountSessions.close().catch(() => {}).finally(() => {
+          sessionsClosed = true; console.info('[accounts] 会话已关闭'); app.quit();
+        });
+      }
+    }
   });
   app.on('window-all-closed', () => { /* stay in tray */ });
   app.on('activate', () => {

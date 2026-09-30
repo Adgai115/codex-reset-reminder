@@ -9,7 +9,8 @@ const currentCard = () => payload?.cards.find((card) => card.creditId === select
 
 function controls() {
   for (const element of document.querySelectorAll('button, select')) element.disabled = busy;
-  $('reset').disabled = busy || payload?.simulated === true;
+  $('reset').disabled = busy || payload?.simulated === true || currentCard()?.accountReady === false;
+  $('reset').title = currentCard()?.accountReady === false ? '请先在账号管理中登录此账号' : '';
   $('option').disabled = busy || $('option').options.length < 2;
 }
 
@@ -18,8 +19,9 @@ function render(next) {
   if (!next.cards.some((card) => card.creditId === selectedId)) selectedId = next.cards[0]?.creditId || null;
   const card = currentCard();
   if (!card) return;
-  $('heading').textContent = next.simulated ? 'Codex 测试提醒' : 'Codex 重置卡';
-  $('account').textContent = next.accountDisplay || (next.simulated ? '演示账号' : '账号待核对');
+  $('heading').textContent = next.simulated ? 'Codex 测试提醒'
+    : card.reviewOnly && card.accountReady === false ? 'Codex 重置卡 · 缓存' : 'Codex 重置卡';
+  $('account').textContent = card.accountDisplay || next.accountDisplay || (next.simulated ? '演示账号' : '账号待核对');
   const index = next.cards.findIndex((item) => item.creditId === card.creditId);
   $('pager').hidden = next.cards.length < 2;
   $('position').textContent = `${index + 1} / ${next.cards.length}`;
@@ -28,8 +30,8 @@ function render(next) {
     ? `不足 ${Math.max(1, hours)} 小时` : `${Math.ceil(hours / 24)} 天后到期`;
   $('name').textContent = card.cardName;
   $('name').title = card.cardName;
-  $('card-key').textContent = keyLabel(card.creditId);
-  $('card-key').title = card.creditId;
+  $('card-key').textContent = keyLabel(card.originalCreditId || card.creditId);
+  $('card-key').title = card.originalCreditId || card.creditId;
   $('expiry').textContent = `到期 ${card.expiresLocal}`;
   $('option').replaceChildren();
   const placeholder = document.createElement('option');

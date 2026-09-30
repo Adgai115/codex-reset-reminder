@@ -162,8 +162,13 @@ async function triggerWindow(tab, expression) {
 
 async function stopTree(child) {
   if (!child) return;
+  const stillRunning = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    try { process.kill(child.pid, 0); return true; }
+    catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+  };
   let killOutput = '';
-  if (process.platform === 'win32' && child.exitCode === null) {
+  if (process.platform === 'win32' && stillRunning()) {
     await new Promise((resolve, reject) => {
       const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -184,11 +189,13 @@ async function stopTree(child) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 进程组已退出。 */ }
   }
   const exitDeadline = Date.now() + 15000;
-  while (child.exitCode === null && child.signalCode === null && Date.now() < exitDeadline) await sleep(100);
-  assert.ok(child.exitCode !== null || child.signalCode !== null, `测试实例尚未退出：${child.pid}\n${killOutput}`);
+  // Windows 管道可能被尚在退出的孙进程继承；以 OS 中的主进程存活状态核对退出。
+  while (stillRunning() && Date.now() < exitDeadline) await sleep(100);
+  assert.ok(!stillRunning(), `测试实例尚未退出：${child.pid}\n${killOutput}`);
   child.stdout?.destroy();
   child.stderr?.destroy();
   child.unref();
+  if (process.platform === 'win32') await sleep(1500);
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'codex-reset-ui-smoke-'));
@@ -196,6 +203,7 @@ const setupOnly = process.argv.includes('--setup');
 const p0Only = process.argv.includes('--p0');
 const recoveryOnly = process.argv.includes('--recovery');
 const pendingOnly = process.argv.includes('--pending');
+const accountsOnly = process.argv.includes('--accounts');
 const background = process.argv.includes('--background');
 const nativeDialogs = process.platform === 'win32' && process.argv.includes('--native-dialogs');
 const mockAccount = { account: { type: 'chatgpt', email: 'ci@example.invalid' }, requiresOpenaiAuth: true };
@@ -267,17 +275,36 @@ try {
     finally { db.close(); }
     const config = JSON.parse(await readFile(join(root, 'config.example.json'), 'utf8'));
     config.codexScript = mockCli;
-    config.desktop.enabled = p0Only || pendingOnly;
-    if (p0Only || pendingOnly) config.reminders.quietHours.enabled = false;
+    config.desktop.enabled = p0Only || pendingOnly || accountsOnly;
+    if (p0Only || pendingOnly || accountsOnly) config.reminders.quietHours.enabled = false;
     config.feishu.enabled = false;
     if (config.wechat) config.wechat.enabled = false;
     await writeFile(join(profile, 'config.json'), JSON.stringify(config));
   }
   let port = await freePort();
   // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
-  const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
+  const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu',
+    ...(accountsOnly ? ['--password-store=gnome-libsecret'] : [])] : [];
   const testEnv = { ...process.env, CODEX_RESET_MONITOR_USER_DATA_DIR: profile,
-    CODEX_RESET_MONITOR_SKIP_MIGRATION: '1', CODEX_RESET_MONITOR_DATA_DIR: profile };
+    CODEX_RESET_MONITOR_SKIP_MIGRATION: '1', CODEX_RESET_MONITOR_DATA_DIR: profile,
+    CODEX_RESET_MONITOR_CODEX_HOME: join(profile, 'source-codex'), CODEX_HOME: join(profile, 'source-codex') };
+  await mkdir(testEnv.CODEX_HOME, { recursive: true });
+  const accountA = join(profile, 'account-a');
+  const accountB = join(profile, 'account-b');
+  const sourceAuth = join(testEnv.CODEX_HOME, 'auth.json');
+  if (!setupOnly) await writeFile(sourceAuth, JSON.stringify({ mockProfile: profile.replaceAll('\\', '/') }));
+  if (accountsOnly) {
+    await mkdir(accountA); await mkdir(accountB);
+    await writeFile(join(accountA, 'mock-account.json'), JSON.stringify(mockAccount));
+    await writeFile(join(accountB, 'mock-account.json'), JSON.stringify({ account: { type: 'chatgpt', email: 'work@different.invalid' } }));
+    const now = Math.floor(Date.now() / 1000);
+    for (const [path, name] of [[accountA, '个人号'], [accountB, '工作号']]) {
+      await writeFile(join(path, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: { availableCount: 2,
+        credits: [activeCardId, `${name}-second`].map((id, i) => ({ id, title: `${name}卡片 ${i + 1}`,
+          status: 'available', expiresAt: now + (2 + i * 2) * 86400 })) } }));
+    }
+    await writeFile(sourceAuth, JSON.stringify({ mockProfile: accountA.replaceAll('\\', '/') }));
+  }
   const reopen = async () => {
     await new Promise((resolve, reject) => {
       const second = spawn(appPath, testFlags, { env: testEnv, windowsHide: true, stdio: 'ignore' });
@@ -345,6 +372,66 @@ try {
       '连接成功但详情缺失时显示真实原因');
     await screenshot(setup, 'setup');
     console.log(`安装初始化检查通过：${process.platform}，缺失的 Codex CLI 能得到明确提示`);
+  } else if (accountsOnly) {
+    const manage = await page(port, '/ui/manage/index.html', child, deadline);
+    await until(manage, `document.querySelector('#pending-filter')?.textContent === '已提醒 2'`, '第一账号自动提醒');
+    const first = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(first.account.independent, true, '独立登录须经系统凭据加密保存');
+    const firstId = first.account.scopeId;
+    await writeFile(sourceAuth, JSON.stringify({ mockProfile: accountB.replaceAll('\\', '/') }));
+    await evaluate(manage, `window.api.core('checkAccount')`);
+    await until(manage, `document.querySelector('#account-select').options.length === 2
+      && document.querySelector('#cards tbody').textContent.includes('工作号卡片')`, '换号后自动显示新账号官方卡');
+    const second = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    const secondId = second.account.scopeId;
+    assert.notEqual(firstId, secondId);
+    assert.equal(second.account.independent, true);
+    assert.notEqual(first.cards.find(card => card.creditId === activeCardId).id,
+      second.cards.find(card => card.creditId === activeCardId).id, '相同官方卡号按账号隔离');
+    await evaluate(manage, `const choose=document.querySelector('#account-select');choose.value=${JSON.stringify(firstId)};choose.dispatchEvent(new Event('change'));true`);
+    await until(manage, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '不用切换 CLI 即可查看旧账号');
+    await evaluate(manage, `document.querySelector('#sync-view').click();true`);
+    await until(manage, `document.querySelector('#records tbody').textContent.includes('已同步')`, '当前账号同步记录');
+    await screenshot(manage, 'accounts-sync-history');
+    await evaluate(manage, `document.querySelector('#reminders-view').click();true`);
+    await until(manage, `document.querySelector('#records tbody').textContent.includes('个人号卡片')
+      && !document.querySelector('#records tbody').textContent.includes('工作号卡片')`, '提醒记录按账号展示');
+    await screenshot(manage, 'accounts-reminder-history');
+    await evaluate(manage, `document.querySelector('#manage-accounts').click();true`);
+    await until(manage, `document.querySelectorAll('.account-row').length === 2`, '账号管理列表');
+    await screenshot(manage, 'accounts-manager');
+    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#cards-view').click();true`);
+    await rm(join(accountA, 'mock-usage.json'));
+    await evaluate(manage, `window.api.core('syncCards',{scopeId:${JSON.stringify(firstId)}}).catch(()=>null)`);
+    const bUsage = JSON.parse(await readFile(join(accountB, 'mock-usage.json'), 'utf8'));
+    bUsage.rateLimitResetCredits.availableCount = 3;
+    bUsage.rateLimitResetCredits.credits.push({ id: 'work-third', title: '工作号新增卡', status: 'available', expiresAt: Math.floor(Date.now()/1000) + 86400 });
+    await writeFile(join(accountB, 'mock-usage.json'), JSON.stringify(bUsage));
+    await evaluate(manage, `window.api.core('syncCards',{scopeId:${JSON.stringify(secondId)}})`);
+    await evaluate(manage, `window.api.core('selectAccount',{scopeId:${JSON.stringify(secondId)}})`);
+    await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 3'`, '第一账号失败时第二账号继续提醒');
+    const all = await evaluate(manage, `window.api.core('manageSnapshot')`);
+    assert.equal(all.cards.length, 3);
+    await triggerWindow(manage, `window.api.quitApp()`);
+    const gracefulDeadline = Date.now() + 15000;
+    const processAlive = () => { try { process.kill(child.pid, 0); return true; }
+      catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    while (child.exitCode === null && processAlive() && Date.now() < gracefulDeadline) await sleep(100);
+    assert.ok(child.exitCode === 0 || (!processAlive() && logs.includes('[accounts] 会话已关闭')),
+      '多账号正常退出应关闭所有会话且进程结束');
+    await stopTree(child); port=await freePort(); launch();
+    const restarted = await page(port, '/ui/manage/index.html', child, Date.now()+60000);
+    await until(restarted, `document.querySelector('#account-select')?.options.length === 2
+      && document.querySelector('#pending-filter')?.textContent === '已提醒 3'`, '重启后恢复多个账号和提醒记录');
+    await evaluate(restarted, `window.api.core('selectAccount',{scopeId:${JSON.stringify(firstId)}})`);
+    await until(restarted, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '登录失败账号仍可查看缓存');
+    const restored = await evaluate(restarted, `window.api.core('manageSnapshot')`);
+    assert.equal(restored.cards.filter(card => card.status === 'available').length, 2);
+    assert.ok(restored.syncHistory.some(row => row.outcome === 'failed'));
+    assert.equal(restored.cards.reduce((sum,card)=>sum+card.deliveryResults.filter(row=>row.state==='sent').length,0),2);
+    await screenshot(restarted, 'accounts-offline-cache');
+    assert.ok(!/Uncaught (?:SyntaxError|TypeError|ReferenceError)|UnhandledPromiseRejection/.test(logs));
+    console.log('多账号安装包检查通过：账号选择、相同卡号隔离、同步/提醒记录、独立故障与重启恢复');
   } else if (recoveryOnly) {
     const manage = await page(port, '/ui/manage/index.html', child, deadline);
     await until(manage, `document.querySelector('#account-status')?.textContent.includes('账号暂不可用')
@@ -387,6 +474,9 @@ try {
       && document.querySelector('#account').textContent.includes('example.invalid')
       && [...document.querySelectorAll('#name, #expiry, select')].every(element => getComputedStyle(element).whiteSpace === 'nowrap')`), true);
     if (nativeDialogs) {
+      const resetState = await evaluate(reminder, `({ disabled: document.querySelector('#reset').disabled,
+        title: document.querySelector('#reset').title, account: document.querySelector('#account').textContent })`);
+      assert.equal(resetState.disabled, false, JSON.stringify(resetState));
       await evaluate(reminder, `document.querySelector('#reset').click(); true`);
       await clickNative('取消');
       await until(reminder, `document.querySelector('#feedback').textContent.includes('已取消')`, '取消二次确认不请求用卡');
@@ -448,6 +538,8 @@ try {
     await until(reminder, `document.querySelector('#pager').hidden
       && document.querySelector('#name').textContent.includes('CI 合并提醒 3')`, '官方不可用卡从弹窗移除');
     await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 1'`, '自动清理失效待处理');
+    await triggerWindow(reminder, `document.querySelector('#close').click(); true`);
+    await untilClosed(port, '/ui/reminder/index.html');
     const firstAccountUsage = await readFile(join(profile, 'mock-usage.json'), 'utf8');
     await writeFile(join(profile, 'mock-usage.json'), JSON.stringify({ rateLimitResetCredits: {
       availableCount: 1, credits: [{ id: 'RateLimitResetCredit_secondAccount',
@@ -464,11 +556,17 @@ try {
     await until(manage, `document.querySelector('#account-info').dataset.state === 'verified'
       && document.querySelector('#cards tbody').textContent.includes('CI 第二账号卡')
       && !document.querySelector('#cards tbody').textContent.includes('CI 合并提醒')`, '换号后自动同步第二账号卡');
-    assert.match(await evaluate(manage, `document.querySelector('#account-status').textContent`), /d\*\*\*@example.invalid/);
+    assert.match(await evaluate(manage, `document.querySelector('#account-select').selectedOptions[0].textContent`), /d\*\*\*@example.invalid/);
     assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 0);
+    assert.equal((await reminderTabs()).length, 0, '换号和同步不会重发已发送节点');
+    assert.equal(await evaluate(manage, `window.api.openPendingReminders()`), 1, '托盘可查看其他账号的已提醒缓存');
+    reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
+    await until(reminder, `document.querySelector('#heading')?.textContent.includes('缓存')
+      && document.querySelector('#account')?.textContent.includes('c***@example.invalid')
+      && document.querySelector('#reset')?.disabled`, '离线历史账号可查看，正式用卡禁用');
+    assert.equal((await reminderTabs()).length, 1);
+    await triggerWindow(reminder, `document.querySelector('#close').click(); true`);
     await untilClosed(port, '/ui/reminder/index.html');
-    assert.equal(await evaluate(manage, `window.api.openPendingReminders()`), 0);
-    assert.equal((await reminderTabs()).length, 0, '第二账号不可重新展示第一账号待处理');
     await writeFile(join(profile, 'mock-usage.json'), firstAccountUsage);
     await writeFile(accountFile, JSON.stringify(mockAccount));
     await evaluate(manage, `window.api.core('checkAccount')`);

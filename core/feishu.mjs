@@ -116,7 +116,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
       ] },
     ] },
     plain(card.title, 'heading-3', 'default'),
-    ...(card.source === 'codex' ? [plain(`${accountDisplay || 'Codex 账号待核对'} · #${card.id.slice(-6)}`,
+    ...(card.source === 'codex' ? [plain(`${accountDisplay || 'Codex 账号待核对'} · #${(card.creditId || card.id).slice(-6)}`,
       'notation', 'grey-500')] : []),
     { tag: 'column_set', flex_mode: 'none', horizontal_spacing: '12px',
       background_style: 'grey-50', columns: [
@@ -126,7 +126,7 @@ export function buildFeishuCard(card, days, { state = 'available', nextDays = nu
         ] },
         { tag: 'column', width: 'weighted', weight: 1, padding: '12px', vertical_spacing: '4px', elements: [
           plain('卡片编号', 'notation', 'grey-500'),
-          plain(card.id, 'heading-4', 'default'),
+          plain(card.creditId || card.id, 'heading-4', 'default'),
         ] },
       ] },
     { tag: 'hr', margin: '4px 0' },

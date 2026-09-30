@@ -56,7 +56,7 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
         const confirmation = await dialog.showMessageBox(record.window, {
           type: 'warning', noLink: true, buttons: ['取消', '确认立即重置'], defaultId: 0, cancelId: 0,
           message: `立即重置 ${item.cardName}？`,
-          detail: `账号：${record.accountDisplay || '待核对'}\n卡片：#${item.creditId.slice(-6)}\n确认后会向 Codex 发起正式用卡请求；成功后无法撤销。`,
+          detail: `账号：${item.accountDisplay || record.accountDisplay || '待核对'}\n卡片：#${(item.originalCreditId || item.creditId).slice(-6)}\n确认后会向 Codex 发起正式用卡请求；成功后无法撤销。`,
         });
         if (confirmation.response !== 1) return { outcome: 'cancelled' };
         const result = await coreRequest('resetCardFromReminder', {
@@ -73,7 +73,7 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
         if (!item || !['1d', '3d', 'tomorrow10'].includes(args?.option)) throw new Error('提醒时间或卡片无效');
         if (!record.simulated) {
           await coreRequest('scheduleSnooze', { cardId: item.creditId, option: args.option,
-            expectedExpiresAt: item.expiresAt });
+            expectedExpiresAt: item.expiresAt, scopeId: item.accountScopeId });
           await onScheduleChanged();
         }
         // 新节点可能在保存期间加入；只移除用户刚处理的那条。
@@ -135,8 +135,15 @@ export function createReminderManager({ coreRequest, onScheduleChanged }) {
     reconcile(snapshot) {
       const record = windows.get('real');
       if (!record) return;
-      const remaining = record.items.filter((item) => reminderStillActive(item, snapshot));
-      if (remaining.length !== record.items.length) { record.items = remaining; update(record); }
+      const remaining = record.items.filter((item) => reminderStillActive(item, snapshot)).map((item) => {
+        const card = snapshot.cards.find((card) => card.id === item.creditId);
+        return { ...item, accountReady: card.accountReady ?? item.accountReady,
+          accountDisplay: card.accountDisplay || item.accountDisplay };
+      });
+      if (remaining.length !== record.items.length || remaining.some((item, i) =>
+        item.accountReady !== record.items[i].accountReady || item.accountDisplay !== record.items[i].accountDisplay)) {
+        record.items = remaining; update(record);
+      }
     },
     closeAll() {
       stopped = true;
