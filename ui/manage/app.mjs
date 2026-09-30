@@ -41,6 +41,7 @@ function controls() {
     element.disabled = busy || element.dataset.unavailable === 'true'
       || (snapshot?.retrying === true && element.dataset.retry === 'true');
   });
+  document.querySelectorAll('#account-list input').forEach((element) => { element.disabled = busy; });
   $('sync').disabled = busy || snapshot?.syncing === true;
   $('sync').textContent = snapshot?.syncing ? '同步中…' : '刷新';
   const loggingIn = snapshot?.login?.state === 'waiting';
@@ -69,7 +70,7 @@ function renderDelivery(parent, card) {
   }
   const nodes = deliveryGroups(card);
   if (!nodes.length) text(parent, 'span', cardState(card).active && snapshot.channels.length
-    ? nextReminder(card, snapshot.channels) : '—', 'sub single-line');
+    ? nextReminder(card, snapshot.channels, undefined, snapshot.account) : '—', 'sub single-line');
   for (const result of nodes[0] || []) {
     const compact = text(parent, 'div', '', 'delivery-compact');
     const line = text(compact, 'div', '', 'delivery-summary');
@@ -89,7 +90,7 @@ function renderDelivery(parent, card) {
   text(details, 'div', card.title, 'delivery-line');
   text(details, 'div', `编号：${card.creditId || card.id}`, 'delivery-line');
   text(details, 'div', `到期：${formatTime(card.expiresAt)}`, 'delivery-line');
-  text(details, 'div', nextReminder(card, snapshot.channels), 'delivery-line');
+  text(details, 'div', nextReminder(card, snapshot.channels, undefined, snapshot.account), 'delivery-line');
   for (const results of nodes) {
     const group = text(details, 'div', '', 'delivery-node');
     text(group, 'div', deliveryNodeLabel(results[0]), 'delivery-title');
@@ -153,7 +154,7 @@ function render() {
   const selector = $('account-select');
   selector.replaceChildren();
   for (const account of snapshot.accounts || []) {
-    const option = text(selector, 'option', `${account.nickname || account.boundDisplay}${account.currentCli ? ' · Codex 当前' : ''}`);
+    const option = text(selector, 'option', `${account.displayLabel || account.nickname || account.boundDisplay}${account.currentCli ? ' · Codex 当前' : ''}`);
     option.value = account.scopeId;
     option.selected = account.scopeId === snapshot.account.scopeId;
   }
@@ -233,7 +234,7 @@ function renderAccounts() {
       input.dataset.scope = account.scopeId;
       input.addEventListener('change', () => action('updateAccount', { scopeId: account.scopeId, nickname: input.value }, '账号名称已保存'));
       if (account.currentCli) text(name, 'span', 'Codex 当前', 'badge normal');
-      text(info, 'div', `${account.boundDisplay} · ${account.independent ? account.state === 'verified' ? '已连接' : '待恢复连接' : '需独立登录'}`, 'sub single-line');
+      text(info, 'div', `${account.boundDisplay} · ${account.independent ? account.state === 'verified' ? '已连接' : '待恢复连接' : '需独立登录'}`, 'sub single-line').title = account.displayLabel || account.boundDisplay;
       const actions = text(row, 'div', '', 'account-actions');
       const label = text(actions, 'label', '');
       const toggle = text(label, 'input', ''); toggle.type = 'checkbox'; toggle.checked = account.remindersEnabled;
@@ -313,6 +314,7 @@ async function action(op, args, success, errorId) {
   } catch (error) {
     if (errorId) $(errorId).textContent = error.message;
     else notice('操作失败', true, error.message);
+    await load(true);
     return null;
   } finally {
     busy = false; controls();
@@ -326,15 +328,21 @@ $('account-select').addEventListener('change', () => selectAccount($('account-se
 $('manage-accounts').addEventListener('click', () => { renderAccounts(); controls(); $('accounts-dialog').showModal(); });
 $('close-accounts').addEventListener('click', () => $('accounts-dialog').close());
 $('add-account').addEventListener('click', () => loginAccount());
-$('get-current-account').addEventListener('click', () => $('check-account').click());
-$('cancel-login').addEventListener('click', async () => { await window.api.cancelAccountLogin(); await load(true); });
+$('get-current-account').addEventListener('click', () => checkAccount());
+$('cancel-login').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true; controls();
+  try { await window.api.cancelAccountLogin(); }
+  catch (error) { notice('取消登录失败', true, error.message); }
+  finally { busy = false; await load(true); controls(); }
+});
 $('settings').addEventListener('click', () => window.api.openSettings().catch((error) => notice(error.message, true)));
 $('channel-status').addEventListener('click', () => $('settings').click());
-$('check-account').addEventListener('click', async () => {
+async function checkAccount(scopeId) {
   if (busy) return;
   busy = true; controls(); notice('核对账号…');
   try {
-    const result = await window.api.core('checkAccount');
+    const result = await window.api.core('checkAccount', scopeId ? { scopeId } : {});
     const sync = result.syncResult;
     notice(result.state !== 'verified' ? accountSummary(result)
       : result.syncError ? '账号已核实 · 卡片同步暂不可用'
@@ -344,7 +352,8 @@ $('check-account').addEventListener('click', async () => {
     result.syncError || sync?.detailMessage || accountDescription(result));
   } catch (error) { notice('账号核对失败', true, error.message); }
   finally { busy = false; await load(true); controls(); }
-});
+}
+$('check-account').addEventListener('click', () => checkAccount(snapshot?.account?.scopeId));
 $('bind-account').addEventListener('click', async () => {
   if (busy || snapshot?.account?.state !== 'needsBinding') return;
   const candidate = snapshot.account;

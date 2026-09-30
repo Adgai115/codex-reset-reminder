@@ -35,6 +35,36 @@ function attempt() {
   finally { db.close(); }
 }
 
+test('concurrent checks recheck and claim a channel after asynchronous identity verification', async () => {
+  seed(); config();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered = 0; let calls = 0;
+  const options = { configPath, nowSeconds: now, trackAttempts: true,
+    verifyScope: async () => { entered++; await gate; return null; }, feishu: async () => { calls++; } };
+  const first = runReminders(options); const second = runReminders(options);
+  while (entered < 2) await new Promise((resolve) => setImmediate(resolve));
+  release(); await Promise.all([first, second]);
+  assert.equal(calls, 1); assert.equal(attempt().attempts, 1);
+});
+
+test('snoozing during identity verification cancels the old channel send', async () => {
+  seed(); config(); let calls = 0;
+  await runReminders({ configPath, nowSeconds: now, trackAttempts: true,
+    verifyScope: async () => { const db = openStore();
+      try { scheduleSnooze(db, cardId, expiry, now + 86400); } finally { db.close(); } return null; },
+    feishu: async () => { calls++; } });
+  assert.equal(calls, 0); assert.equal(attempt(), null);
+});
+
+test('disabling a channel during identity verification cancels its send', async () => {
+  seed(); config(); let calls = 0;
+  await runReminders({ configPath, nowSeconds: now, trackAttempts: true,
+    verifyScope: async () => { config({ feishu: { enabled: false } }); return null; },
+    feishu: async () => { calls++; } });
+  assert.equal(calls, 0); assert.equal(attempt(), null);
+});
+
 test('only the failed channel is retried after restart; success stays deduplicated', async () => {
   seed(); config({ desktop: { enabled: true } });
   let desktop = 0;

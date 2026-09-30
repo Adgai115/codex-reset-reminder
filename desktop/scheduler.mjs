@@ -41,14 +41,7 @@ export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}
   async function performCheck(reason, options = {}) {
     if (!running) return;
     try {
-      const due = await coreRequest('dueUsageVerifications');
-      for (const scopeId of new Set(due.map((card) => card.accountScopeId))) {
-        try { await coreRequest('syncCards', { scopeId }); }
-        catch (error) { console.warn(`[scheduler] 使用核验暂不可用：${error.message}`); }
-      }
-      try { await coreRequest('preflightSync'); }
-      catch (error) { console.warn(`[scheduler] 提醒前核对失败：${error.message}`); }
-      const result = await coreRequest('runReminders', options);
+      const result = await coreRequest('checkReminders', options);
       onResult(result, reason);
       return result;
     } finally { await reschedule(); onChanged(); }

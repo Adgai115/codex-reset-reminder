@@ -41,7 +41,7 @@ export function accountStatus(db, scopeId = null) {
 
 async function performAccountCheck(configPath, { appServer = callAppServer,
   confirmLegacy = false, expectedCandidateToken = null, expectedScopeId = null,
-  activate = true } = {}) {
+  activate = true, beforeConfirm = null } = {}) {
   const db = openStore();
   let binding = expectedScopeId ? getAccountScope(db, expectedScopeId)
     : getAccountScope(db, currentCliScopeId(db)) || getActiveAccountScope(db);
@@ -72,12 +72,14 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
         : identity.email && binding.emailHash === digest(binding.scopeId, identity.email));
       if (!match) return finish({ state: 'mismatch', scopeId: expectedScopeId,
         boundDisplay: binding?.displayName ?? null, currentDisplay: identity.displayName, verifiedAt: null });
-      confirmAccountScope(db, { scopeId: binding.scopeId, emailHash: digest(binding.scopeId, identity.email) || binding.emailHash,
-        workspaceHash: digest(binding.scopeId, identity.workspaceId) || binding.workspaceHash, displayName: identity.displayName });
+      const confirmed = { scopeId: binding.scopeId, emailHash: digest(binding.scopeId, identity.email) || binding.emailHash,
+        workspaceHash: digest(binding.scopeId, identity.workspaceId) || binding.workspaceHash, displayName: identity.displayName };
+      if (beforeConfirm) await beforeConfirm(confirmed);
+      confirmAccountScope(db, confirmed);
       return finish({ state: 'verified', scopeId: binding.scopeId, boundDisplay: identity.displayName,
         currentDisplay: identity.displayName, verifiedAt: Math.floor(Date.now() / 1000) });
     }
-    const originallySelected = getActiveAccountScope(db)?.scopeId;
+    let newBinding = false;
     if (!scopes.length) {
       const candidateToken = digest(candidateSalt, `${identity.email || ''}\0${identity.workspaceId || ''}`);
       if (countCodexCards(db) && (!confirmLegacy || expectedCandidateToken !== candidateToken)) {
@@ -87,9 +89,9 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
         return finish(sessionStatus);
       }
       const scopeId = randomUUID();
-      bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
-        workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName });
-      binding = getActiveAccountScope(db);
+      binding = { scopeId, emailHash: digest(scopeId, identity.email),
+        workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName };
+      newBinding = true;
     } else {
       const workspaceMatches = identity.workspaceId
         ? scopes.filter((scope) => scope.workspaceHash === digest(scope.scopeId, identity.workspaceId)) : [];
@@ -106,21 +108,25 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
       } else binding = null;
       if (!binding) {
         const scopeId = randomUUID();
-        bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
-          workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName });
-        binding = getActiveAccountScope(db);
-      } else if (activate && !binding.active) {
-        activateAccountScope(db, binding.scopeId);
+        binding = { scopeId, emailHash: digest(scopeId, identity.email),
+          workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName };
+        newBinding = true;
       }
     }
-    if (!activate && originallySelected && getActiveAccountScope(db)?.scopeId !== originallySelected)
-      activateAccountScope(db, originallySelected);
     const emailHash = digest(binding.scopeId, identity.email);
     const workspaceHash = digest(binding.scopeId, identity.workspaceId);
-    confirmAccountScope(db, { scopeId: binding.scopeId,
+    const confirmed = { scopeId: binding.scopeId,
       emailHash: emailHash || binding.emailHash,
       workspaceHash: workspaceHash || binding.workspaceHash,
-      displayName: identity.displayName });
+      displayName: identity.displayName };
+    // 保存独立会话后才登记或更新账号；这里没有跨异步步骤的数据库事务。
+    if (beforeConfirm) await beforeConfirm(confirmed);
+    const originallySelected = getActiveAccountScope(db)?.scopeId;
+    if (newBinding) bindAccountScope(db, confirmed);
+    else if (activate && !binding.active) activateAccountScope(db, binding.scopeId);
+    if (!activate && originallySelected && getActiveAccountScope(db)?.scopeId !== originallySelected)
+      activateAccountScope(db, originallySelected);
+    confirmAccountScope(db, confirmed);
     sessionStatus = { state: 'verified', scopeId: binding.scopeId,
       boundDisplay: identity.displayName, currentDisplay: identity.displayName,
       verifiedAt: Math.floor(Date.now() / 1000) };

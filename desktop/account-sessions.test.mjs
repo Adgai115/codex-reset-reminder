@@ -16,6 +16,9 @@ function protector() {
 }
 const binding = (id, email) => ({ scopeId: id, emailHash: createHash('sha256').update(`${id}\0${email}`).digest('hex'), workspaceHash: null });
 const identity = (email) => ({ account: { type: 'chatgpt', email } });
+const deferred = () => { let resolve; let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject }; };
 
 test('encrypted account sessions survive restart, refresh separately and leave source login untouched', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-vault-'));
@@ -84,6 +87,141 @@ test('browser login can be cancelled; late completion cannot save credentials', 
     assert.equal(completions, 0);
     assert.equal(sessions.status().state, 'idle');
     assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+  } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('concurrent browser login requests create only one session and clean up on close', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-login-concurrent-'));
+  let opened = 0;
+  const sessions = createAccountSessions({ directory, crypto: protector(), sourceHome: directory,
+    createSession: () => ({ request: async () => ({ type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' }),
+      close: async () => {} }), openLogin: async () => { opened++; } });
+  try {
+    const results = await Promise.allSettled([sessions.startLogin({ script: 'mock', onComplete: () => {} }),
+      sessions.startLogin({ script: 'mock', onComplete: () => {} })]);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.match(results.find((result) => result.status === 'rejected').reason.message, /已有账号/);
+    assert.equal(opened, 1);
+    assert.equal((await readdir(join(directory, 'accounts', 'runtime'))).length, 1);
+    await sessions.close();
+    assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+    await assert.rejects(sessions.startLogin({ script: 'mock', onComplete: () => {} }), /服务已停止/);
+  } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('cancelled completion cannot overwrite the status of a newer login', async () => {
+  for (const failed of [false, true]) {
+    const directory = await mkdtemp(join(tmpdir(), 'codex-login-stale-completion-'));
+    const completion = deferred(); const entered = deferred();
+    let notify;
+    const sessions = createAccountSessions({ directory, crypto: protector(), sourceHome: directory,
+      createSession: (_script, options) => { notify = options.onNotification;
+        return { request: async () => ({ type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' }),
+          close: async () => {} }; } });
+    try {
+      await sessions.startLogin({ script: 'mock', onComplete: () => { entered.resolve(); return completion.promise; } });
+      notify('account/login/completed', { success: true }); await entered.promise;
+      await sessions.cancelLogin();
+      await sessions.startLogin({ script: 'mock', onComplete: () => {} });
+      if (failed) completion.reject(new Error('simulated late failure')); else completion.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(sessions.status().state, 'waiting');
+      assert.equal((await readdir(join(directory, 'accounts', 'runtime'))).length, 1);
+      assert.deepEqual(await readdir(join(directory, 'accounts', 'credentials')), []);
+    } finally { completion.resolve(); await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+  }
+});
+
+test('cancelling while an identity request is pending prevents credential saving', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-login-cancel-identity-'));
+  const accountRead = deferred(); const entered = deferred(); const completed = deferred();
+  let notify;
+  const sessions = createAccountSessions({ directory, crypto: protector(), sourceHome: directory,
+    createSession: (_script, options) => { notify = options.onNotification;
+      return { async request(method) {
+        if (method === 'account/login/start') {
+          await writeFile(join(options.home, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-browser-secret' }));
+          return { type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' };
+        }
+        entered.resolve(); return accountRead.promise;
+      }, close: async () => {} }; } });
+  try {
+    await sessions.startLogin({ script: 'mock', onComplete: async (args) => {
+      try { return await sessions.loginRequest({ ...args, binding: binding('first', 'alpha@example.invalid') }); }
+      finally { completed.resolve(); }
+    } });
+    notify('account/login/completed', { success: true }); await entered.promise;
+    await sessions.cancelLogin();
+    accountRead.resolve(identity('alpha@example.invalid')); await completed.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sessions.status().state, 'idle');
+    assert.equal(await sessions.has('first'), false);
+    assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+  } finally { accountRead.resolve(identity('alpha@example.invalid')); await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('cancelling a login queued behind an account operation preserves its previous session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-login-cancel-queue-'));
+  const sourceHome = join(directory, 'source'); await mkdir(sourceHome);
+  await writeFile(join(sourceHome, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-original' }));
+  const operation = deferred(); const entered = deferred(); const loginRead = deferred(); const completed = deferred();
+  const crypto = protector(); let notify;
+  const sessions = createAccountSessions({ directory, crypto, sourceHome,
+    createSession: (_script, options) => {
+      if (options.onNotification) notify = options.onNotification;
+      return { async request(method) {
+        if (method === 'account/login/start') {
+          await writeFile(join(options.home, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-browser-new' }));
+          return { type: 'chatgpt', authUrl: 'https://auth.openai.com/authorize?fake=simulation' };
+        }
+        if (method === 'account/rateLimits/read') { entered.resolve(); return operation.promise; }
+        if (options.onNotification) loginRead.resolve();
+        return identity('alpha@example.invalid');
+      }, close: async () => {} };
+    } });
+  let pending;
+  try {
+    const first = binding('first', 'alpha@example.invalid');
+    await sessions.capture({ binding: first, script: 'mock' });
+    pending = sessions.request({ scopeId: 'first', script: 'mock', method: 'account/rateLimits/read' });
+    await entered.promise;
+    await sessions.startLogin({ script: 'mock', onComplete: async (args) => {
+      try { return await sessions.loginRequest({ ...args, binding: first }); }
+      finally { completed.resolve(); }
+    } });
+    notify('account/login/completed', { success: true }); await loginRead.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    await sessions.cancelLogin();
+    operation.resolve({ rateLimitResetCredits: { availableCount: 0, credits: [] } });
+    await pending; await completed.promise; await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sessions.status().state, 'idle');
+    const saved = JSON.parse(crypto.decryptString(await readFile(join(directory, 'accounts', 'credentials', 'first.bin'))));
+    assert.equal(JSON.parse(saved.auth).secret, 'fake-original');
+    assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+  } finally { operation.resolve({}); await pending; await sessions.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a successful consume followed by a credential save failure retains the request uncertainty flag', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-vault-consume-save-'));
+  const sourceHome = join(directory, 'source'); await mkdir(sourceHome);
+  await writeFile(join(sourceHome, 'auth.json'), JSON.stringify({ email: 'alpha@example.invalid', secret: 'fake-original' }));
+  const crypto = protector(); const encrypt = crypto.encryptString;
+  let failSaving = false; let consumeCalls = 0;
+  crypto.encryptString = (input) => { if (failSaving) throw new Error('模拟系统加密失败'); return encrypt(input); };
+  const sessions = createAccountSessions({ directory, crypto, sourceHome,
+    createSession: () => ({ async request(method) {
+      if (method === 'account/read') return identity('alpha@example.invalid');
+      if (method === 'account/rateLimitResetCredit/consume') { consumeCalls++; return { outcome: 'reset' }; }
+      return {};
+    }, close: async () => {} }) });
+  try {
+    await sessions.capture({ binding: binding('first', 'alpha@example.invalid'), script: 'mock' });
+    failSaving = true;
+    await assert.rejects(sessions.request({ scopeId: 'first', script: 'mock', method: 'account/rateLimitResetCredit/consume' }),
+      (error) => error.afterRequest === true && /模拟系统加密失败/.test(error.message));
+    assert.equal(consumeCalls, 1);
+    assert.deepEqual(await readdir(join(directory, 'accounts', 'runtime')), []);
+    assert.equal(await sessions.has('first'), true);
   } finally { await sessions.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

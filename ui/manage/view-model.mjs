@@ -24,6 +24,7 @@ export function deliveryGroups(card) {
 
 export function syncSummary(snapshot) {
   if (snapshot.syncing) return '同步中…';
+  if (snapshot.account?.state === 'loginRequired') return '缓存 · 登录后同步';
   if (['mismatch', 'needsBinding', 'unavailable', 'unidentified'].includes(snapshot.account?.state))
     return '提醒已暂停';
   if (!snapshot.latest) return '等待同步';
@@ -36,13 +37,16 @@ export function syncSummary(snapshot) {
 export const cardShortId = (id) => `#${String(id || '').slice(-6)}`;
 
 export function automationSummary(snapshot) {
+  if (snapshot.account?.state === 'loginRequired') return '登录后恢复自动同步';
   if (snapshot.syncing) return '自动同步中 · 失败渠道按计划补发';
   const next = snapshot.nextSyncAt ? ` · 下次 ${formatShortTime(snapshot.nextSyncAt)}` : '';
-  return `${snapshot.recovering ? '正在自动恢复连接' : '每 15 分钟自动同步'}${next}`;
+  const paused = snapshot.account?.remindersEnabled === false ? ' · 此账号提醒已暂停' : '';
+  return `${snapshot.recovering ? '正在自动恢复连接' : '每 15 分钟自动同步'}${next}${paused}`;
 }
 
 export function accountSummary(account) {
-  if (account?.state === 'verified') return account.independent === undefined ? account.boundDisplay : '已连接';
+  if (account?.state === 'verified') return account.independent === undefined ? account.boundDisplay
+    : account.remindersEnabled === false ? '已连接 · 提醒暂停' : '已连接';
   if (account?.state === 'needsBinding') return '待确认账号';
   if (account?.state === 'unidentified') return '账号无法辨认';
   if (account?.state === 'unavailable') return '账号暂不可用';
@@ -81,8 +85,10 @@ const kindLabel = (kind) => ({ '7d': '提前 7 天', '3d': '提前 3 天', '1d':
   'retry-1d': '1 天提醒补发', 'retry-snooze': '延期提醒补发',
   snooze: '延期提醒', verify: '使用核验' })[kind] || '提醒';
 
-export function nextReminder(card, channels, now = Date.now() / 1000) {
+export function nextReminder(card, channels, now = Date.now() / 1000, account) {
   if (!cardState(card, now).active) return '不再提醒';
+  if (account?.remindersEnabled === false) return '此账号提醒已暂停';
+  if (account?.state === 'loginRequired') return '登录后恢复提醒';
   const plan = card.plan || {};
   if (plan.dueAt) return `${kindLabel(plan.dueKind)}待补查`;
   if (plan.nextAt) return `${kindLabel(plan.nextKind)} · ${formatShortTime(plan.nextAt)}`;
@@ -95,6 +101,7 @@ export function nextReminder(card, channels, now = Date.now() / 1000) {
 export function syncDescription(snapshot, now = Date.now() / 1000) {
   if (snapshot.syncing) return '正在同步 Codex Usage，可继续查看本地卡片…';
   if (snapshot.account?.state === 'needsBinding') return '现有 Codex 卡等待绑定原账号；绑定前暂停同步和提醒。';
+  if (snapshot.account?.state === 'loginRequired') return '显示此账号缓存；在“账号管理”中登录后自动同步，卡片与记录保留。';
   if (['unavailable', 'unidentified'].includes(snapshot.account?.state))
     return '暂时无法核实 Codex 账号；卡片同步和提醒已暂停，后台将自动重新核对。';
   const { latest, confirmed } = snapshot;

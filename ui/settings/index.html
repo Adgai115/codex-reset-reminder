@@ -96,12 +96,14 @@
   let baseline = null;
   let connectionBaseline = '';
   let savedFeishuEnabled = false;
+  let updatePhase = 'idle';
   function showUpdateState(value) {
     if (value.phase === 'idle' || value.phase === 'manual') return;
+    updatePhase = value.phase;
     $('update-state').textContent = value.message || '';
     $('download-update').hidden = value.phase !== 'available';
     $('install-update').hidden = value.phase !== 'ready';
-    $('check-updates').disabled = ['checking', 'downloading'].includes(value.phase);
+    $('check-updates').disabled = ['checking', 'downloading', 'installing'].includes(value.phase);
     if (value.phase === 'downloading' || value.phase === 'ready') $('open-update').hidden = true;
   }
   const draft = () => ({ autoStartEnabled: $('autostart').checked, desktopEnabled: $('desktop').checked,
@@ -230,10 +232,11 @@
     try {
       const result = await window.api.checkUpdates();
       $('update-state').textContent = result.message;
-      $('download-update').hidden = result.state !== 'available' || !result.canInstall;
+      $('download-update').hidden = result.state !== 'available' || !result.canInstall || result.phase === 'ready';
+      $('install-update').hidden = result.phase !== 'ready';
       $('open-update').hidden = result.state !== 'available' || result.canInstall;
     } catch (error) { $('update-state').textContent = `检查失败：${error.message}`; }
-    finally { $('check-updates').disabled = false; }
+    finally { $('check-updates').disabled = ['checking', 'downloading', 'installing'].includes(updatePhase); }
   });
   $('download-update').addEventListener('click', async () => {
     $('download-update').disabled = true;
@@ -243,7 +246,7 @@
       $('update-state').textContent = `下载失败：${error.message}`;
       $('open-update').hidden = false;
     }
-    finally { $('download-update').disabled = false; $('check-updates').disabled = false; }
+    finally { $('download-update').disabled = false; $('check-updates').disabled = ['checking', 'downloading', 'installing'].includes(updatePhase); }
   });
   $('install-update').addEventListener('click', async () => {
     $('install-update').disabled = true;

@@ -7,7 +7,8 @@ import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 import { safeDeliveryFailure } from '../../core/delivery-results.mjs';
 import { mayAttemptReminder, nextRetryAfter } from '../../core/delivery-retry.mjs';
-import { clearSnooze, deliveryExists, getAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
+import { accountDisplayLabels } from '../../core/account-labels.mjs';
+import { clearSnooze, deliveryExists, getAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listAccountScopes, listCards, listDueSnoozes,
   beginReminderAttempt, getReminderAttempt, markSnoozeDelivered, openStore, recordDelivery,
   recordFeishuMessage, recordReminderResult } from './store.mjs';
 
@@ -23,7 +24,7 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   const quiet = quietHours(config);
   const db = openStore();
   const boundAccount = accountScopeId ? getAccountScope(db, accountScopeId) : null;
-  const accountDisplay = boundAccount ? (boundAccount.nickname || boundAccount.displayName) : null;
+  const accountDisplay = boundAccount ? accountDisplayLabels(listAccountScopes(db)).get(accountScopeId) : null;
   const results = [];
   const desktopJobs = [];
   const startedAt = Date.now();
@@ -53,6 +54,33 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     const begin = (node, channel) => {
       if (trackAttempts && !dryRun) beginReminderAttempt(db, node, channel, nowSeconds);
     };
+    // 身份核对会 await；核对后重新读取用户设置，再无 await 地核对和占用节点。
+    const claimCurrent = async (node, channel) => {
+      const currentConfig = JSON.parse(await readFile(configPath, 'utf8'));
+      const at = nowSeconds + Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      const currentQuiet = quietHours(currentConfig);
+      const card = getCard(db, node.cardId);
+      if (!enabledChannels(currentConfig).includes(channel) || card?.status !== 'available'
+        || card.expiresAt !== node.expiresAt || card.expiresAt <= at
+        || (accountScopeId && (card.accountScopeId !== accountScopeId
+          || !getAccountScope(db, accountScopeId)?.remindersEnabled))
+        || deliveryTime(at, card.expiresAt, currentQuiet) > at) return null;
+      const snooze = getSnooze(db, card.id);
+      const days = dueThreshold(card.expiresAt, at);
+      if (node.nodeKind === 'fixed') {
+        if (days !== node.thresholdDays || deliveryExists(db, card.id, card.expiresAt, days, channel)
+          || (snooze?.expiresAt === card.expiresAt && snooze.targetAt >= node.nodeAt)) return null;
+      } else if (snooze?.expiresAt !== card.expiresAt || snooze.targetAt !== node.nodeAt
+        || snooze[`${channel}DeliveredAt`] || (days !== null && node.nodeAt < card.expiresAt - days * 86400)) return null;
+      if (trackAttempts) {
+        const attempt = getReminderAttempt(db, { ...node, channel });
+        if (!mayAttemptReminder(attempt, at, Boolean(manualRetry))
+          || (!manualRetry && attempt?.nextRetryAt
+            && deliveryTime(attempt.nextRetryAt, card.expiresAt, currentQuiet) > at)) return null;
+      }
+      begin(node, channel);
+      return { card, config: currentConfig };
+    };
     const desktopSucceeded = ({ node, result }) => {
       recordDelivery(db, node.cardId, node.expiresAt, node.thresholdDays, 'desktop');
       if (node.nodeKind === 'snooze') markSnoozeDelivered(db, node.cardId, 'desktop');
@@ -67,7 +95,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         nodeKind: node.nodeKind, nodeAt: node.nodeAt, thresholdDays: node.thresholdDays,
       } };
       if (batchDesktop) { desktopJobs.push(job); return; }
-      begin(node, 'desktop');
+      if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
+      if (!await claimCurrent(node, 'desktop')) { result.desktop = 'deferred'; return; }
       await desktop(job.payload);
       desktopSucceeded(job);
     };
@@ -98,14 +127,16 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         if (!dryRun) {
           try {
             if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
-            begin(node, 'feishu');
-            const sent = await feishu(config, card, days, { currentAvailableCount: syncedCount, syncedAt, accountDisplay });
-            if (sent?.messageId && config.feishu.userId) {
-              recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
-                expiresAt: card.expiresAt, thresholdDays: days, recipientOpenId: config.feishu.userId });
+            const claimed = await claimCurrent(node, 'feishu');
+            if (!claimed) { result.feishu = 'deferred'; } else {
+              const sent = await feishu(claimed.config, claimed.card, days, { currentAvailableCount: syncedCount, syncedAt, accountDisplay });
+              if (sent?.messageId && claimed.config.feishu.userId) {
+                recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
+                  expiresAt: card.expiresAt, thresholdDays: days, recipientOpenId: claimed.config.feishu.userId });
+              }
+              recordDelivery(db, card.id, card.expiresAt, days, 'feishu');
+              result.feishu = saveResult(node, 'feishu', 'sent');
             }
-            recordDelivery(db, card.id, card.expiresAt, days, 'feishu');
-            result.feishu = saveResult(node, 'feishu', 'sent');
           } catch (error) { result.feishu = saveResult(node, 'feishu', 'failed', error); }
         }
       }
@@ -115,10 +146,12 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         if (!dryRun) {
           try {
             if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
-            begin(node, 'wechat');
-            await wechat(config, card, days, { currentAvailableCount: syncedCount });
-            recordDelivery(db, card.id, card.expiresAt, days, 'wechat');
-            result.wechat = saveResult(node, 'wechat', 'sent');
+            const claimed = await claimCurrent(node, 'wechat');
+            if (!claimed) { result.wechat = 'deferred'; } else {
+              await wechat(claimed.config, claimed.card, days, { currentAvailableCount: syncedCount });
+              recordDelivery(db, card.id, card.expiresAt, days, 'wechat');
+              result.wechat = saveResult(node, 'wechat', 'sent');
+            }
           } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
         }
       }
@@ -162,28 +195,32 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         && maySend(node, 'feishu')) {
         try {
           if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
-          begin(node, 'feishu');
-          const sent = await feishu(config, card, remainingDays,
-            { currentAvailableCount: syncedCount, syncedAt, snoozeTargetAt: snooze.targetAt, accountDisplay });
-          if (sent?.messageId && config.feishu.userId) {
-            recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
-              expiresAt: card.expiresAt, thresholdDays: remainingDays, recipientOpenId: config.feishu.userId });
+          const claimed = await claimCurrent(node, 'feishu');
+          if (!claimed) { result.feishu = 'deferred'; } else {
+            const sent = await feishu(claimed.config, claimed.card, remainingDays,
+              { currentAvailableCount: syncedCount, syncedAt, snoozeTargetAt: snooze.targetAt, accountDisplay });
+            if (sent?.messageId && claimed.config.feishu.userId) {
+              recordFeishuMessage(db, { messageId: sent.messageId, cardId: card.id,
+                expiresAt: card.expiresAt, thresholdDays: remainingDays, recipientOpenId: claimed.config.feishu.userId });
+            }
+            recordDelivery(db, card.id, card.expiresAt, 0, 'feishu');
+            markSnoozeDelivered(db, card.id, 'feishu');
+            result.feishu = saveResult(node, 'feishu', 'sent');
           }
-          recordDelivery(db, card.id, card.expiresAt, 0, 'feishu');
-          markSnoozeDelivered(db, card.id, 'feishu');
-          result.feishu = saveResult(node, 'feishu', 'sent');
         } catch (error) { result.feishu = saveResult(node, 'feishu', 'failed', error); }
       }
       if (channels.includes('wechat') && !snooze.wechatDeliveredAt && !dryRun
         && maySend(node, 'wechat')) {
         try {
           if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
-          begin(node, 'wechat');
-          await wechat(config, card, remainingDays,
-            { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt });
-          recordDelivery(db, card.id, card.expiresAt, 0, 'wechat');
-          markSnoozeDelivered(db, card.id, 'wechat');
-          result.wechat = saveResult(node, 'wechat', 'sent');
+          const claimed = await claimCurrent(node, 'wechat');
+          if (!claimed) { result.wechat = 'deferred'; } else {
+            await wechat(claimed.config, claimed.card, remainingDays,
+              { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt });
+            recordDelivery(db, card.id, card.expiresAt, 0, 'wechat');
+            markSnoozeDelivered(db, card.id, 'wechat');
+            result.wechat = saveResult(node, 'wechat', 'sent');
+          }
         } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
       }
       if (channels.includes('desktop') && !snooze.desktopDeliveredAt && !dryRun
@@ -205,7 +242,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
         const card = getCard(db, node.cardId);
         if (!enabledChannels(latestConfig).includes('desktop') || card?.status !== 'available'
           || card.expiresAt !== node.expiresAt || card.expiresAt <= batchNow
-          || (accountScopeId && card.accountScopeId !== accountScopeId)
+          || (accountScopeId && (card.accountScopeId !== accountScopeId
+            || !getAccountScope(db, accountScopeId)?.remindersEnabled))
           || deliveryTime(batchNow, card.expiresAt, currentQuiet) > batchNow) return false;
         const snooze = getSnooze(db, card.id);
         const days = dueThreshold(card.expiresAt, batchNow);

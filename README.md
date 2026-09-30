@@ -34,7 +34,7 @@
 | macOS Apple Silicon | DMG；暂不提供 Intel 版 |
 | Linux amd64 | AppImage、deb |
 
-下载后可用发布页的 `SHA256SUMS.txt` 核对文件。**v2.0.3 的 Windows 包未签名；macOS 包未签名、未公证**。后续版本以各自的发行说明为准。签名配置和验证方式见[发布签名说明](docs/signing.md)。三平台的真实设备验收范围见[平台验收记录](docs/platform-qa.md)。
+下载后可用发布页的 `SHA256SUMS.txt` 核对文件。**目前 Windows 包未签名；macOS 包未签名、未公证**，具体版本以发行说明为准。签名配置和验证方式见[发布签名说明](docs/signing.md)。三平台的真实设备验收范围见[平台验收记录](docs/platform-qa.md)。
 
 ## 开发
 

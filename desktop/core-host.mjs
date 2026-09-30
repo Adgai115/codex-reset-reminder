@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app } from 'electron';
+import { accountErrorPayload, restoreCoreError } from './error-protocol.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
@@ -66,8 +67,8 @@ async function createSidecarHandler() {
           else if (message.type === 'account') {
             Promise.resolve().then(() => accountProvider(message.action, message.args)).then(
               (result) => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: true, result })}\n`),
-              () => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: false,
-                error: '账号连接失败，请重新登录或稍后重试' })}\n`),
+              (error) => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: false,
+                ...accountErrorPayload(error) })}\n`),
             ).catch(() => {});
           }
           else if (message.type === 'desktop') {
@@ -81,7 +82,7 @@ async function createSidecarHandler() {
             const { resolve, reject } = pending.get(message.id);
             pending.delete(message.id);
             if (message.ok) resolve(message.result);
-            else { const error = new Error(message.error); error.afterRequest = message.afterRequest === true; reject(error); }
+            else reject(restoreCoreError(message));
           }
         }
       });

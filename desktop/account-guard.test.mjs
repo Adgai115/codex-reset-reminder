@@ -176,6 +176,45 @@ test('workspace identity takes precedence when the protocol provides it', async 
   assert.equal((await checkAccount(configPath, { appServer: read('workspace-a') })).scopeId, first.scopeId);
 });
 
+test('failed or cancelled session saving cannot register an account or change an existing binding', async () => {
+  const snapshot = () => { const db = openStore(); try { return listAccountScopes(db); } finally { db.close(); } };
+  const before = snapshot();
+  let prepared;
+  await assert.rejects(checkAccount(configPath, { appServer: account('cancelled@example.invalid'),
+    beforeConfirm: async (binding) => { prepared = binding;
+      assert.ok(binding.scopeId); assert.ok(binding.emailHash);
+      assert.equal(snapshot().some((scope) => scope.scopeId === binding.scopeId), false,
+        'an identity is not registered until its session is saved');
+      throw new Error('登录会话已结束');
+    } }), /登录会话已结束/);
+  assert.equal(prepared.displayName, 'c***@example.invalid');
+  assert.deepEqual(snapshot(), before);
+  const original = before.find((scope) => scope.active);
+  await assert.rejects(checkAccount(configPath, { expectedScopeId: original.scopeId, activate: false,
+    appServer: async () => ({ account: { type: 'chatgpt', email: 'fresh@example.com' },
+      workspaceRouting: { chatgptAccountId: 'workspace-a' } }),
+    beforeConfirm: async (binding) => {
+      assert.equal(binding.scopeId, original.scopeId);
+      assert.equal(binding.workspaceHash, original.workspaceHash);
+      throw new Error('模拟会话保存失败');
+    } }), /模拟会话保存失败/);
+  assert.deepEqual(snapshot(), before);
+});
+
+test('successful session saving is followed by registering the same scoped identity', async () => {
+  let prepared;
+  const result = await checkAccount(configPath, { appServer: account('saved@example.invalid'),
+    beforeConfirm: async (binding) => { prepared = { ...binding }; } });
+  assert.equal(result.state, 'verified'); assert.equal(result.scopeId, prepared.scopeId);
+  const db = openStore();
+  try {
+    const saved = getActiveAccountScope(db);
+    assert.equal(saved.scopeId, prepared.scopeId);
+    assert.equal(saved.emailHash, prepared.emailHash);
+    assert.equal(saved.displayName, prepared.displayName);
+  } finally { db.close(); }
+});
+
 test('a newly unscoped Codex row cannot be silently merged into the bound scope', () => {
   const db = openStore();
   try {
