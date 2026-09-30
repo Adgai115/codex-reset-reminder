@@ -194,6 +194,9 @@ async function retryNode(result) {
 }
 function render() {
   if (!snapshot) return;
+  const focused = document.activeElement;
+  const listFocus = focused?.matches('.card-details, .record-detail')
+    ? { cardId: focused.dataset.cardId, recordKey: focused.dataset.recordKey, scopeId: lastRenderedScopeId } : null;
   if (snapshot.account?.scopeId && lastRenderedScopeId !== snapshot.account.scopeId) {
     filter = 'active';
     if ($('detail-dialog').open) $('detail-dialog').close();
@@ -281,6 +284,13 @@ function render() {
   $('empty').textContent = filter === 'pending' ? '暂无已提醒卡片'
     : filter === 'history' ? '暂无已结束卡片' : '暂无可用卡片';
   renderCardDetails(); controls();
+  // 返回列表后，另一轮后台刷新也可能替换刚恢复焦点的节点。
+  if (listFocus && listFocus.scopeId === snapshot.account?.scopeId && document.activeElement === document.body) {
+    const replacement = listFocus.cardId
+      ? [...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === listFocus.cardId)
+      : [...document.querySelectorAll('.record-detail')].find(button => button.dataset.recordKey === listFocus.recordKey);
+    (replacement || $('account-select')).focus();
+  }
 }
 
 function renderAccounts() {

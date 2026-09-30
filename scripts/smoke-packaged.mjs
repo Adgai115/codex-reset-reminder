@@ -755,6 +755,9 @@ try {
   await until(manage, `!window.__detailOpener.isConnected && document.querySelector('#detail-dialog').open`, '刷新后详情保留');
   await evaluate(manage, `document.querySelector('#close-detail').click(); true`);
   await until(manage, `document.activeElement?.dataset.cardId === '${activeCardId}'`, '详情关闭后键盘焦点恢复');
+  await evaluate(manage, `window.__detailOpener = document.activeElement; window.dispatchEvent(new Event('focus')); true`);
+  await until(manage, `!window.__detailOpener.isConnected && document.activeElement?.dataset.cardId === '${activeCardId}'`,
+    '后续后台刷新仍保留卡片入口焦点');
   await evaluate(manage, `(() => {
     const select = Array.from(document.querySelectorAll('#cards tbody tr'))
       .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('select');
