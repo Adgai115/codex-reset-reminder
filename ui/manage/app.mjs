@@ -217,6 +217,7 @@ function render() {
     option.selected = account.scopeId === snapshot.account.scopeId;
   }
   if (!selector.options.length) text(selector, 'option', '等待获取账号').value = '';
+  selector.title = selector.selectedOptions[0]?.textContent || '';
   selector.dataset.unavailable = String(selector.options.length === 0);
   renderAccounts();
   renderRecords();
@@ -327,7 +328,7 @@ function renderRecords() {
       .sort((a, b) => (b.attemptedAt || 0) - (a.attemptedAt || 0));
   const columns = view === 'sync' ? ['时间', '结果', '可用卡', '已获取详情', '原因'] : ['时间', '卡片', '提醒节点', '发送结果', '原因'];
   for (const column of columns) text(header, 'th', column).scope = 'col';
-  for (const [recordIndex, record] of rows.entries()) {
+  for (const record of rows) {
     const row = text(body, 'tr', '');
     const content = view === 'sync' ? [formatShortTime(record.checkedAt),
       ({ complete: '已同步', partial: '详情待获取', failed: '同步失败' })[record.outcome] || record.outcome,
@@ -337,7 +338,10 @@ function renderRecords() {
     for (const [i, value] of content.entries()) {
       const cell = text(row, 'td', '', i === 0 ? 'time' : 'single-cell'); cell.title = String(value);
       if (i === content.length - 1) {
-        const returnKey = `${view}:${view === 'sync' ? record.checkedAt : record.attemptedAt}:${recordIndex}`;
+        // 后台新增记录会改变行序；焦点使用记录内容/节点的稳定标识。
+        const returnKey = JSON.stringify(view === 'sync'
+          ? [view, record.checkedAt, record.outcome, record.availableCount, record.detailedCount, record.message]
+          : [view, record.card.id, record.expiresAt, record.nodeKind, record.nodeAt, record.channel]);
         const detail = button(cell, value === '—' ? '详情' : String(value), () => openRecordDetails(columns, content, record, returnKey));
         detail.dataset.recordKey = returnKey;
         detail.className = 'record-detail'; detail.title = String(value);
