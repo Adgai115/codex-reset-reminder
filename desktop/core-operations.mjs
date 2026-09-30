@@ -281,7 +281,8 @@ export async function runCoreOperation(op, args = {}, context = {}) {
         ? store.latestCompleteSync(db, accountStatus(db).scopeId) : null;
       case 'dueUsageVerifications': return store.listAccountScopes(db)
         .filter((scope) => accountStatus(db, scope.scopeId).state === 'verified')
-        .flatMap((scope) => store.listDueUsageVerifications(db, Math.floor(Date.now() / 1000), 600, scope.scopeId));
+        .flatMap((scope) => store.listDueUsageVerifications(db, Math.floor(Date.now() / 1000), 600, scope.scopeId)
+          .map((card) => ({ ...card, accountScopeId: scope.scopeId })));
       case 'planNextCheck': {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
         const plans = store.listAccountScopes(db).filter((scope) => scope.remindersEnabled

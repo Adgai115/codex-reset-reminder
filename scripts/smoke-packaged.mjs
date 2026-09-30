@@ -283,7 +283,8 @@ try {
   }
   let port = await freePort();
   // CI 的 Linux 解包目录不能把 chrome-sandbox 设为 root:4755；仅测试进程关闭沙盒。
-  const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
+  const testFlags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu',
+    ...(accountsOnly ? ['--password-store=gnome-libsecret'] : [])] : [];
   const testEnv = { ...process.env, CODEX_RESET_MONITOR_USER_DATA_DIR: profile,
     CODEX_RESET_MONITOR_SKIP_MIGRATION: '1', CODEX_RESET_MONITOR_DATA_DIR: profile,
     CODEX_RESET_MONITOR_CODEX_HOME: join(profile, 'source-codex'), CODEX_HOME: join(profile, 'source-codex') };
@@ -473,6 +474,9 @@ try {
       && document.querySelector('#account').textContent.includes('example.invalid')
       && [...document.querySelectorAll('#name, #expiry, select')].every(element => getComputedStyle(element).whiteSpace === 'nowrap')`), true);
     if (nativeDialogs) {
+      const resetState = await evaluate(reminder, `({ disabled: document.querySelector('#reset').disabled,
+        title: document.querySelector('#reset').title, account: document.querySelector('#account').textContent })`);
+      assert.equal(resetState.disabled, false, JSON.stringify(resetState));
       await evaluate(reminder, `document.querySelector('#reset').click(); true`);
       await clickNative('取消');
       await until(reminder, `document.querySelector('#feedback').textContent.includes('已取消')`, '取消二次确认不请求用卡');

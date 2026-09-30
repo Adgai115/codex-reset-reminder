@@ -99,8 +99,9 @@ jobs:
       - name: Smoke multiple accounts (Linux)
         if: runner.os == 'Linux'
         run: |
-          dbus-run-session -- bash -c '
+          dbus-run-session -- bash -ec '
             printf "ci-keyring-only\n" | gnome-keyring-daemon --unlock --components=secrets
+            gnome-keyring-daemon --start --components=secrets > /dev/null
             xvfb-run -a node scripts/smoke-packaged.mjs --accounts
           '
       - name: Smoke multiple accounts with sidecar (Linux)
@@ -108,8 +109,9 @@ jobs:
         env:
           CODEX_RESET_MONITOR_CORE_MODE: sidecar
         run: |
-          dbus-run-session -- bash -c '
+          dbus-run-session -- bash -ec '
             printf "ci-keyring-only\n" | gnome-keyring-daemon --unlock --components=secrets
+            gnome-keyring-daemon --start --components=secrets > /dev/null
             xvfb-run -a node scripts/smoke-packaged.mjs --accounts
           '
       - name: Smoke first-run setup

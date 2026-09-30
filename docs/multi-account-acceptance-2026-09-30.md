@@ -18,7 +18,7 @@
 
 | 检查 | 本机结果 |
 | --- | --- |
-| `npm test` | 96 项：95 通过，1 项 Unix 专用检查在 Windows 跳过 |
+| `npm test` | 97 项：96 通过，1 项 Unix 专用检查在 Windows 跳过 |
 | `npm run probe:sqlite` | Electron 37.10.3 内置 SQLite 可用 |
 | `node scripts/smoke-packaged.mjs --accounts` | 通过；覆盖账号选择、重复卡号、两种记录、故障隔离和正常退出后的重启恢复 |
 | `CODEX_RESET_MONITOR_CORE_MODE=sidecar` 的同项检查 | 通过 |

@@ -42,8 +42,8 @@ export function createScheduler({ coreRequest, powerMonitor, onResult = () => {}
     if (!running) return;
     try {
       const due = await coreRequest('dueUsageVerifications');
-      if (due.length) {
-        try { await coreRequest('syncCards'); }
+      for (const scopeId of new Set(due.map((card) => card.accountScopeId))) {
+        try { await coreRequest('syncCards', { scopeId }); }
         catch (error) { console.warn(`[scheduler] 使用核验暂不可用：${error.message}`); }
       }
       try { await coreRequest('preflightSync'); }
