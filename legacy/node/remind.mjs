@@ -7,7 +7,7 @@ import { sendWechatReminder } from './wechat.mjs';
 import { deliveryTime, enabledChannels, quietHours } from './reminder-policy.mjs';
 import { safeDeliveryFailure } from '../../core/delivery-results.mjs';
 import { mayAttemptReminder, nextRetryAfter } from '../../core/delivery-retry.mjs';
-import { clearSnooze, deliveryExists, getActiveAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
+import { clearSnooze, deliveryExists, getAccountScope, getCard, getSnooze, latestCompleteSync, latestSync, listCards, listDueSnoozes,
   beginReminderAttempt, getReminderAttempt, markSnoozeDelivered, openStore, recordDelivery,
   recordFeishuMessage, recordReminderResult } from './store.mjs';
 
@@ -22,8 +22,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   const channels = enabledChannels(config);
   const quiet = quietHours(config);
   const db = openStore();
-  const boundAccount = accountScopeId ? getActiveAccountScope(db) : null;
-  const accountDisplay = boundAccount?.scopeId === accountScopeId ? boundAccount.displayName : null;
+  const boundAccount = accountScopeId ? getAccountScope(db, accountScopeId) : null;
+  const accountDisplay = boundAccount ? (boundAccount.nickname || boundAccount.displayName) : null;
   const results = [];
   const desktopJobs = [];
   const startedAt = Date.now();
@@ -60,7 +60,8 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
     };
     const presentDesktop = async (card, node, result, days) => {
       const job = { node, result, payload: {
-        cardName: card.title, creditId: card.id, source: card.source, expiresAt: card.expiresAt,
+        cardName: card.title, creditId: card.id, originalCreditId: card.creditId,
+        accountScopeId, accountDisplay, source: card.source, expiresAt: card.expiresAt,
         expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
         days, currentAvailableCount: syncedCount, syncedAt, stackIndex: shownIndex++,
         nodeKind: node.nodeKind, nodeAt: node.nodeAt, thresholdDays: node.thresholdDays,

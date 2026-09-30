@@ -14,62 +14,163 @@ import { handleCardAction } from '../core/card-actions.mjs';
 import { consumeCredit, refreshCreditStatus } from '../legacy/node/consume.mjs';
 import { accountStatus, checkAccount, requireAccount, requireCardInScope } from './account-guard.mjs';
 import { resetCardFromReminder } from './reset-card.mjs';
+import { callAppServer } from '../legacy/node/check.mjs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const value = (input) => String(input ?? '').trim();
 
 const configPath = () => process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(import.meta.dirname, '..', 'config.json');
-const verifiedScope = () => requireAccount(configPath());
-const protectedSync = (path, options = {}) => syncCards(path, { ...options, accountGuard: verifiedScope });
-function currentAccountDisplay() {
-  const db = store.openStore();
-  try { return accountStatus(db).boundDisplay || '账号待核对'; }
-  finally { db.close(); }
-}
+const readDb = (run) => { const db = store.openStore(); try { return run(db); } finally { db.close(); } };
+const syncingAccounts = new Map();
 
-export async function runCoreOperation(op, args = {}, { desktop } = {}) {
+export async function runCoreOperation(op, args = {}, context = {}) {
+  const { desktop, accounts } = context;
+  const recurse = (operation, arguments_ = {}) => runCoreOperation(operation, arguments_, context);
+  const selectedId = () => readDb((db) => store.getActiveAccountScope(db)?.scopeId ?? null);
+  const scopes = () => readDb(store.listAccountScopes);
+  const currentId = () => readDb(store.currentCliScopeId) || selectedId();
+  const profileExists = (id) => accounts ? accounts('has', { scopeId: id }) : Promise.resolve(false);
+  const serverFor = (id) => async (script, method, params) => {
+    if (!accounts) return callAppServer(script, method, params);
+    if (id && !(await profileExists(id))) {
+      if (id !== currentId()) throw new Error('此账号需要登录，卡片与记录已保留');
+      return accounts('request', { script, scopeId: null, method, params });
+    }
+    return accounts('request', { script, scopeId: id, method, params });
+  };
+  const verifiedScope = (id) => requireAccount(configPath(), { appServer: serverFor(id),
+    ...(id ? { expectedScopeId: id, activate: false } : {}) });
+  async function discoverCurrent(options = {}) {
+    const result = await checkAccount(configPath(), { ...options, appServer: serverFor(null), activate: false });
+    if (result.state === 'verified') {
+      const binding = readDb((db) => { store.noteCurrentCliScope(db, result.scopeId); return store.getAccountScope(db, result.scopeId); });
+      if (accounts) {
+        const config = JSON.parse(await readFile(configPath(), 'utf8'));
+        try { await accounts('capture', { binding, script: config.codexScript }); }
+        catch { /* 当前 CLI 仍可读取；独立登录失败可在账号管理中恢复。 */ }
+      }
+    }
+    return result;
+  }
+  const protectedSync = async (path, options = {}) => {
+    const id = options.accountScopeId || selectedId();
+    syncingAccounts.set(id, (syncingAccounts.get(id) || 0) + 1);
+    try {
+      const result = await syncCards(path, { ...options, appServer: serverFor(id),
+        accountScopeId: id, accountGuard: () => verifiedScope(id) });
+      readDb((db) => store.recordAccountSyncSchedule(db, id, result.complete));
+      return result;
+    } catch (error) {
+      readDb((db) => store.recordAccountSyncSchedule(db, id, false));
+      throw error;
+    } finally {
+      const remaining = (syncingAccounts.get(id) || 1) - 1;
+      if (remaining) syncingAccounts.set(id, remaining); else syncingAccounts.delete(id);
+    }
+  };
+  const accountForCard = (id) => readDb((db) => store.getCard(db, id)?.accountScopeId || null);
+  const consumeForCard = (id, key) => {
+    const scopeId = accountForCard(id);
+    return consumeCredit(id, key, { appServer: serverFor(scopeId),
+      verifyAccount: () => verifiedScope(scopeId), verifyCard: requireCardInScope });
+  };
   if (op === 'syncCards') {
-    return protectedSync(configPath());
+    if (!args.scopeId) await discoverCurrent();
+    const id = args.scopeId || selectedId();
+    if (!id) throw new Error('请先连接一个 Codex 账号');
+    return protectedSync(configPath(), { accountScopeId: id });
+  }
+  if (op === 'syncAllAccounts') {
+    const current = await discoverCurrent();
+    const results = [];
+    const now = Math.floor(Date.now() / 1000);
+    await Promise.all(scopes().map(async (scope) => {
+      if (!args.force && scope.nextSyncAt > now) return;
+      try { results.push({ scopeId: scope.scopeId, ...await protectedSync(configPath(), { accountScopeId: scope.scopeId }) }); }
+      catch { results.push({ scopeId: scope.scopeId, complete: false, error: '账号同步失败' }); }
+    }));
+    const nextSyncAt = Math.min(...scopes().map((scope) => scope.nextSyncAt || now + 60));
+    return { complete: results.length ? results.every((result) => result.complete) : current.state === 'verified',
+      accounts: results, nextSyncAt: Number.isFinite(nextSyncAt) ? nextSyncAt : now + 60 };
+  }
+  if (op === 'completeAccountLogin') {
+    const appServer = (script) => accounts('loginRequest', { loginToken: args.loginToken, script });
+    const status = await checkAccount(configPath(), { appServer,
+      ...(args.expectedScopeId ? { expectedScopeId: args.expectedScopeId, activate: false } : {}) });
+    if (status.state !== 'verified') throw new Error('登录的账号与所选账号不匹配');
+    const binding = readDb((db) => store.getAccountScope(db, status.scopeId));
+    await accounts('loginRequest', { loginToken: args.loginToken, binding });
+    return status;
   }
   if (op === 'runReminders') {
-    let accountScopeId = null;
-    try { accountScopeId = await verifiedScope(); } catch { /* 未核实账号时暂停卡片提醒。 */ }
-    return runReminders({ configPath: configPath(), desktop: desktop && (async (payload) => {
-      if (await verifiedScope() !== accountScopeId) throw new Error('账号已变更，暂停桌面提醒');
-      return desktop({ ...payload, accountDisplay: currentAccountDisplay() });
-    }), trackAttempts: true, batchDesktop: true,
-      ...args, allowCodex: Boolean(accountScopeId), accountScopeId,
-      verifyScope: verifiedScope });
+    const results = [];
+    for (const scope of scopes().filter((scope) => scope.remindersEnabled)) {
+      try { await verifiedScope(scope.scopeId); }
+      catch { continue; }
+      results.push(await runReminders({ configPath: configPath(), desktop,
+        trackAttempts: true, batchDesktop: true, ...args, allowCodex: true,
+        accountScopeId: scope.scopeId, verifyScope: () => {
+          if (!readDb((db) => store.getAccountScope(db, scope.scopeId)?.remindersEnabled))
+            throw new Error('此账号提醒已暂停');
+          return verifiedScope(scope.scopeId);
+        } }));
+    }
+    return { due: results.flatMap((result) => result.due), accounts: results };
   }
   if (op === 'preflightSync') {
-    const accountScopeId = await verifiedScope().catch(() => null);
-    if (!accountScopeId) return { attempted: false, reason: 'account_unverified' };
-    return preflightSync({ configPath: configPath(),
-      sync: protectedSync, accountScopeId, ...args });
+    const results = [];
+    for (const scope of scopes().filter((scope) => scope.remindersEnabled)) {
+      const accountScopeId = await verifiedScope(scope.scopeId).catch(() => null);
+      if (!accountScopeId) continue;
+      results.push(await preflightSync({ configPath: configPath(),
+        sync: (path, options) => protectedSync(path, { ...options, accountScopeId }), accountScopeId, ...args }));
+    }
+    return { attempted: results.some((result) => result.attempted), accounts: results };
   }
   if (op === 'handleCardAction') {
+    let actionScopeId = null;
     return handleCardAction(args.event, args.config, {
-      verifyCardAction: async (card) => requireCardInScope(card.id, await verifiedScope()),
-      consume: (id, key) => consumeCredit(id, key, { verifyAccount: verifiedScope,
-        verifyCard: requireCardInScope }),
-      refreshStatus: () => refreshCreditStatus({ verifyAccount: verifiedScope }),
+      verifyCardAction: async (card) => { actionScopeId = card.accountScopeId;
+        return requireCardInScope(card.id, await verifiedScope(actionScopeId)); },
+      consume: consumeForCard,
+      refreshStatus: () => refreshCreditStatus({ appServer: serverFor(actionScopeId),
+        verifyAccount: () => verifiedScope(actionScopeId) }),
     });
   }
-  if (op === 'checkAccount') return checkAccount(configPath());
-  if (op === 'confirmLegacyBinding') return checkAccount(configPath(), {
+  if (op === 'checkAccount') return args.scopeId ? checkAccount(configPath(), {
+    appServer: serverFor(args.scopeId), expectedScopeId: args.scopeId, activate: false }) : discoverCurrent();
+  if (op === 'confirmLegacyBinding') return discoverCurrent({
     confirmLegacy: true, expectedCandidateToken: args.expectedCandidateToken });
-  if (op === 'resetCardFromReminder') return resetCardFromReminder(args, { verifyAccount: verifiedScope });
+  if (op === 'resetCardFromReminder') {
+    const scopeId = accountForCard(args.cardId);
+    return resetCardFromReminder(args, { verifyAccount: () => verifiedScope(scopeId), consume: consumeForCard });
+  }
   if (op === 'pendingReminders') {
-    await verifiedScope();
-    const snapshot = await runCoreOperation('manageSnapshot');
+    const snapshot = args.all ? await recurse('allAccountsSnapshot') : await recurse('manageSnapshot', args);
     return { accountDisplay: snapshot.account.boundDisplay, cards: snapshot.cards.filter((card) => card.pendingReminder
       && (!args.cardId || card.id === args.cardId)).map((card) => ({
-      creditId: card.id, cardName: card.title, source: card.source, expiresAt: card.expiresAt,
+      creditId: card.id, originalCreditId: card.creditId, accountScopeId: card.accountScopeId,
+      accountDisplay: card.accountDisplay || snapshot.account.boundDisplay,
+      accountReady: card.accountReady ?? snapshot.account.state === 'verified',
+      cardName: card.title, source: card.source, expiresAt: card.expiresAt,
       expiresLocal: new Date(card.expiresAt * 1000).toLocaleString('zh-CN', { hour12: false }),
       currentAvailableCount: snapshot.confirmed?.availableCount ?? null,
       syncedAt: snapshot.confirmed?.checkedAt ?? null, ...card.pendingReminder,
     })) };
+  }
+  if (op === 'allAccountsSnapshot') {
+    const snapshots = [];
+    for (const scope of scopes()) snapshots.push(await recurse('manageSnapshot', { scopeId: scope.scopeId }));
+    return { account: { state: 'verified', boundDisplay: null }, accounts: snapshots.map((snapshot) => snapshot.account),
+      cards: snapshots.flatMap((snapshot) => snapshot.cards.map((card) => ({ ...card,
+        accountDisplay: snapshot.account.nickname || snapshot.account.boundDisplay,
+        accountReady: snapshot.account.state === 'verified' && snapshot.account.remindersEnabled }))) };
+  }
+
+  const scopeProfiles = new Map();
+  if (op === 'manageSnapshot') {
+    for (const scope of scopes()) scopeProfiles.set(scope.scopeId, await profileExists(scope.scopeId));
   }
 
   const db = store.openStore();
@@ -80,7 +181,17 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
         const channels = enabledChannels(config);
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const account = accountStatus(db);
+        const selected = args.scopeId ? store.getAccountScope(db, args.scopeId) : store.getActiveAccountScope(db);
+        if (args.scopeId && !selected) throw new Error('账号不存在');
+        const describe = (scope) => ({ ...accountStatus(db, scope.scopeId),
+          nickname: scope.nickname, remindersEnabled: Boolean(scope.remindersEnabled),
+          nextSyncAt: scope.nextSyncAt, recovering: scope.syncFailures > 0,
+          currentCli: scope.scopeId === store.currentCliScopeId(db),
+          independent: scopeProfiles.get(scope.scopeId) === true,
+          latest: store.latestSync(db, scope.scopeId),
+          ...(accounts && !scopeProfiles.get(scope.scopeId) && scope.scopeId !== store.currentCliScopeId(db)
+            ? { state: 'loginRequired' } : {}) });
+        const account = selected ? describe(selected) : accountStatus(db);
         const boundScopeId = account.scopeId;
         const legacyUnbound = !store.getActiveAccountScope(db);
         const confirmed = boundScopeId || legacyUnbound
@@ -99,7 +210,8 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         };
         return { channels, latest: boundScopeId || legacyUnbound
           ? store.latestSync(db, boundScopeId) : null,
-          confirmed, account,
+          confirmed, account, syncing: syncingAccounts.has(boundScopeId), accounts: store.listAccountScopes(db).map(describe),
+          syncHistory: boundScopeId ? store.listSyncHistory(db, boundScopeId) : [],
           cards: store.listCards(db, true).filter((card) => card.source === 'codex'
             && (legacyUnbound ? card.accountScopeId === null : card.accountScopeId === boundScopeId)).map((card) => {
             const snooze = store.getSnooze(db, card.id);
@@ -108,7 +220,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
               pendingReminder: pendingReminder(card, snooze, results, nowSeconds),
               deliveryResults: results.map((result) => {
                 const activeNode = nodeIsCurrent(card, snooze, result);
-                const accountReady = account.state === 'verified';
+                const accountReady = account.state === 'verified' && account.remindersEnabled !== false;
                 const retryOpen = activeNode && result.state === 'failed'
                   && result.attempts < maxReminderAttempts;
                 return { ...result,
@@ -117,7 +229,8 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
                     && nowSeconds >= deliveryTime(nowSeconds, card.expiresAt, options.quiet),
                   suspendedReason: result.state !== 'failed' || result.attempts >= maxReminderAttempts ? null
                     : !activeNode ? '当前节点已结束或渠道已关闭，停止补发。'
-                      : !accountReady ? 'Codex 账号待核实，暂停补发。' : null,
+                      : account.remindersEnabled === false ? '此账号提醒已暂停。'
+                        : !accountReady ? 'Codex 账号待核实，暂停补发。' : null,
                 };
               }),
               snoozeOptions: getSnoozeOptions(card, nowSeconds),
@@ -125,8 +238,16 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
             };
           }) };
       }
+      case 'selectAccount': {
+        store.activateAccountScope(db, value(args.scopeId));
+        return { selected: value(args.scopeId) };
+      }
+      case 'updateAccount': {
+        store.updateAccountPreferences(db, value(args.scopeId), args);
+        return { saved: true };
+      }
       case 'listCards': {
-        const boundScopeId = accountStatus(db).scopeId;
+        const boundScopeId = args.scopeId || accountStatus(db).scopeId;
         const legacyUnbound = !store.getActiveAccountScope(db);
         return store.listCards(db, args.includeInactive === true).filter((card) =>
           card.source === 'codex' && (legacyUnbound ? card.accountScopeId === null
@@ -142,20 +263,21 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
         ? store.latestSync(db, accountStatus(db).scopeId) : null;
       case 'latestCompleteSync': return accountStatus(db).scopeId
         ? store.latestCompleteSync(db, accountStatus(db).scopeId) : null;
-      case 'dueUsageVerifications': return accountStatus(db).state === 'verified'
-        ? store.listDueUsageVerifications(db, Math.floor(Date.now() / 1000), 600,
-          accountStatus(db).scopeId) : [];
+      case 'dueUsageVerifications': return store.listAccountScopes(db)
+        .filter((scope) => accountStatus(db, scope.scopeId).state === 'verified')
+        .flatMap((scope) => store.listDueUsageVerifications(db, Math.floor(Date.now() / 1000), 600, scope.scopeId));
       case 'planNextCheck': {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
-        if (accountStatus(db).state !== 'verified') return { nextAt: null, reason: null };
-        return planNextCheck(db, { channels: enabledChannels(config), quiet: quietHours(config),
-          accountScopeId: accountStatus(db).scopeId });
+        const plans = store.listAccountScopes(db).filter((scope) => scope.remindersEnabled
+          && accountStatus(db, scope.scopeId).state === 'verified').map((scope) => planNextCheck(db,
+          { channels: enabledChannels(config), quiet: quietHours(config), accountScopeId: scope.scopeId }));
+        return plans.filter((plan) => plan.nextAt).sort((a, b) => a.nextAt - b.nextAt)[0] || { nextAt: null, reason: null };
       }
       case 'snooze': return store.getSnooze(db, value(args.cardId));
       case 'scheduleSnooze': {
         let card = store.getCard(db, value(args.cardId));
         if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
-        card = requireCardInScope(card.id, await verifiedScope());
+        card = requireCardInScope(card.id, args.scopeId || selectedId());
         if (args.expectedExpiresAt !== undefined && card.expiresAt !== args.expectedExpiresAt)
           throw new Error('卡片已更新，请重新查看提醒');
         const plan = planSnooze(card, value(args.option));
@@ -165,7 +287,7 @@ export async function runCoreOperation(op, args = {}, { desktop } = {}) {
       case 'clearSnooze': {
         const card = store.getCard(db, value(args.cardId));
         if (card?.source !== 'codex') throw new Error('只支持从 Codex 同步的官方重置卡');
-        requireCardInScope(card.id, await verifiedScope());
+        requireCardInScope(card.id, args.scopeId || selectedId());
         const snooze = card && store.getSnooze(db, card.id);
         if (card?.status !== 'available' || snooze?.expiresAt !== card.expiresAt) {
           throw new Error('这张卡片没有可取消的延期提醒');

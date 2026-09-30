@@ -56,9 +56,9 @@ export async function consumeCredit(creditId, idempotencyKey, { appServer = call
   if (!creditId || !idempotencyKey) throw new Error('缺少重置卡编号或操作标识');
   const codexScript = await codexScriptPath();
   const scopeId = verifyAccount ? await verifyAccount() : null;
-  if (verifyCard) verifyCard(creditId, scopeId);
+  const card = verifyCard ? verifyCard(creditId, scopeId) : null;
   const result = await appServer(codexScript, 'account/rateLimitResetCredit/consume', {
-    creditId,
+    creditId: card?.creditId || creditId,
     idempotencyKey,
   });
   if (verifyAccount) {

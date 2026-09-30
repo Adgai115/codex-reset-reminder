@@ -10,8 +10,10 @@ import { app } from 'electron';
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
 let desktopPresenter = null;
+let accountProvider = null;
 
 export function setDesktopPresenter(presenter) { desktopPresenter = presenter; }
+export function setAccountProvider(provider) { accountProvider = provider; }
 
 async function detectSqlite() {
   try {
@@ -26,7 +28,7 @@ async function createInProcessHandler() {
   const { runCoreOperation } = await import('./core-operations.mjs');
   return {
     status: () => ({ mode: 'in-process', platform: process.platform }),
-    request: (op, args) => runCoreOperation(op, args, { desktop: desktopPresenter }),
+    request: (op, args) => runCoreOperation(op, args, { desktop: desktopPresenter, accounts: accountProvider }),
   };
 }
 
@@ -61,6 +63,13 @@ async function createSidecarHandler() {
           let message;
           try { message = JSON.parse(line); } catch { continue; }
           if (message.type === 'ready') resolveReady();
+          else if (message.type === 'account') {
+            Promise.resolve().then(() => accountProvider(message.action, message.args)).then(
+              (result) => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: true, result })}\n`),
+              () => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: false,
+                error: '账号连接失败，请重新登录或稍后重试' })}\n`),
+            ).catch(() => {});
+          }
           else if (message.type === 'desktop') {
             Promise.resolve().then(() => desktopPresenter(message.payload)).then(
               () => child?.stdin.write(`${JSON.stringify({ type: 'desktop-result', eventId: message.eventId, ok: true })}\n`),
@@ -72,7 +81,7 @@ async function createSidecarHandler() {
             const { resolve, reject } = pending.get(message.id);
             pending.delete(message.id);
             if (message.ok) resolve(message.result);
-            else reject(new Error(message.error));
+            else { const error = new Error(message.error); error.afterRequest = message.afterRequest === true; reject(error); }
           }
         }
       });

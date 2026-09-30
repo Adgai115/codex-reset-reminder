@@ -11,9 +11,9 @@ const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function syncCards(configPath = join(directory, '..', '..', 'config.json'),
   { appServer = callAppServer, patchCard = patchFeishuCard, patchMessages = true,
-    accountGuard = null } = {}) {
+    accountGuard = null, accountScopeId = null } = {}) {
   const db = openStore();
-  let scopeId = null;
+  let scopeId = accountScopeId;
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
     scopeId = accountGuard ? await accountGuard() : null;

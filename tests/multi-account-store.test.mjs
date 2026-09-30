@@ -20,7 +20,7 @@ old.close();
 
 const { activateAccountScope, bindAccountScope, getActiveAccountScope,
   latestCompleteSync, listAccountScopes, listDueUsageVerifications,
-  openStore, reportCardUsed, saveCodexSnapshot } = await import('../core/store.mjs');
+  openStore, reportCardUsed, saveCodexSnapshot, listCards } = await import('../core/store.mjs');
 
 test('v2.0.3 single-account database migrates once and keeps per-account history', () => {
   const db = openStore();
@@ -37,11 +37,16 @@ test('v2.0.3 single-account database migrates once and keeps per-account history
     saveCodexSnapshot(db, { availableCount: 1, credits: [
       { id: 'new-credit', status: 'available', expiresAt: expiry },
     ] }, 1000, 'scope-new');
-    assert.throws(() => saveCodexSnapshot(db, { availableCount: 1, credits: [
+    saveCodexSnapshot(db, { availableCount: 2, credits: [
       { id: 'old-credit', status: 'available', expiresAt: expiry },
-    ] }, 1100, 'scope-new'), /归属账号不一致/);
+      { id: 'new-credit', status: 'available', expiresAt: expiry },
+    ] }, 1100, 'scope-new');
+    const collisions = listCards(db, true).filter((card) => card.creditId === 'old-credit');
+    assert.equal(collisions.length, 2);
+    assert.notEqual(collisions[0].id, collisions[1].id);
+    assert.equal(new Set(collisions.map((card) => card.accountScopeId)).size, 2);
     assert.equal(latestCompleteSync(db, 'scope-old').checkedAt, 200);
-    assert.equal(latestCompleteSync(db, 'scope-new').checkedAt, 1000);
+    assert.equal(latestCompleteSync(db, 'scope-new').checkedAt, 1100);
     assert.deepEqual(listDueUsageVerifications(db, 1000, 600, 'scope-old')
       .map((row) => row.id), ['old-credit']);
     assert.deepEqual(listDueUsageVerifications(db, 1000, 600, 'scope-new'), []);

@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { callAppServer } from '../legacy/node/check.mjs';
 import { activateAccountScope, bindAccountScope, confirmAccountScope, countCodexCards,
-  getActiveAccountScope, getCard, listAccountScopes, openStore } from '../core/store.mjs';
+  getActiveAccountScope, getAccountScope, currentCliScopeId, getCard, listAccountScopes, openStore } from '../core/store.mjs';
 
 let sessionStatus = null;
+const scopeStatuses = new Map();
 const candidateSalt = randomUUID();
-let checkQueue = Promise.resolve();
+const checkQueues = new Map();
 const digest = (scopeId, value) => value
   ? createHash('sha256').update(`${scopeId}\0${value}`).digest('hex') : null;
 
@@ -29,17 +30,26 @@ function parseIdentity(response) {
     : `ChatGPT 工作区 · ****${workspaceId.slice(-4)}` };
 }
 
-export function accountStatus(db) {
-  const binding = getActiveAccountScope(db);
+export function accountStatus(db, scopeId = null) {
+  const binding = scopeId ? getAccountScope(db, scopeId) : getActiveAccountScope(db);
+  const scoped = scopeStatuses.get(binding?.scopeId);
+  if (scoped) return { ...scoped };
   if (sessionStatus?.scopeId === (binding?.scopeId ?? null)) return { ...sessionStatus };
-  return { state: 'checking', boundDisplay: binding?.displayName ?? null,
+  return { state: 'checking', scopeId: binding?.scopeId ?? null, boundDisplay: binding?.displayName ?? null,
     currentDisplay: null, verifiedAt: null };
 }
 
 async function performAccountCheck(configPath, { appServer = callAppServer,
-  confirmLegacy = false, expectedCandidateToken = null } = {}) {
+  confirmLegacy = false, expectedCandidateToken = null, expectedScopeId = null,
+  activate = true } = {}) {
   const db = openStore();
-  let binding = getActiveAccountScope(db);
+  let binding = expectedScopeId ? getAccountScope(db, expectedScopeId)
+    : getAccountScope(db, currentCliScopeId(db)) || getActiveAccountScope(db);
+  const finish = (status) => {
+    if (status.scopeId) scopeStatuses.set(status.scopeId, status);
+    sessionStatus = status;
+    return { ...status };
+  };
   try {
     let identity;
     try {
@@ -48,21 +58,33 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
     } catch {
       sessionStatus = { state: 'unavailable', scopeId: binding?.scopeId ?? null,
         boundDisplay: binding?.displayName ?? null, currentDisplay: null, verifiedAt: null };
-      return accountStatus(db);
+      return finish(sessionStatus);
     }
     if (!identity) {
       sessionStatus = { state: 'unidentified', scopeId: binding?.scopeId ?? null,
         boundDisplay: binding?.displayName ?? null, currentDisplay: null, verifiedAt: null };
-      return accountStatus(db);
+      return finish(sessionStatus);
     }
     const scopes = listAccountScopes(db);
+    if (expectedScopeId) {
+      const match = binding && (binding.workspaceHash
+        ? identity.workspaceId && binding.workspaceHash === digest(binding.scopeId, identity.workspaceId)
+        : identity.email && binding.emailHash === digest(binding.scopeId, identity.email));
+      if (!match) return finish({ state: 'mismatch', scopeId: expectedScopeId,
+        boundDisplay: binding?.displayName ?? null, currentDisplay: identity.displayName, verifiedAt: null });
+      confirmAccountScope(db, { scopeId: binding.scopeId, emailHash: digest(binding.scopeId, identity.email) || binding.emailHash,
+        workspaceHash: digest(binding.scopeId, identity.workspaceId) || binding.workspaceHash, displayName: identity.displayName });
+      return finish({ state: 'verified', scopeId: binding.scopeId, boundDisplay: identity.displayName,
+        currentDisplay: identity.displayName, verifiedAt: Math.floor(Date.now() / 1000) });
+    }
+    const originallySelected = getActiveAccountScope(db)?.scopeId;
     if (!scopes.length) {
       const candidateToken = digest(candidateSalt, `${identity.email || ''}\0${identity.workspaceId || ''}`);
       if (countCodexCards(db) && (!confirmLegacy || expectedCandidateToken !== candidateToken)) {
         sessionStatus = { state: 'needsBinding', scopeId: null,
           boundDisplay: null, currentDisplay: identity.displayName,
           candidateToken, verifiedAt: null };
-        return accountStatus(db);
+        return finish(sessionStatus);
       }
       const scopeId = randomUUID();
       bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
@@ -80,17 +102,19 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
         sessionStatus = { state: 'unidentified', scopeId: getActiveAccountScope(db)?.scopeId ?? null,
           boundDisplay: getActiveAccountScope(db)?.displayName ?? null,
           currentDisplay: identity.displayName, verifiedAt: null };
-        return accountStatus(db);
+        return finish(sessionStatus);
       } else binding = null;
       if (!binding) {
         const scopeId = randomUUID();
         bindAccountScope(db, { scopeId, emailHash: digest(scopeId, identity.email),
           workspaceHash: digest(scopeId, identity.workspaceId), displayName: identity.displayName });
         binding = getActiveAccountScope(db);
-      } else if (!binding.active) {
+      } else if (activate && !binding.active) {
         activateAccountScope(db, binding.scopeId);
       }
     }
+    if (!activate && originallySelected && getActiveAccountScope(db)?.scopeId !== originallySelected)
+      activateAccountScope(db, originallySelected);
     const emailHash = digest(binding.scopeId, identity.email);
     const workspaceHash = digest(binding.scopeId, identity.workspaceId);
     confirmAccountScope(db, { scopeId: binding.scopeId,
@@ -100,17 +124,20 @@ async function performAccountCheck(configPath, { appServer = callAppServer,
     sessionStatus = { state: 'verified', scopeId: binding.scopeId,
       boundDisplay: identity.displayName, currentDisplay: identity.displayName,
       verifiedAt: Math.floor(Date.now() / 1000) };
-    return accountStatus(db);
+    return finish(sessionStatus);
   } finally { db.close(); }
 }
 
 export function checkAccount(configPath, options = {}) {
-  const pending = checkQueue.catch(() => {}).then(() => performAccountCheck(configPath, options));
-  checkQueue = pending.catch(() => {});
+  const key = options.expectedScopeId || 'current';
+  const pending = (checkQueues.get(key) || Promise.resolve()).catch(() => {}).then(() => performAccountCheck(configPath, options));
+  checkQueues.set(key, pending);
+  pending.finally(() => { if (checkQueues.get(key) === pending) checkQueues.delete(key); }).catch(() => {});
   return pending;
 }
 
 const messages = {
+  mismatch: '此账号的登录会话已变化，请重新登录此账号；其他账号继续提醒。',
   needsBinding: '现有 Codex 卡尚未绑定账号；请确认正在使用原 CLI 账号，再在管理页绑定。',
   unavailable: '暂时无法核实 Codex 登录账号；请检查连接后重新核对。',
   unidentified: 'Codex 未提供可辨认的账号身份；已暂停 Codex 卡操作。',
