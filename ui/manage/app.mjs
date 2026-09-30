@@ -402,7 +402,7 @@ async function load(force = false) {
   catch (error) { notice('读取失败', true, error.message); $('sync-status').textContent = '读取失败'; }
   finally {
     loading = false;
-    if (reloadPending && !busy && !interacting()) queueMicrotask(() => load());
+    if (reloadPending && !busy) queueMicrotask(() => load());
   }
 }
 async function action(op, args, success, errorId) {
