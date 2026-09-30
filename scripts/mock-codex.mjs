@@ -17,7 +17,8 @@ export async function createMockCodex(directory) {
       CODEX_RESET_SMOKE_SOURCE: join(fixtures, 'mock-codex.cs'),
       CODEX_RESET_SMOKE_EXE: executable }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
-    const timer = setTimeout(() => { child.kill(); reject(new Error('编译模拟 Codex 超时')); }, 30000);
+    // Windows 托管 runner 冷启动 PowerShell/.NET 时可能超过 30 秒；独立请求期限仍由调用方检查。
+    const timer = setTimeout(() => { child.kill(); reject(new Error('编译模拟 Codex 超时')); }, 60000);
     child.stdout.on('data', (chunk) => { output += chunk; });
     child.stderr.on('data', (chunk) => { output += chunk; });
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
