@@ -449,7 +449,17 @@ try {
       && document.querySelector('#name').textContent.includes('CI 合并提醒 3')`, '官方不可用卡从弹窗移除');
     await until(manage, `document.querySelector('#pending-filter').textContent === '已提醒 1'`, '自动清理失效待处理');
     await writeFile(accountFile, JSON.stringify({ ...mockAccount, account: { type: 'chatgpt', email: 'different@example.invalid' } }));
-    await evaluate(manage, `window.api.core('checkAccount')`);
+    await evaluate(manage, `(() => {
+      const clock = Date.now;
+      Date.now = () => clock() + 31_000;
+      window.dispatchEvent(new Event('focus'));
+      Date.now = clock;
+      return true;
+    })()`);
+    await until(manage, `document.querySelector('#account-info').dataset.state === 'mismatch'
+      && document.querySelector('#cards tbody').children.length === 0`, '换号后隐藏原账号卡');
+    assert.match(await evaluate(manage, `document.querySelector('#account-status').textContent`), /当前 d\*\*\*@example.invalid/);
+    assert.match(await evaluate(manage, `document.querySelector('#empty').textContent`), /原账号卡已隐藏/);
     await untilClosed(port, '/ui/reminder/index.html');
     assert.match(await evaluate(manage, `window.api.openPendingReminders().then(() => 'unexpected', error => error.message)`), /账号不一致/);
     assert.equal((await reminderTabs()).length, 0, '换号时不可重新展示旧账号待处理');
