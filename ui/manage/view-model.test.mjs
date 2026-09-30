@@ -26,8 +26,8 @@ test('紧凑时间跨年时保留年份，当前有效期的发送记录优先�
 
 test('自动化状态不把未知账号或失败同步显示为已恢复', () => {
   assert.match(syncSummary({ account: { state: 'unavailable' } }), /暂停/);
-  assert.match(accountSummary({ state: 'mismatch' }), /账号不一致/);
-  assert.match(accountSummary({ state: 'mismatch', currentDisplay: 'n***@example.com' }), /当前 n\*\*\*@example.com · 已暂停/);
+  assert.equal(accountSummary({ state: 'verified', boundDisplay: 'n***@example.com' }), 'n***@example.com');
+  assert.equal(accountSummary({ state: 'unidentified' }), '账号无法辨认');
   assert.match(automationSummary({ recovering: true, nextSyncAt: 100 }), /自动恢复连接.*下次/);
   assert.match(syncSummary({ latest: { outcome: 'failed' }, confirmed: { checkedAt: 100 } }), /已同步/);
   assert.equal(syncSummary({ latest: { outcome: 'partial' } }), '卡片详情待获取');

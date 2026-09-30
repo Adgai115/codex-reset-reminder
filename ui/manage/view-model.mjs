@@ -44,8 +44,6 @@ export function automationSummary(snapshot) {
 export function accountSummary(account) {
   if (account?.state === 'verified') return account.boundDisplay;
   if (account?.state === 'needsBinding') return '待确认账号';
-  if (account?.state === 'mismatch') return account.currentDisplay
-    ? `当前 ${account.currentDisplay} · 已暂停` : '账号不一致';
   if (account?.state === 'unidentified') return '账号无法辨认';
   if (account?.state === 'unavailable') return '账号暂不可用';
   return '核对账号…';
@@ -95,7 +93,6 @@ export function nextReminder(card, channels, now = Date.now() / 1000) {
 
 export function syncDescription(snapshot, now = Date.now() / 1000) {
   if (snapshot.syncing) return '正在同步 Codex Usage，可继续查看本地卡片…';
-  if (snapshot.account?.state === 'mismatch') return '当前 CLI 账号与缓存绑定账号不一致；原账号卡已隐藏，同步和提醒已暂停。';
   if (snapshot.account?.state === 'needsBinding') return '现有 Codex 卡等待绑定原账号；绑定前暂停同步和提醒。';
   if (['unavailable', 'unidentified'].includes(snapshot.account?.state))
     return '暂时无法核实 Codex 账号；卡片同步和提醒已暂停，后台将自动重新核对。';
@@ -109,9 +106,8 @@ export function syncDescription(snapshot, now = Date.now() / 1000) {
 
 export function accountDescription(account) {
   if (!account || account.state === 'checking') return 'Codex 账号待核对，Codex 卡操作暂不可用。';
-  if (account.state === 'verified') return `缓存绑定 ${account.boundDisplay} · 最近核对 ${formatTime(account.verifiedAt)}`;
+  if (account.state === 'verified') return `当前账号 ${account.boundDisplay} · 最近核对 ${formatTime(account.verifiedAt)}`;
   if (account.state === 'needsBinding') return `发现现有 Codex 缓存。当前 CLI：${account.currentDisplay}。请确认这是原账号后绑定。`;
-  if (account.state === 'mismatch') return `当前 CLI ${account.currentDisplay}，缓存属于 ${account.boundDisplay}。本版仅支持一个账号；旧卡已隐藏。切回原账号后重新核对即可恢复。`;
   if (account.state === 'unidentified') return 'Codex 未提供可辨认的账号身份；请检查 CLI 登录方式并重新核对。';
   return `暂时无法读取 Codex 账号身份。${account.boundDisplay ? `缓存绑定 ${account.boundDisplay}。` : ''}后台将自动重试，连接恢复后自动核对。`;
 }
