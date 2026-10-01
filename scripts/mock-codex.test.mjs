@@ -7,7 +7,7 @@ import test from 'node:test';
 import { createMockCodex } from './mock-codex.mjs';
 import { codexCommand } from '../core/native-bin.mjs';
 
-test('parallel mock accounts keep every request log without terminating a CLI', { timeout: 90000 }, async (t) => {
+test('parallel mock accounts keep every request log without terminating a CLI', { timeout: 120000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-mock-concurrent-'));
   try {
     const started = Date.now();

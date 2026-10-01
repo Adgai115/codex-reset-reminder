@@ -12,8 +12,10 @@ let view = 'cards';
 let noticeTimer;
 let lastFocusCheckAt = Date.now();
 let lastRenderedScopeId = null;
-const expandedCards = new Set();
-const interacting = () => document.activeElement?.tagName === 'SELECT';
+let detailContext = null;
+let detailFingerprint = '';
+let interactionTimer;
+const interacting = () => document.activeElement?.matches('select:open') === true;
 const text = (parent, tag, content, className = '') => {
   const element = document.createElement(tag);
   element.textContent = content;
@@ -28,6 +30,14 @@ function notice(message, error = false, detail = message) {
   $('notice-detail').textContent = detail;
   $('notice-box').hidden = !message;
   $('notice').classList.toggle('error', error);
+  if ($('detail-dialog').open) {
+    $('detail-notice').textContent = detail || message;
+    $('detail-notice').classList.toggle('error', error);
+  }
+  if ($('accounts-dialog').open) {
+    $('account-notice').textContent = detail || message;
+    $('account-notice').classList.toggle('error', error);
+  }
   if (message) {
     const hide = () => {
       if (busy) { noticeTimer = setTimeout(hide, 1000); return; }
@@ -55,8 +65,24 @@ function button(parent, label, callback, unavailable = false) {
   return element;
 }
 function renderDelivery(parent, card) {
+  const nodes = deliveryGroups(card);
+  if (!nodes.length) {
+    const next = nextReminder(card, snapshot.channels, undefined, snapshot.account);
+    text(parent, 'span', cardState(card).active ? next : '—', 'sub single-line').title = next;
+  }
+  for (const result of nodes[0] || []) {
+    const line = text(parent, 'div', '', 'delivery-summary delivery-compact');
+    const label = deliveryResultLabel(result);
+    text(line, 'span', label, result.state === 'failed' ? 'error' : '').title = label;
+    const time = text(line, 'span', formatShortTime(result.attemptedAt), 'time');
+    time.title = `${deliveryNodeLabel(result)} · ${formatTime(result.attemptedAt)}`;
+    line.title = [result.errorText || result.suspendedReason,
+      result.autoPending ? `下次补发 ${formatTime(result.nextRetryAt)}` : ''].filter(Boolean).join(' · ');
+  }
+  const footer = text(parent, 'div', '', 'delivery-actions');
+  footer.hidden = !card.pendingReminder && !nodes.some(rows => rows.some(result => result.retryable));
   if (card.pendingReminder) {
-    const pending = button(parent, '查看提醒', async () => {
+    const pending = button(footer, '查看提醒', async () => {
       if (busy) return;
       busy = true; controls();
       try {
@@ -68,29 +94,34 @@ function renderDelivery(parent, card) {
     pending.className = 'pending-reminder';
     pending.title = '重新查看提醒';
   }
-  const nodes = deliveryGroups(card);
-  if (!nodes.length) text(parent, 'span', cardState(card).active && snapshot.channels.length
-    ? nextReminder(card, snapshot.channels, undefined, snapshot.account) : '—', 'sub single-line');
-  for (const result of nodes[0] || []) {
-    const compact = text(parent, 'div', '', 'delivery-compact');
-    const line = text(compact, 'div', '', 'delivery-summary');
-    text(line, 'span', deliveryResultLabel(result), result.state === 'failed' ? 'error' : '');
-    const time = text(line, 'span', formatShortTime(result.attemptedAt), 'time');
-    time.title = `${deliveryNodeLabel(result)} · ${formatTime(result.attemptedAt)}`;
-    line.title = result.errorText || result.suspendedReason || '';
-    if (result.autoPending) text(compact, 'div', `重试 ${formatShortTime(result.nextRetryAt)}`, 'sub single-line');
+  const retryable = nodes.find(rows => rows.some(result => result.retryable));
+  if (retryable) {
+    const retry = button(footer, '重试失败渠道', () => retryNode(retryable[0]));
+    retry.dataset.retry = 'true';
+    retry.className = 'retry-button';
+    retry.title = `${deliveryNodeLabel(retryable[0])} · 只补发失败渠道`;
   }
-  const details = text(parent, 'details', '', 'delivery-details');
-  details.open = expandedCards.has(card.id);
-  details.addEventListener('toggle', () => {
-    if (!details.isConnected) return;
-    if (details.open) expandedCards.add(card.id); else expandedCards.delete(card.id);
-  });
-  text(details, 'summary', '详情').title = '卡片信息与发送记录';
-  text(details, 'div', card.title, 'delivery-line');
-  text(details, 'div', `编号：${card.creditId || card.id}`, 'delivery-line');
-  text(details, 'div', `到期：${formatTime(card.expiresAt)}`, 'delivery-line');
-  text(details, 'div', nextReminder(card, snapshot.channels, undefined, snapshot.account), 'delivery-line');
+}
+
+function meta(parent, entries) {
+  const list = text(parent, 'dl', '', 'detail-meta');
+  for (const [label, value] of entries) { text(list, 'dt', label); text(list, 'dd', value); }
+}
+
+function renderCardDetails() {
+  if (detailContext?.type !== 'card') return;
+  const card = snapshot.cards.find(card => card.id === detailContext.cardId);
+  if (!card || detailContext.scopeId !== snapshot.account?.scopeId) { $('detail-dialog').close(); return; }
+  const fingerprint = JSON.stringify([card, snapshot.channels, snapshot.account]);
+  if (fingerprint === detailFingerprint) return;
+  detailFingerprint = fingerprint;
+  const focusKey = $('detail-body').contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  const details = $('detail-body'); details.replaceChildren();
+  $('detail-title').textContent = '卡片详情';
+  meta(details, [['账号', snapshot.account.displayLabel || snapshot.account.boundDisplay || '账号待核对'],
+    ['卡片', card.title], ['编号', card.creditId || card.id], ['状态', cardState(card).label],
+    ['到期', formatTime(card.expiresAt)], ['提醒', nextReminder(card, snapshot.channels, undefined, snapshot.account)]]);
+  const nodes = deliveryGroups(card);
   for (const results of nodes) {
     const group = text(details, 'div', '', 'delivery-node');
     text(group, 'div', deliveryNodeLabel(results[0]), 'delivery-title');
@@ -104,19 +135,41 @@ function renderDelivery(parent, card) {
       else if (result.state === 'failed') text(line, 'span', result.attempts >= 4
         ? '自动补发已达上限；检查渠道设置后等待下一提醒节点。'
         : '自动补发已停止；可检查渠道设置并手动重试。', 'sub');
-      if (result.state === 'failed') button(line, '检查渠道设置',
-        () => window.api.openSettings().catch((error) => notice(error.message, true)));
+      if (result.state === 'failed') {
+        const settings = button(line, '检查渠道设置', () => window.api.openSettings().catch((error) => notice(error.message, true)));
+        settings.dataset.focusKey = `${result.expiresAt}:${result.nodeKind}:${result.nodeAt}:${result.channel}:settings`;
+      }
+    }
+    if (results.some(result => result.retryable)) {
+      const retry = button(group, '重试失败渠道', () => retryNode(results[0]));
+      retry.dataset.retry = 'true'; retry.className = 'retry-button';
+      retry.dataset.focusKey = `${results[0].expiresAt}:${results[0].nodeKind}:${results[0].nodeAt}`;
     }
   }
-  for (const results of nodes.filter((rows) => rows.some((result) => result.retryable))) {
-    const retry = button(parent, '重试失败渠道', () => retryNode(results[0]));
-    retry.dataset.retry = 'true';
-    retry.className = 'retry-button';
-  }
+  if (focusKey) ([...details.querySelectorAll('button')].find(button => button.dataset.focusKey === focusKey) || $('close-detail')).focus();
+}
+
+function openCardDetails(card) {
+  detailContext = { type: 'card', cardId: card.id, scopeId: snapshot.account.scopeId };
+  detailFingerprint = ''; $('detail-notice').textContent = '';
+  renderCardDetails(); $('detail-dialog').showModal(); controls();
+}
+
+function openRecordDetails(columns, content, record, returnKey) {
+  detailContext = { type: 'record', scopeId: snapshot.account.scopeId, returnKey };
+  $('detail-title').textContent = view === 'sync' ? '同步详情' : '提醒详情';
+  $('detail-body').replaceChildren(); $('detail-notice').textContent = '';
+  meta($('detail-body'), [['账号', snapshot.account.displayLabel || snapshot.account.boundDisplay || '账号待核对'],
+    ...columns.map((label, index) => [label, index === 0
+      ? formatTime(view === 'sync' ? record.checkedAt : record.attemptedAt) : String(content[index])]),
+    ...(record.card ? [['编号', record.card.creditId || record.card.id]] : [])]);
+  $('detail-dialog').showModal(); controls();
 }
 
 async function retryNode(result) {
   if (busy || snapshot?.retrying) return;
+  const focusKey = $('detail-body').contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  const focusContext = detailContext;
   busy = true; controls();
   notice('正在补发…');
   try {
@@ -132,13 +185,22 @@ async function retryNode(result) {
     notice(sent || failed ? `补发完成 · 成功 ${sent} / 失败 ${failed}`
       : '暂无可重试渠道', failed > 0);
   } catch (error) { notice('补发失败', true, error.message); }
-  finally { busy = false; await load(true); controls(); }
+  finally {
+    busy = false; await load(true); controls();
+    if (focusKey && $('detail-dialog').open && detailContext === focusContext && document.activeElement === document.body) {
+      ([...$('detail-body').querySelectorAll('button')].find(button => button.dataset.focusKey === focusKey && !button.disabled)
+        || $('close-detail')).focus();
+    }
+  }
 }
 function render() {
   if (!snapshot) return;
+  const focused = document.activeElement;
+  const listFocus = focused?.matches('.card-details, .record-detail')
+    ? { cardId: focused.dataset.cardId, recordKey: focused.dataset.recordKey, scopeId: lastRenderedScopeId } : null;
   if (snapshot.account?.scopeId && lastRenderedScopeId !== snapshot.account.scopeId) {
     filter = 'active';
-    expandedCards.clear();
+    if ($('detail-dialog').open) $('detail-dialog').close();
     lastRenderedScopeId = snapshot.account.scopeId;
   }
   $('sync-status').textContent = syncSummary(snapshot);
@@ -158,12 +220,18 @@ function render() {
     option.value = account.scopeId;
     option.selected = account.scopeId === snapshot.account.scopeId;
   }
-  if (!selector.options.length) text(selector, 'option', '等待获取账号').value = '';
-  selector.dataset.unavailable = String(selector.options.length === 0);
+  if (!selector.options.length) {
+    const placeholder = text(selector, 'option', '等待获取账号');
+    placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
+  }
+  const management = text(selector, 'optgroup', ''); management.label = '管理';
+  text(management, 'option', '账号管理…').value = '@manage';
+  selector.title = selector.selectedOptions[0]?.textContent || '';
   renderAccounts();
   renderRecords();
-  for (const name of ['cards', 'sync', 'reminders']) $(`${name}-view`).setAttribute('aria-pressed', String(view === name));
-  document.querySelector('.filterbar').hidden = view !== 'cards';
+  $('card-filter').hidden = view !== 'cards';
+  $('back-to-cards').hidden = view === 'cards';
+  $('record-select').value = view === 'cards' ? '' : view;
   document.querySelector('#cards').closest('.table-wrap').hidden = view !== 'cards';
   $('record-wrap').hidden = view === 'cards';
   const active = snapshot.cards.filter((card) => cardState(card).active);
@@ -172,8 +240,7 @@ function render() {
   $('history-filter').textContent = `已结束 ${snapshot.cards.length - active.length}`;
   $('pending-filter').textContent = `已提醒 ${pending.length}`;
   $('pending-filter').hidden = !pending.length && filter !== 'pending';
-  for (const name of ['active', 'history', 'pending'])
-    $(`${name}-filter`).setAttribute('aria-pressed', String(filter === name));
+  $('card-filter').value = filter;
   const cards = filter === 'pending' ? pending
     : snapshot.cards.filter((card) => cardState(card).active === (filter === 'active'));
   const tbody = document.querySelector('#cards tbody');
@@ -185,17 +252,22 @@ function render() {
     const label = text(name, 'div', '', 'card-label');
     text(label, 'span', card.title, 'card-name single-line').title = card.title;
     text(label, 'span', cardShortId(card.creditId || card.id), 'card-key').title = card.creditId || card.id;
-    text(row, 'td', formatShortTime(card.expiresAt), 'time').title = formatTime(card.expiresAt);
-    const status = text(row, 'td', '');
+    const expiry = text(row, 'td', '');
+    text(expiry, 'span', state.label, `badge expiry-status ${state.tone}`);
+    text(expiry, 'span', formatShortTime(card.expiresAt), 'time expiry-time').title = formatTime(card.expiresAt);
+    const status = text(row, 'td', '', 'state-cell');
     const badge = text(status, 'span', state.label, `badge ${state.tone}`);
     if (state.active && card.reportedUsedAt) badge.title = '后台自动读取 Codex 核验；不会直接扣减卡片。';
     renderDelivery(text(row, 'td', ''), card);
     const actions = text(text(row, 'td', ''), 'div', '', 'actions');
-    if (!state.active) { text(actions, 'span', '—', 'sub'); continue; }
+    if (!state.active) {
+      const detail = button(actions, '详情', () => openCardDetails(card));
+      detail.className = 'card-details'; detail.dataset.cardId = card.id; continue;
+    }
     const codexBlocked = !snapshot.account?.scopeId;
     const hasSnooze = card.snooze?.expiresAt === card.expiresAt;
     const later = text(actions, 'select', '');
-    later.setAttribute('aria-label', `${card.title} · 稍后提醒`);
+    later.setAttribute('aria-label', `${card.title} ${cardShortId(card.creditId || card.id)} · 稍后提醒`);
     later.title = '选择后立即生效，不改变官方到期时间';
     later.dataset.unavailable = String(codexBlocked || (!card.snoozeOptions.length && !hasSnooze));
     const placeholder = text(later, 'option', hasSnooze ? '已延期' : '稍后提醒');
@@ -210,12 +282,22 @@ function render() {
       action(option === 'clear' ? 'clearSnooze' : 'scheduleSnooze', { cardId: card.id, option, scopeId: snapshot.account.scopeId },
         option === 'clear' ? '已取消延期' : '已延期');
     });
+    const detail = button(actions, '详情', () => openCardDetails(card));
+    detail.className = 'card-details'; detail.dataset.cardId = card.id;
+    detail.setAttribute('aria-label', `${card.title} ${cardShortId(card.creditId || card.id)} · 详情`);
   }
   $('cards').hidden = cards.length === 0;
   $('empty').hidden = cards.length > 0;
   $('empty').textContent = filter === 'pending' ? '暂无已提醒卡片'
     : filter === 'history' ? '暂无已结束卡片' : '暂无可用卡片';
-  controls();
+  renderCardDetails(); controls();
+  // 返回列表后，另一轮后台刷新也可能替换刚恢复焦点的节点。
+  if (listFocus && listFocus.scopeId === snapshot.account?.scopeId && document.activeElement === document.body) {
+    const replacement = listFocus.cardId
+      ? [...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === listFocus.cardId)
+      : [...document.querySelectorAll('.record-detail')].find(button => button.dataset.recordKey === listFocus.recordKey);
+    (replacement || $('account-select')).focus();
+  }
 }
 
 function renderAccounts() {
@@ -223,7 +305,7 @@ function renderAccounts() {
   // 编辑名称时保留焦点和输入；后台更新不会清空草稿。
   if (!list.contains(document.activeElement)) {
     list.replaceChildren();
-    for (const account of snapshot.accounts || []) {
+    for (const account of snapshot?.accounts || []) {
       const row = text(list, 'div', '', 'account-row');
       row.dataset.scope = account.scopeId;
       const info = text(row, 'div', '');
@@ -246,13 +328,14 @@ function renderAccounts() {
     }
     if (!list.children.length) text(list, 'div', '暂无账号', 'empty');
   }
-  const login = snapshot.login || {};
+  const login = snapshot?.login || {};
   $('login-status').textContent = login.state === 'waiting' ? '请在浏览器完成登录'
     : login.state === 'failed' ? login.message : login.state === 'complete' ? '账号已添加' : '';
   $('cancel-login').hidden = login.state !== 'waiting';
 }
 
 function renderRecords() {
+  $('records').className = `records ${view === 'sync' ? 'sync' : 'reminder'}-records`;
   const head = $('records').querySelector('thead');
   const body = $('records').querySelector('tbody');
   head.replaceChildren(); body.replaceChildren();
@@ -260,8 +343,8 @@ function renderRecords() {
   const rows = view === 'sync' ? (snapshot.syncHistory || [])
     : snapshot.cards.flatMap((card) => (card.deliveryResults || []).map((result) => ({ ...result, card })))
       .sort((a, b) => (b.attemptedAt || 0) - (a.attemptedAt || 0));
-  const columns = view === 'sync' ? ['时间', '结果', '可用卡', '详情卡', '原因'] : ['时间', '卡片', '提醒节点', '发送结果', '原因'];
-  for (const column of columns) text(header, 'th', column);
+  const columns = view === 'sync' ? ['时间', '结果', '可用卡', '已获取详情', '原因'] : ['时间', '卡片', '提醒节点', '发送结果', '原因'];
+  for (const column of columns) text(header, 'th', column).scope = 'col';
   for (const record of rows) {
     const row = text(body, 'tr', '');
     const content = view === 'sync' ? [formatShortTime(record.checkedAt),
@@ -270,7 +353,17 @@ function renderRecords() {
       : [formatShortTime(record.attemptedAt), `${record.card.title} ${cardShortId(record.card.creditId || record.card.id)}`,
         record.nodeKind === 'snooze' ? '延期提醒' : `提前 ${record.thresholdDays} 天`, deliveryResultLabel(record), record.errorText || '—'];
     for (const [i, value] of content.entries()) {
-      const cell = text(row, 'td', String(value), i === 0 ? 'time' : 'single-cell'); cell.title = String(value);
+      const cell = text(row, 'td', '', i === 0 ? 'time' : 'single-cell'); cell.title = String(value);
+      if (i === content.length - 1) {
+        // 后台新增记录会改变行序；焦点使用记录内容/节点的稳定标识。
+        const returnKey = JSON.stringify(view === 'sync'
+          ? [view, record.checkedAt, record.outcome, record.availableCount, record.detailedCount, record.message]
+          : [view, record.card.id, record.expiresAt, record.nodeKind, record.nodeAt, record.channel]);
+        const detail = button(cell, value === '—' ? '详情' : String(value), () => openRecordDetails(columns, content, record, returnKey));
+        detail.dataset.recordKey = returnKey;
+        detail.className = 'record-detail'; detail.title = String(value);
+        detail.setAttribute('aria-label', `${view === 'sync' ? '同步' : '提醒'}详情：${formatShortTime(view === 'sync' ? record.checkedAt : record.attemptedAt)}`);
+      } else cell.textContent = String(value);
     }
   }
   $('records').hidden = !rows.length;
@@ -279,7 +372,9 @@ function renderRecords() {
 
 async function selectAccount(scopeId) {
   if (!scopeId || busy) return;
-  await action('selectAccount', { scopeId }, '');
+  const result = await action('selectAccount', { scopeId }, '');
+  if (!result) return;
+  if ($('accounts-dialog').open) $('accounts-dialog').close();
   // 切换查看立即读取缓存，后台单独刷新此账号。
   window.api.core('syncCards', { scopeId }).then(() => load(true)).catch(() => load(true));
 }
@@ -292,14 +387,22 @@ async function loginAccount(scopeId) {
   finally { busy = false; await load(true); controls(); }
 }
 async function load(force = false) {
-  if (loading || (!force && (busy || interacting()))) { reloadPending = true; return; }
+  if (loading || (!force && busy)) { reloadPending = true; return; }
+  if (!force && interacting()) {
+    reloadPending = true;
+    // 原生菜单关闭后处理积压更新，不让已聚焦但收起的选择框阻塞后台刷新。
+    clearTimeout(interactionTimer);
+    interactionTimer = setTimeout(() => load(), 250);
+    return;
+  }
+  clearTimeout(interactionTimer);
   loading = true;
   reloadPending = false;
   try { snapshot = await window.api.core('manageSnapshot'); render(); }
   catch (error) { notice('读取失败', true, error.message); $('sync-status').textContent = '读取失败'; }
   finally {
     loading = false;
-    if (reloadPending && !busy && !interacting()) queueMicrotask(() => load());
+    if (reloadPending && !busy) queueMicrotask(() => load());
   }
 }
 async function action(op, args, success, errorId) {
@@ -321,12 +424,25 @@ async function action(op, args, success, errorId) {
     if (reloadPending) load();
   }
 }
-for (const name of ['active', 'history', 'pending'])
-  $(`${name}-filter`).addEventListener('click', () => { filter = name; render(); });
-for (const name of ['cards', 'sync', 'reminders']) $(`${name}-view`).addEventListener('click', () => { view = name; render(); });
-$('account-select').addEventListener('change', () => selectAccount($('account-select').value));
-$('manage-accounts').addEventListener('click', () => { renderAccounts(); controls(); $('accounts-dialog').showModal(); });
+$('card-filter').addEventListener('change', () => { filter = $('card-filter').value; render(); });
+$('record-select').addEventListener('change', () => { view = $('record-select').value; render(); });
+$('back-to-cards').addEventListener('click', () => { view = 'cards'; render(); $('card-filter').focus(); });
+$('account-select').addEventListener('change', () => {
+  const selector = $('account-select');
+  if (selector.value !== '@manage') { selectAccount(selector.value); return; }
+  // 管理入口不是账号；保留真实查看范围，包括尚无账号的首次启动。
+  selector.value = snapshot?.account?.scopeId || '';
+  renderAccounts(); controls(); $('account-notice').textContent = ''; $('accounts-dialog').showModal();
+});
 $('close-accounts').addEventListener('click', () => $('accounts-dialog').close());
+$('close-detail').addEventListener('click', () => $('detail-dialog').close());
+$('detail-dialog').addEventListener('close', () => {
+  const previous = detailContext; detailContext = null; detailFingerprint = '';
+  const opener = previous?.scopeId === snapshot?.account?.scopeId
+    ? previous.type === 'card' ? [...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === previous.cardId)
+      : [...document.querySelectorAll('.record-detail')].find(button => button.dataset.recordKey === previous.returnKey) : null;
+  (opener || $('account-select')).focus();
+});
 $('add-account').addEventListener('click', () => loginAccount());
 $('get-current-account').addEventListener('click', () => checkAccount());
 $('cancel-login').addEventListener('click', async () => {

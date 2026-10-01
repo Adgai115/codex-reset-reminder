@@ -65,7 +65,7 @@ export function deliveryNodeLabel(result) {
 export function deliveryResultLabel(result) {
   const channel = channelLabels[result.channel] || '提醒';
   if (result.state === 'sent') return result.channel === 'desktop' ? '桌面已弹出' : `${channel}已发送`;
-  if (result.state === 'sending') return `${channel}发送结果待核实`;
+  if (result.state === 'sending') return `${channel}结果待核实`;
   if (result.autoPending) return `${channel}等待重试`;
   return `${channel}发送失败`;
 }

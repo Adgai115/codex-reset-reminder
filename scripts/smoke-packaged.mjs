@@ -104,6 +104,15 @@ async function until(tab, expression, description, timeout = 12000, send) {
   throw new Error(`界面未更新：${description}`);
 }
 
+async function choose(tab, id, value) {
+  await evaluate(tab, `(() => {
+    const select = document.getElementById(${JSON.stringify(id)});
+    select.value = ${JSON.stringify(value)};
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+}
+
 async function screenshot(tab, name, send = (method, params) => command(tab, method, params)) {
   const directory = process.env.CODEX_RESET_SMOKE_SCREENSHOTS;
   if (!directory) return;
@@ -123,6 +132,8 @@ async function untilClosed(port, suffix, timeout = 15000) {
 }
 
 async function checkCompactLayout(tab) {
+  assert.equal(await evaluate(tab, `CSS.supports('selector(select:open)')`), true,
+    '安装包的 Chromium 必须能够区分已展开菜单与仅保留焦点的选择框');
   // Emulation belongs to its debugging session. Keep that connection open until
   // measurements and screenshots finish; detaching may restore the native size.
   await debuggerSession(tab, async (send) => {
@@ -137,14 +148,42 @@ async function checkCompactLayout(tab) {
           tableScrolls: table.scrollWidth > table.clientWidth,
           oneLine: [...document.querySelectorAll('.card-name, .time, .badge, button, select')]
             .every(element => getComputedStyle(element).whiteSpace === 'nowrap'),
-          actionsFit: [...document.querySelectorAll('.actions select')].every(element =>
+          actionsFit: [...document.querySelectorAll('.actions select, .actions button')].every(element =>
             element.getBoundingClientRect().right <= element.closest('td').getBoundingClientRect().right - 5),
           toolbarFits: document.querySelector('.toolbar').getBoundingClientRect().right <= window.innerWidth,
         };
       })()`, send);
-      assert.deepEqual(layout, { viewportWidth: width, pageFits: true, tableScrolls: width === 800, oneLine: true, actionsFit: true, toolbarFits: true });
+      assert.deepEqual(layout, { viewportWidth: width, pageFits: true, tableScrolls: false, oneLine: true, actionsFit: true, toolbarFits: true });
       await screenshot(tab, `manage-${width}`, send);
     }
+    await send('Emulation.clearDeviceMetricsOverride');
+  });
+}
+
+async function checkWindowPresentation(tab, kind, sizes) {
+  await debuggerSession(tab, async (send) => {
+    let lightTheme;
+    for (const mode of ['light', 'dark']) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode }] });
+      for (const [width, height] of sizes) {
+        await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+        const layout = await evaluate(tab, `(() => {
+          const visible = [...document.querySelectorAll('button, select, input')].filter(element => element.checkVisibility());
+          return {
+            pageFits: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
+            controlsFit: visible.every(element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }),
+            actionFits: document.querySelector('#${kind === 'setup' ? 'connect' : kind === 'settings' ? 'save' : 'reset'}').getBoundingClientRect().bottom <= innerHeight,
+            theme: getComputedStyle(document.body).backgroundColor,
+          };
+        })()`, send);
+        assert.deepEqual({ pageFits: layout.pageFits, controlsFit: layout.controlsFit, actionFits: layout.actionFits },
+          { pageFits: true, controlsFit: true, actionFits: true });
+        if (mode === 'light') lightTheme = layout.theme;
+        else assert.notEqual(layout.theme, lightTheme, '深色模式应改变窗口背景');
+        await screenshot(tab, `${kind}-${mode}-${width}`, send);
+      }
+    }
+    await send('Emulation.setEmulatedMedia', { features: [] });
     await send('Emulation.clearDeviceMetricsOverride');
   });
 }
@@ -269,6 +308,15 @@ try {
         ] }, now - 200, scopeId);
         markCardUsed(db, 'RateLimitResetCredit_ciUsed');
         saveCodexSnapshot(db, { availableCount: 2, credits: active }, now - 100, scopeId);
+        // 只写隔离数据库的历史结果，覆盖多渠道窄窗口；不调用任何真实发送器。
+        const node = { cardId: 'RateLimitResetCredit_ciNear', expiresAt: active[1].expiresAt,
+          nodeKind: 'fixed', nodeAt: active[1].expiresAt - 86400, thresholdDays: 1 };
+        if (!accountsOnly && !recoveryOnly) {
+          for (const channel of ['desktop', 'feishu', 'wechat']) recordReminderResult(db, node, channel, {
+            state: channel === 'feishu' ? 'failed' : 'sent', attemptedAt: now - 50,
+            errorText: channel === 'feishu' ? '模拟渠道失败；完整原因通过键盘打开详情查看。'.repeat(8) : null,
+          });
+        }
       }
       addManualCard(db, { title: 'CI 旧手动记录', expiresAt: now + 86400 });
     }
@@ -348,6 +396,7 @@ try {
     assert.ok(setupState.bridge, '首次安装窗口 preload 没有加载');
     assert.match(setupState.title, /安装与连接/);
     assert.equal(await evaluate(setup, `document.querySelector('#connection-help').open`), false);
+    await checkWindowPresentation(setup, 'setup', [[560, 480]]);
     await screenshot(setup, 'setup-clean');
     console.log('首次安装窗口已加载，检查 Codex 诊断按钮');
     const probe = await evaluate(setup,
@@ -380,7 +429,7 @@ try {
     const firstId = first.account.scopeId;
     await writeFile(sourceAuth, JSON.stringify({ mockProfile: accountB.replaceAll('\\', '/') }));
     await evaluate(manage, `window.api.core('checkAccount')`);
-    await until(manage, `document.querySelector('#account-select').options.length === 2
+    await until(manage, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
       && document.querySelector('#cards tbody').textContent.includes('工作号卡片')`, '换号后自动显示新账号官方卡');
     const second = await evaluate(manage, `window.api.core('manageSnapshot')`);
     const secondId = second.account.scopeId;
@@ -406,14 +455,16 @@ try {
     const checkedAccount = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.equal(checkedAccount.account.scopeId, firstId);
     assert.equal(checkedAccount.account.state, 'verified', '手动核对旧账号必须保持真实连接状态');
-    await evaluate(manage, `document.querySelector('#sync-view').click();true`);
+    await choose(manage, 'record-select', 'sync');
     await until(manage, `document.querySelector('#records tbody').textContent.includes('已同步')`, '当前账号同步记录');
     await screenshot(manage, 'accounts-sync-history');
-    await evaluate(manage, `document.querySelector('#reminders-view').click();true`);
+    await choose(manage, 'record-select', 'reminders');
     await until(manage, `document.querySelector('#records tbody').textContent.includes('个人号卡片')
       && !document.querySelector('#records tbody').textContent.includes('工作号卡片')`, '提醒记录按账号展示');
     await screenshot(manage, 'accounts-reminder-history');
-    await evaluate(manage, `document.querySelector('#manage-accounts').click();true`);
+    await choose(manage, 'account-select', '@manage');
+    assert.equal(await evaluate(manage, `document.querySelector('#account-select').value`), firstId,
+      '账号管理入口不能改变当前查看账号');
     await until(manage, `document.querySelectorAll('.account-row').length === 2`, '账号管理列表');
     const locked = await evaluate(manage, `(()=>{
       const field=[...document.querySelectorAll('.account-name input')].find(el=>el.dataset.scope===${JSON.stringify(firstId)});
@@ -426,7 +477,10 @@ try {
     assert.equal(namedAccount.account.nickname, 'Smoke Personal');
     assert.equal(namedAccount.account.state, 'verified', '保存昵称不应使已连接账号失联');
     await screenshot(manage, 'accounts-manager');
-    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#cards-view').click();true`);
+    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#back-to-cards').click();true`);
+    assert.equal(await evaluate(manage, `document.querySelector('#record-select').value`), '',
+      '返回卡片后记录入口恢复占位');
+    assert.equal(await evaluate(manage, `document.activeElement.id`), 'card-filter');
     await rm(join(accountA, 'mock-usage.json'));
     await evaluate(manage, `window.api.core('syncCards',{scopeId:${JSON.stringify(firstId)}}).catch(()=>null)`);
     const bUsage = JSON.parse(await readFile(join(accountB, 'mock-usage.json'), 'utf8'));
@@ -447,7 +501,7 @@ try {
       '多账号正常退出应关闭所有会话且进程结束');
     await stopTree(child); port=await freePort(); launch();
     const restarted = await page(port, '/ui/manage/index.html', child, Date.now()+60000);
-    await until(restarted, `document.querySelector('#account-select')?.options.length === 2
+    await until(restarted, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
       && document.querySelector('#pending-filter')?.textContent === '已提醒 3'`, '重启后恢复多个账号和提醒记录');
     await evaluate(restarted, `window.api.core('selectAccount',{scopeId:${JSON.stringify(firstId)}})`);
     await until(restarted, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '登录失败账号仍可查看缓存');
@@ -536,7 +590,8 @@ try {
     await sleep(1000);
     assert.equal((await reminderTabs()).length, 0, '重启恢复待处理时不重复弹出已发送节点');
     assert.equal(attemptCount(await evaluate(manage, `window.api.core('manageSnapshot')`)), 3);
-    await evaluate(manage, `document.querySelector('#pending-filter').click(); document.querySelector('.pending-reminder').click(); true`);
+    await choose(manage, 'card-filter', 'pending');
+    await evaluate(manage, `document.querySelector('.pending-reminder').click(); true`);
     reminder = await page(port, '/ui/reminder/index.html', child, Date.now() + 30000);
     await until(reminder, `document.querySelector('#name')?.textContent.includes('CI 合并提醒')
       && document.querySelector('#pager').hidden`, '可从卡片重新查看提醒');
@@ -619,28 +674,29 @@ try {
     const initial = await evaluate(manage, `({
       account: document.querySelector('#account-info').dataset.state,
       retry: Array.from(document.querySelectorAll('#cards tbody button')).some(button => button.textContent === '重试失败渠道' && !button.disabled),
-      error: document.querySelector('#cards tbody').textContent.includes('桌面弹窗失败')
+      error: [...document.querySelectorAll('.delivery-summary')].some(line => line.title.includes('桌面弹窗失败'))
     })`);
     assert.equal(initial.account, 'verified');
     assert.equal(initial.retry, true);
     assert.equal(initial.error, true);
     await screenshot(manage, 'p0-waiting');
-    await evaluate(manage, `document.querySelector('.delivery-details').open = true; true`);
-    await until(manage, `document.querySelector('.delivery-details').open`, '可展开完整发送记录');
-    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').textContent.includes('展开详情可查看完整原因')`), true);
+    await evaluate(manage, `document.querySelector('.card-details').click(); true`);
+    await until(manage, `document.querySelector('#detail-dialog').open`, '可查看完整发送记录');
+    assert.equal(await evaluate(manage, `document.querySelector('#detail-body').textContent.includes('展开详情可查看完整原因')`), true);
     await screenshot(manage, 'p0-details');
     await rm(accountFile);
-    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    // 模拟后台核对：详情打开时用户无需关闭它即可收到账号和发送状态更新。
+    await evaluate(manage, `window.api.core('checkAccount')`);
     await until(manage, `document.querySelector('#account-info').dataset.state === 'unavailable'
       && document.querySelector('#account-status').checkVisibility()`, '账号异常保留可见提示');
     assert.equal(await evaluate(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道')`), false);
     await writeFile(accountFile, JSON.stringify(mockAccount));
-    await evaluate(manage, `document.querySelector('#check-account').click(); true`);
+    await evaluate(manage, `window.api.core('checkAccount')`);
     await until(manage, `Array.from(document.querySelectorAll('#cards tbody button'))
       .some(button => button.textContent === '重试失败渠道' && !button.disabled)`, '账号恢复后可重试');
-    assert.equal(await evaluate(manage, `document.querySelector('.delivery-details').open`), true, '自动刷新保留展开状态');
-    await evaluate(manage, `document.querySelector('.delivery-details').open = false; true`);
+    assert.equal(await evaluate(manage, `document.querySelector('#detail-dialog').open`), true, '自动刷新保留详情');
+    await evaluate(manage, `document.querySelector('#close-detail').click(); true`);
     const progress = await evaluate(manage, `(() => {
       const button = Array.from(document.querySelectorAll('#cards tbody button'))
         .find(item => item.textContent === '重试失败渠道');
@@ -693,7 +749,7 @@ try {
     accountDetailVisible: document.querySelector('#account-detail').checkVisibility(),
     footerCopy: Boolean(document.querySelector('.footnote')),
     firstCardVisible: document.querySelector('.card-name').checkVisibility(),
-    expiryVisible: document.querySelector('td.time').checkVisibility()
+    expiryVisible: document.querySelector('.expiry-time').checkVisibility()
   })`), { automationVisible: false, accountDetailVisible: false, footerCopy: false, firstCardVisible: true, expiryVisible: true });
   const blocked = await evaluate(manage, `(async () => {
     const errors = [];
@@ -706,6 +762,18 @@ try {
   assert.equal(blocked.length, 4);
   assert.ok(blocked.every(message => message.includes('不允许的页面操作')));
   await checkCompactLayout(manage);
+  await evaluate(manage, `[...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === '${activeCardId}').click(); true`);
+  await until(manage, `document.querySelector('#detail-dialog').open`, '完整卡片详情');
+  assert.equal(await evaluate(manage, `document.querySelector('#detail-body').textContent.includes('${activeCardId}')`), true);
+  // 用后台状态事件刷新真实 renderer；关闭后焦点应回到新 DOM 中同一卡片入口。
+  await evaluate(manage, `window.__detailOpener = [...document.querySelectorAll('.card-details')].find(button => button.dataset.cardId === '${activeCardId}');
+    window.dispatchEvent(new Event('focus')); true`);
+  await until(manage, `!window.__detailOpener.isConnected && document.querySelector('#detail-dialog').open`, '刷新后详情保留');
+  await evaluate(manage, `document.querySelector('#close-detail').click(); true`);
+  await until(manage, `document.activeElement?.dataset.cardId === '${activeCardId}'`, '详情关闭后键盘焦点恢复');
+  await evaluate(manage, `window.__detailOpener = document.activeElement; window.dispatchEvent(new Event('focus')); true`);
+  await until(manage, `!window.__detailOpener.isConnected && document.activeElement?.dataset.cardId === '${activeCardId}'`,
+    '后续后台刷新仍保留卡片入口焦点');
   await evaluate(manage, `(() => {
     const select = Array.from(document.querySelectorAll('#cards tbody tr'))
       .find(row => row.textContent.includes('CI 演示重置卡')).querySelector('select');
@@ -727,9 +795,9 @@ try {
       reported: Boolean(card.reportedUsedAt), unchanged: card.title === before.title && card.expiresAt === before.expiresAt };
   })()`);
   assert.deepEqual(flow, { cleared: true, status: 'available', reported: false, unchanged: true });
-  await evaluate(manage, `document.querySelector('#history-filter').click(); true`);
+  await choose(manage, 'card-filter', 'history');
   assert.equal(await evaluate(manage, `document.querySelector('#cards tbody').textContent.includes('CI 过期卡') && document.querySelector('#cards tbody').textContent.includes('已使用')`), true);
-  await evaluate(manage, `document.querySelector('#active-filter').click(); true`);
+  await choose(manage, 'card-filter', 'active');
   await until(manage, `!document.querySelector('#sync').disabled`, '启动同步结束');
   assert.equal(await evaluate(manage, `document.querySelector('#sync').click(); document.querySelector('#sync').textContent`), '同步中…');
   await until(manage, `!document.querySelector('#sync').disabled && document.querySelector('#notice').textContent.includes('刷新暂不可用')`, '同步失败后恢复按钮和缓存列表');
@@ -774,6 +842,7 @@ try {
   })`), { diagnosticsVisible: false, listenerVisible: false, versionVisible: false,
     channelsVisible: true, quietVisible: true, saveVisible: true });
   await screenshot(settingsTab, 'settings-clean');
+  await checkWindowPresentation(settingsTab, 'settings', [[660, 700], [560, 500]]);
   await evaluate(settingsTab, `document.querySelector('#feishu-state').click(); true`);
   assert.equal(await evaluate(settingsTab, `document.querySelector('#feishu-connection').open`), true, '连接状态入口应展开对应设置');
   await evaluate(settingsTab, `document.querySelector('#feishu-connection').open = false;
@@ -811,6 +880,7 @@ try {
   } while (Date.now() < deadline);
   assert.match(reminder.name, /演示重置卡/);
   assert.match(reminder.expiry, /到期/);
+  await checkWindowPresentation(reminderTab, 'reminder', [[420, 230]]);
   assert.deepEqual(await evaluate(reminderTab, `({
     accountVisible: document.querySelector('#account').textContent === '演示账号',
     resetDisabled: document.querySelector('#reset').disabled,
