@@ -10,7 +10,7 @@ const currentCard = () => payload?.cards.find((card) => card.creditId === select
 function controls() {
   for (const element of document.querySelectorAll('button, select')) element.disabled = busy;
   $('reset').disabled = busy || payload?.simulated === true || currentCard()?.accountReady === false;
-  $('reset').title = currentCard()?.accountReady === false ? '请先在账号管理中登录此账号' : '';
+  $('reset').title = currentCard()?.accountReady === false ? '请先在“设置 → 账号”中登录此账号' : '';
   $('option').disabled = busy || $('option').options.length < 2;
 }
 
