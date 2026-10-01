@@ -34,10 +34,6 @@ function notice(message, error = false, detail = message) {
     $('detail-notice').textContent = detail || message;
     $('detail-notice').classList.toggle('error', error);
   }
-  if ($('accounts-dialog').open) {
-    $('account-notice').textContent = detail || message;
-    $('account-notice').classList.toggle('error', error);
-  }
   if (message) {
     const hide = () => {
       if (busy) { noticeTimer = setTimeout(hide, 1000); return; }
@@ -51,12 +47,8 @@ function controls() {
     element.disabled = busy || element.dataset.unavailable === 'true'
       || (snapshot?.retrying === true && element.dataset.retry === 'true');
   });
-  document.querySelectorAll('#account-list input').forEach((element) => { element.disabled = busy; });
   $('sync').disabled = busy || snapshot?.syncing === true;
   $('sync').textContent = snapshot?.syncing ? '同步中…' : '刷新';
-  const loggingIn = snapshot?.login?.state === 'waiting';
-  $('add-account').disabled = busy || loggingIn;
-  document.querySelectorAll('[data-login]').forEach((element) => { element.disabled = busy || loggingIn; });
 }
 function button(parent, label, callback, unavailable = false) {
   const element = text(parent, 'button', label);
@@ -204,19 +196,17 @@ function render() {
     lastRenderedScopeId = snapshot.account.scopeId;
   }
   $('sync-status').textContent = syncSummary(snapshot);
-  $('sync-status').title = syncDescription(snapshot);
-  $('sync-detail').textContent = syncDescription(snapshot);
-  $('automation-status').textContent = automationSummary(snapshot);
+  $('sync-status').title = `${syncDescription(snapshot)}
+${automationSummary(snapshot)}`;
   $('account-status').textContent = accountSummary(snapshot.account);
   $('account-info').dataset.state = snapshot.account?.state || 'checking';
-  $('account-detail').textContent = accountDescription(snapshot.account);
+  $('account-status').title = accountDescription(snapshot.account);
   $('account-status').classList.toggle('warning', snapshot.account?.state !== 'verified');
-  $('bind-account').hidden = snapshot.account?.state !== 'needsBinding';
   $('channel-status').hidden = snapshot.channels.length > 0;
   const selector = $('account-select');
   selector.replaceChildren();
   for (const account of snapshot.accounts || []) {
-    const option = text(selector, 'option', `${account.displayLabel || account.nickname || account.boundDisplay}${account.currentCli ? ' · Codex 当前' : ''}`);
+    const option = text(selector, 'option', account.displayLabel || account.nickname || account.boundDisplay);
     option.value = account.scopeId;
     option.selected = account.scopeId === snapshot.account.scopeId;
   }
@@ -224,10 +214,7 @@ function render() {
     const placeholder = text(selector, 'option', '等待获取账号');
     placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true;
   }
-  const management = text(selector, 'optgroup', ''); management.label = '管理';
-  text(management, 'option', '账号管理…').value = '@manage';
   selector.title = selector.selectedOptions[0]?.textContent || '';
-  renderAccounts();
   renderRecords();
   $('card-filter').hidden = view !== 'cards';
   $('back-to-cards').hidden = view === 'cards';
@@ -300,40 +287,6 @@ function render() {
   }
 }
 
-function renderAccounts() {
-  const list = $('account-list');
-  // 编辑名称时保留焦点和输入；后台更新不会清空草稿。
-  if (!list.contains(document.activeElement)) {
-    list.replaceChildren();
-    for (const account of snapshot?.accounts || []) {
-      const row = text(list, 'div', '', 'account-row');
-      row.dataset.scope = account.scopeId;
-      const info = text(row, 'div', '');
-      const name = text(info, 'div', '', 'account-name');
-      const input = text(name, 'input', '');
-      input.value = account.nickname || ''; input.placeholder = account.boundDisplay;
-      input.maxLength = 30; input.setAttribute('aria-label', `账号名称 ${account.boundDisplay}`);
-      input.dataset.scope = account.scopeId;
-      input.addEventListener('change', () => action('updateAccount', { scopeId: account.scopeId, nickname: input.value }, '账号名称已保存'));
-      if (account.currentCli) text(name, 'span', 'Codex 当前', 'badge normal');
-      text(info, 'div', `${account.boundDisplay} · ${account.independent ? account.state === 'verified' ? '已连接' : '待恢复连接' : '需独立登录'}`, 'sub single-line').title = account.displayLabel || account.boundDisplay;
-      const actions = text(row, 'div', '', 'account-actions');
-      const label = text(actions, 'label', '');
-      const toggle = text(label, 'input', ''); toggle.type = 'checkbox'; toggle.checked = account.remindersEnabled;
-      label.appendChild(document.createTextNode('提醒'));
-      toggle.addEventListener('change', () => action('updateAccount', { scopeId: account.scopeId, remindersEnabled: toggle.checked }, toggle.checked ? '已开启账号提醒' : '已暂停账号提醒'));
-      button(actions, '查看', () => selectAccount(account.scopeId));
-      const login = button(actions, account.independent ? '重新登录' : '登录', () => loginAccount(account.scopeId));
-      login.dataset.login = 'true';
-    }
-    if (!list.children.length) text(list, 'div', '暂无账号', 'empty');
-  }
-  const login = snapshot?.login || {};
-  $('login-status').textContent = login.state === 'waiting' ? '请在浏览器完成登录'
-    : login.state === 'failed' ? login.message : login.state === 'complete' ? '账号已添加' : '';
-  $('cancel-login').hidden = login.state !== 'waiting';
-}
-
 function renderRecords() {
   $('records').className = `records ${view === 'sync' ? 'sync' : 'reminder'}-records`;
   const head = $('records').querySelector('thead');
@@ -374,18 +327,10 @@ async function selectAccount(scopeId) {
   if (!scopeId || busy) return;
   const result = await action('selectAccount', { scopeId }, '');
   if (!result) return;
-  if ($('accounts-dialog').open) $('accounts-dialog').close();
   // 切换查看立即读取缓存，后台单独刷新此账号。
   window.api.core('syncCards', { scopeId }).then(() => load(true)).catch(() => load(true));
 }
 
-async function loginAccount(scopeId) {
-  if (busy || snapshot?.login?.state === 'waiting') return;
-  busy = true; controls();
-  try { await window.api.loginAccount(scopeId); }
-  catch (error) { notice('登录未开始', true, error.message); }
-  finally { busy = false; await load(true); controls(); }
-}
 async function load(force = false) {
   if (loading || (!force && busy)) { reloadPending = true; return; }
   if (!force && interacting()) {
@@ -427,14 +372,7 @@ async function action(op, args, success, errorId) {
 $('card-filter').addEventListener('change', () => { filter = $('card-filter').value; render(); });
 $('record-select').addEventListener('change', () => { view = $('record-select').value; render(); });
 $('back-to-cards').addEventListener('click', () => { view = 'cards'; render(); $('card-filter').focus(); });
-$('account-select').addEventListener('change', () => {
-  const selector = $('account-select');
-  if (selector.value !== '@manage') { selectAccount(selector.value); return; }
-  // 管理入口不是账号；保留真实查看范围，包括尚无账号的首次启动。
-  selector.value = snapshot?.account?.scopeId || '';
-  renderAccounts(); controls(); $('account-notice').textContent = ''; $('accounts-dialog').showModal();
-});
-$('close-accounts').addEventListener('click', () => $('accounts-dialog').close());
+$('account-select').addEventListener('change', () => selectAccount($('account-select').value));
 $('close-detail').addEventListener('click', () => $('detail-dialog').close());
 $('detail-dialog').addEventListener('close', () => {
   const previous = detailContext; detailContext = null; detailFingerprint = '';
@@ -443,48 +381,8 @@ $('detail-dialog').addEventListener('close', () => {
       : [...document.querySelectorAll('.record-detail')].find(button => button.dataset.recordKey === previous.returnKey) : null;
   (opener || $('account-select')).focus();
 });
-$('add-account').addEventListener('click', () => loginAccount());
-$('get-current-account').addEventListener('click', () => checkAccount());
-$('cancel-login').addEventListener('click', async () => {
-  if (busy) return;
-  busy = true; controls();
-  try { await window.api.cancelAccountLogin(); }
-  catch (error) { notice('取消登录失败', true, error.message); }
-  finally { busy = false; await load(true); controls(); }
-});
 $('settings').addEventListener('click', () => window.api.openSettings().catch((error) => notice(error.message, true)));
 $('channel-status').addEventListener('click', () => $('settings').click());
-async function checkAccount(scopeId) {
-  if (busy) return;
-  busy = true; controls(); notice('核对账号…');
-  try {
-    const result = await window.api.core('checkAccount', scopeId ? { scopeId } : {});
-    const sync = result.syncResult;
-    notice(result.state !== 'verified' ? accountSummary(result)
-      : result.syncError ? '账号已核实 · 卡片同步暂不可用'
-        : sync?.complete ? `账号与 ${sync.availableCount} 张卡片已核对`
-          : `账号已核实 · 官方仅提供 ${sync?.availableCount ?? 0} 张卡的部分详情`,
-    result.state !== 'verified' || Boolean(result.syncError) || Boolean(sync && !sync.complete),
-    result.syncError || sync?.detailMessage || accountDescription(result));
-  } catch (error) { notice('账号核对失败', true, error.message); }
-  finally { busy = false; await load(true); controls(); }
-}
-$('check-account').addEventListener('click', () => checkAccount(snapshot?.account?.scopeId));
-$('bind-account').addEventListener('click', async () => {
-  if (busy || snapshot?.account?.state !== 'needsBinding') return;
-  const candidate = snapshot.account;
-  if (!confirm(`确认 ${candidate.currentDisplay} 是现有卡片的原账号？\n绑定后将同步并提醒这些卡片。`)) return;
-  busy = true; controls(); notice('确认账号中…');
-  try {
-    const result = await window.api.core('confirmLegacyBinding', {
-      expectedCandidateToken: candidate.candidateToken });
-    notice(result.state !== 'verified' ? accountSummary(result)
-      : result.syncResult?.complete ? '账号与卡片已核对' : '账号已确认 · 卡片详情待获取',
-    result.state !== 'verified' || !result.syncResult?.complete,
-    result.syncError || result.syncResult?.detailMessage || accountDescription(result));
-  } catch (error) { notice('绑定失败', true, error.message); }
-  finally { busy = false; await load(true); controls(); }
-});
 $('sync').addEventListener('click', async () => {
   if (busy || snapshot?.syncing) return;
   busy = true; controls(); $('sync').textContent = '同步中…';

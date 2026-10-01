@@ -59,6 +59,7 @@ if (!gotLock) {
     clearTimeout(stateTimer);
     stateTimer = setTimeout(() => {
       if (manageWindow && !manageWindow.isDestroyed()) manageWindow.webContents.send('state:changed');
+      if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('state:changed');
       refreshTray?.();
     }, 120);
   }
@@ -66,12 +67,12 @@ if (!gotLock) {
   async function discardSettings() {
     if (settingsDraft.working) {
       settingsWindow?.show(); settingsWindow?.focus();
-      await dialog.showMessageBox(settingsWindow, { type: 'info', message: '正在保存或连接，请稍候再关闭。' });
+      await dialog.showMessageBox(settingsWindow, { type: 'info', message: '正在处理操作，请稍候再关闭。' });
       return false;
     }
     if (!settingsDraft.dirty) return true;
     const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
-      message: '提醒设置尚未保存', detail: '关闭将放弃本次修改。',
+      message: '设置尚未保存', detail: '关闭将放弃尚未保存的修改。',
       buttons: ['继续编辑', '放弃修改'], defaultId: 0, cancelId: 0 });
     return response === 1;
   }
@@ -140,16 +141,19 @@ if (!gotLock) {
     setupWindow.on('closed', () => { setupWindow = null; if (!scheduler) app.quit(); });
   }
 
-  function showSettings() {
-    if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
+  function showSettings(tab = 'reminders') {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('settings:tab', tab);
+      settingsWindow.show(); settingsWindow.focus(); return;
+    }
     settingsWindow = new BrowserWindow({
-      width: 660, height: 700, minWidth: 560, minHeight: 500, show: false, title: 'Codex 重置卡提醒 · 提醒设置',
+      width: 660, height: 700, minWidth: 560, minHeight: 500, show: false, title: 'Codex 重置卡提醒 · 设置',
       parent: manageWindow, autoHideMenuBar: true,
       icon: join(projectRoot, 'assets', 'app-icon.png'),
       webPreferences: { preload: join(directory, 'preload.cjs'), contextIsolation: true,
         nodeIntegration: false, sandbox: true },
     });
-    settingsWindow.loadFile(join(projectRoot, 'ui', 'settings', 'index.html'));
+    settingsWindow.loadFile(join(projectRoot, 'ui', 'settings', 'index.html'), { hash: tab });
     settingsWindow.once('ready-to-show', () => settingsWindow.show());
     let confirming = false;
     settingsWindow.on('close', async (event) => {
@@ -190,7 +194,7 @@ if (!gotLock) {
       tray.setToolTip(`Codex 重置卡提醒\n${detail}`);
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开卡片管理', click: () => showManage() },
-        { label: '提醒设置', click: () => showSettings() },
+        { label: '设置', click: () => showSettings() },
         ...(pendingCount ? [{ label: `已提醒 ${pendingCount} 张`, click: () => {
           openPendingReminders().catch(() => showManage());
         } }] : []),
@@ -204,6 +208,11 @@ if (!gotLock) {
   }
 
   const managePage = pathToFileURL(join(projectRoot, 'ui', 'manage', 'index.html')).href;
+  const settingsPage = pathToFileURL(join(projectRoot, 'ui', 'settings', 'index.html')).href;
+  const isSettingsPage = (event) => event.senderFrame?.url?.split('#')[0] === settingsPage
+    && settingsWindow && !settingsWindow.isDestroyed() && event.sender === settingsWindow.webContents;
+  const settingsOperations = new Set(['manageSnapshot', 'checkAccount', 'confirmLegacyBinding',
+    'selectAccount', 'updateAccount', 'syncCards']);
   async function openPendingReminders(cardId) {
     try {
       const payload = await coreRequest('pendingReminders', { cardId, all: true });
@@ -222,7 +231,8 @@ if (!gotLock) {
     'checkAccount', 'confirmLegacyBinding', 'selectAccount', 'updateAccount']);
   const mutatingOperations = new Set(['scheduleSnooze', 'clearSnooze', 'selectAccount', 'updateAccount']);
   ipcMain.handle('core', async (event, op, args) => {
-    if (event.senderFrame?.url !== managePage || !allowedOperations.has(op)) {
+    if (!(event.senderFrame?.url === managePage && allowedOperations.has(op))
+      && !(isSettingsPage(event) && settingsOperations.has(op))) {
       throw new Error('不允许的页面操作');
     }
     if (op === 'syncCards' && scheduler) {
@@ -259,7 +269,8 @@ if (!gotLock) {
     return result;
   });
   ipcMain.handle('accounts:login', async (event, scopeId) => {
-    if (event.senderFrame?.url !== managePage || (scopeId !== undefined && typeof scopeId !== 'string'))
+    if ((event.senderFrame?.url !== managePage && !isSettingsPage(event))
+      || (scopeId !== undefined && typeof scopeId !== 'string'))
       throw new Error('不允许的账号操作');
     if (scopeId) await coreRequest('manageSnapshot', { scopeId });
     const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
@@ -271,7 +282,7 @@ if (!gotLock) {
       } });
   });
   ipcMain.handle('accounts:cancelLogin', (event) => {
-    if (event.senderFrame?.url !== managePage) throw new Error('不允许的账号操作');
+    if (event.senderFrame?.url !== managePage && !isSettingsPage(event)) throw new Error('不允许的账号操作');
     return accountSessions.cancelLogin();
   });
   ipcMain.handle('app:quit', (event) => {
@@ -282,16 +293,25 @@ if (!gotLock) {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
     return coreStatus();
   });
-  const settingsPage = pathToFileURL(join(projectRoot, 'ui', 'settings', 'index.html')).href;
   const checkSettingsPage = (event) => {
-    if (event.senderFrame?.url !== settingsPage || !settingsWindow || settingsWindow.isDestroyed()) {
+    if (!isSettingsPage(event)) {
       throw new Error('不允许的设置操作');
     }
   };
   const currentConfigPath = () => process.env.CODEX_RESET_MONITOR_CONFIG_PATH || join(projectRoot, 'config.json');
-  ipcMain.handle('settings:open', (event) => {
+  ipcMain.handle('settings:open', (event, tab = 'reminders') => {
     if (event.senderFrame?.url !== managePage) throw new Error('不允许的页面操作');
-    showSettings();
+    if (!['reminders', 'accounts'].includes(tab)) throw new Error('不允许的设置页面');
+    showSettings(tab);
+  });
+  ipcMain.handle('settings:viewAccount', async (event, scopeId) => {
+    checkSettingsPage(event);
+    if (typeof scopeId !== 'string' || !scopeId) throw new Error('请选择账号');
+    await coreRequest('selectAccount', { scopeId });
+    stateChanged();
+    showManage(); settingsWindow.hide(); manageWindow.focus();
+    scheduler?.sync('account-selected', scopeId).catch(() => {});
+    return { scopeId };
   });
   ipcMain.handle('settings:read', async (event) => {
     checkSettingsPage(event);
@@ -433,7 +453,7 @@ if (!gotLock) {
     try { await setAutoStart(options?.autoStartEnabled === true); }
     catch (error) {
       await dialog.showMessageBox(setupWindow, { type: 'warning', message: 'Codex 已连接，但登录自启设置失败',
-        detail: `${error.message}\n可以先使用应用，再到提醒设置中重新启用。` });
+        detail: `${error.message}\n可以先使用应用，再到“设置 → 提醒”中重新启用。` });
     }
     setTimeout(() => {
       startRuntime().then(() => { if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close(); })
