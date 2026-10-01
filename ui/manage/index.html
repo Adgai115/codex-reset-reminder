@@ -17,16 +17,11 @@
   h1 { font-size:23px; margin:0 0 10px; letter-spacing:-.5px; font-weight:600; white-space:nowrap; }
   h2 { font-size:20px; margin:0 0 16px; }
   p { margin:4px 0; }
-  .status-row { display:flex; gap:18px; align-items:start; font-size:12px; color:var(--muted); }
-  #sync-info { min-width:0; }
-  .detail-text { max-width:52ch; margin-top:7px; overflow-wrap:anywhere; }
-  #automation-status { margin-top:5px; }
-  .account-bar { display:flex; gap:10px; align-items:start; min-width:0; }
-  #account-info { min-width:0; }
-  #account-status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .status-row { display:flex; gap:10px; align-items:center; font-size:12px; color:var(--muted); white-space:nowrap; }
+  #sync-status { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #account-info { flex:none; }
+  #account-info::before { content:'·'; margin-right:10px; }
   #account-status.warning { color:var(--danger); }
-  #account-detail { max-width:64ch; padding:6px 0; overflow-wrap:anywhere; }
-  .account-bar button { font-size:12px; padding:3px 8px; }
   .toolbar { display:flex; gap:8px; flex-shrink:0; }
   .account-select { display:flex; align-items:center; gap:8px; margin-bottom:8px; min-width:0; }
   #account-select { max-width:280px; min-width:190px; padding:5px 8px; text-overflow:ellipsis; }
@@ -49,16 +44,6 @@
   dialog::backdrop { background:rgba(20,30,45,.3); }
   .dialog-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
   .dialog-top h2 { font-size:18px; margin:0; }
-  .account-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; padding:13px 0; border-top:1px solid var(--line); }
-  .account-name { display:flex; align-items:center; gap:8px; }
-  .account-name { min-width:0; }
-  .account-name input { width:190px; min-width:0; padding:6px 8px; font-size:13px; }
-  .account-actions { display:flex; gap:8px; align-items:center; }
-  .account-actions button { padding:4px 8px; font-size:12px; }
-  .account-actions label { white-space:nowrap; font-size:12px; }
-  .account-actions input { accent-color:var(--accent); }
-  #login-status { color:var(--muted); font-size:12px; margin:10px 0; }
-  .dialog-bottom { display:flex; align-items:center; gap:10px; margin-top:16px; }
   main { padding:0 24px 20px; }
   button, input, select { font:inherit; border:1px solid var(--line); border-radius:7px; padding:8px 12px; background:var(--surface); color:var(--ink); }
   button, select, summary { white-space:nowrap; }
@@ -133,13 +118,10 @@
 <body>
 <header>
   <div class="heading"><h1>重置卡管理</h1>
-    <div class="account-select"><select id="account-select" aria-label="查看或管理账号"><option value="" disabled selected>等待获取账号</option><optgroup label="管理"><option value="@manage">账号管理…</option></optgroup></select></div>
-    <div class="status-row"><details id="sync-info"><summary id="sync-status" role="status">读取中…</summary>
-      <div class="detail-text"><p id="sync-detail"></p><p id="automation-status"></p></div></details>
-    <div class="account-bar"><details id="account-info"><summary id="account-status">核对账号…</summary>
-      <p id="account-detail"></p><button id="check-account">重新核对账号</button></details>
-      <button id="bind-account" hidden>确认账号</button></div></div></div>
-  <div class="toolbar"><button id="sync" title="后台每 15 分钟自动同步，也可立即刷新">刷新</button><button id="settings">提醒设置</button></div>
+    <div class="account-select"><select id="account-select" aria-label="当前查看账号"><option value="" disabled selected>等待获取账号</option></select></div>
+    <div class="status-row" role="status" aria-live="polite"><span id="sync-status">读取中…</span>
+      <span id="account-info"><span id="account-status">核对账号…</span></span></div></div>
+  <div class="toolbar"><button id="sync" title="后台每 15 分钟自动同步，也可立即刷新">刷新</button><button id="settings">设置</button></div>
 </header>
 <main>
   <div class="listbar">
@@ -158,13 +140,6 @@
     <table id="records" class="records"><thead></thead><tbody></tbody></table><div id="records-empty" class="empty" hidden>暂无记录</div>
   </div>
 </main>
-<dialog id="accounts-dialog" aria-labelledby="accounts-title">
-  <div class="dialog-top"><h2 id="accounts-title">账号管理</h2><button id="close-accounts">关闭</button></div>
-  <div id="account-list"></div>
-  <p id="account-notice" role="status" aria-live="polite" class="detail-message"></p>
-  <p id="login-status" role="status" aria-live="polite"></p>
-  <div class="dialog-bottom"><button id="add-account" class="primary">添加账号</button><button id="get-current-account">获取 Codex 当前账号</button><button id="cancel-login" hidden>取消登录</button></div>
-</dialog>
 <dialog id="detail-dialog" aria-labelledby="detail-title">
   <div class="dialog-top"><h2 id="detail-title">卡片详情</h2><button id="close-detail">关闭</button></div>
   <p id="detail-notice" role="status" aria-live="polite" class="detail-message"></p>

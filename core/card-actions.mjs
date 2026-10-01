@@ -82,7 +82,7 @@ export async function handleCardAction(event, config, { db = openStore(),
       try { await verifyCardAction(card); }
       catch {
         await updateCard(card.status === 'used' ? 'used' : 'available',
-          '此卡所属账号暂不可用，请在桌面账号管理中为该账号重新登录；其他账号继续运行。');
+          '此卡所属账号暂不可用，请在桌面“设置 → 账号”中为该账号重新登录；其他账号继续运行。');
         return 'account_blocked';
       }
     }

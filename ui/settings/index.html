@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
-<title>提醒设置</title>
+<title>设置</title>
 <style>
   :root { color-scheme:light dark; --bg:#f7f9fc; --surface:#fff; --ink:#233247; --muted:#6b798e;
     --line:#dfe6ef; --field-line:#ccd7e3; --button-line:#cbd5e1; --status:#52617a; --danger:#b42318;
@@ -17,7 +17,7 @@
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
     font: 14px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
   main { padding: 22px 26px; flex: 1; min-height:0; overflow-y: auto; }
-  h1 { margin: 0 0 18px; font-size: 21px; }
+  h1 { margin: 0 0 10px; font-size: 21px; }
   h2 { font-size: 15px; margin: 0 0 10px; }
   p, small { color: var(--muted); line-height: 1.5; }
   section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
@@ -53,11 +53,38 @@
   .clocks input { color:var(--ink); background:var(--surface); }
   #listener-state, #diagnostics, #codex-probe, #update-state { overflow-wrap:anywhere; }
   button:active:not(:disabled) { transform:translateY(1px); }
+  .settings-tabs { display:flex; gap:8px; border-bottom:1px solid var(--line); margin-bottom:14px; }
+  .settings-tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; padding:9px 14px; background:transparent; color:var(--muted); }
+  .settings-tabs button[aria-selected=true] { border-bottom-color:var(--accent); color:var(--accent); }
+  .accounts-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px; }
+  .accounts-heading h2 { margin:0; }
+  .account-row { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:center; padding:13px 0; border-bottom:1px solid var(--line); }
+  .account-row:last-child { border-bottom:0; }
+  .account-info { min-width:0; }
+  .account-name input { display:block; width:100%; max-width:230px; min-width:0; padding:6px 8px; border:1px solid var(--field-line); border-radius:6px; color:var(--ink); background:var(--surface); font:inherit; }
+  .account-meta { display:flex; gap:8px; min-width:0; margin-top:6px; color:var(--muted); font-size:12px; }
+  .account-state { white-space:nowrap; }
+  .account-actions { display:flex; align-items:center; gap:7px; font-size:12px; }
+  .account-actions button { padding:6px 8px; font-size:12px; }
+  .account-actions label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+  .account-actions input { margin:0; width:15px; height:15px; }
+  .account-row[data-selected=true] [data-account-view] { color:var(--accent); border-color:var(--accent); }
+  .account-tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .account-tools button { padding:7px 10px; font-size:12px; }
+  #account-notice, #login-status { margin:12px 0 0; font-size:12px; color:var(--status); overflow-wrap:anywhere; }
+  #account-notice.error, #login-status.error { color:var(--danger); }
+  #account-notice:empty, #login-status:empty { display:none; }
+  .accounts-empty { padding:18px 0; color:var(--muted); }
 </style>
 </head>
 <body>
 <main>
-  <h1>提醒设置</h1>
+  <h1>设置</h1>
+  <div class="settings-tabs" role="tablist" aria-label="设置分类">
+    <button id="reminders-tab" type="button" role="tab" aria-controls="reminders-panel" aria-selected="true">提醒</button>
+    <button id="accounts-tab" type="button" role="tab" aria-controls="accounts-panel" aria-selected="false" tabindex="-1">账号</button>
+  </div>
+  <div id="reminders-panel" role="tabpanel" aria-labelledby="reminders-tab">
   <section><h2>启动与通知</h2>
     <label class="line" title="登录后自动启动到托盘"><input id="autostart" type="checkbox">登录时自动启动</label>
     <label class="line"><input id="desktop" type="checkbox">桌面提醒</label>
@@ -95,15 +122,35 @@
     <button id="open-update" type="button" hidden>打开下载页</button>
     <small id="update-state" role="status" aria-live="polite"></small>
   </details></section>
+  </div>
+  <div id="accounts-panel" role="tabpanel" aria-labelledby="accounts-tab" hidden>
+    <section>
+      <div class="accounts-heading"><h2>账号</h2><button id="add-account" type="button">添加账号</button></div>
+      <div id="account-list">读取中…</div>
+      <div class="account-tools">
+        <button id="check-account" type="button">重新核对账号</button>
+        <button id="get-current-account" type="button" title="读取当前 Codex CLI 登录的账号">获取 Codex 账号</button>
+        <button id="bind-account" type="button" hidden>确认账号</button>
+        <button id="cancel-login" type="button" hidden>取消登录</button>
+      </div>
+      <p id="account-notice" role="status" aria-live="polite"></p>
+      <p id="login-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
 </main>
 <footer><div id="status" role="status" aria-live="polite"></div>
   <div class="footer-actions"><button id="test">测试提醒</button><button id="cancel">取消</button><button id="save" class="primary">保存</button></div>
 </footer>
-<script>
+<script type="module">
+  import { createAccountsSettings } from './accounts.mjs';
   const $ = (id) => document.getElementById(id);
   let connected = false;
   let unlocked = true;
   let saving = false;
+  let accountWorking = false;
+  let accountDraftDirty = false;
+  let accountController = null;
+  let selectedTab = 'reminders';
   let listener = null;
   let baseline = null;
   let connectionBaseline = '';
@@ -130,15 +177,31 @@
     $('status').textContent = message;
     $('status').classList.toggle('error', error);
   }
-  async function notifyDraft() { await window.api.settingsDraft({ dirty: dirty(), working: saving }); }
+  async function notifyDraft() { await window.api.settingsDraft({ dirty: dirty() || accountDraftDirty, working: saving || accountWorking }); }
+  function selectTab(tab, focus = false) {
+    selectedTab = tab === 'accounts' ? 'accounts' : 'reminders';
+    for (const name of ['reminders', 'accounts']) {
+      const active = name === selectedTab;
+      $(`${name}-tab`).setAttribute('aria-selected', String(active));
+      $(`${name}-tab`).tabIndex = active ? 0 : -1;
+      $(`${name}-panel`).hidden = !active;
+    }
+    if (focus) $(`${selectedTab}-tab`).focus();
+    controls();
+    if (selectedTab === 'accounts') accountController?.refresh();
+  }
   function controls() {
-    const blocked = saving || !baseline;
+    const blocked = saving || accountWorking || !baseline;
     for (const id of ['autostart', 'desktop', 'feishu', 'quiet', 'preflight', 'save', 'test', 'repair-codex']) $(id).disabled = blocked;
-    $('cancel').disabled = saving;
+    $('cancel').disabled = saving || accountWorking;
+    $('test').hidden = selectedTab === 'accounts';
+    $('save').hidden = selectedTab === 'accounts' && !dirty();
+    $('cancel').textContent = selectedTab === 'accounts' && !dirty() ? '关闭' : '取消';
     $('quiet-start').disabled = $('quiet-end').disabled = blocked || !$('quiet').checked;
     $('retry').disabled = blocked || !$('preflight').checked;
     $('channel-warning').hidden = $('desktop').checked || $('feishu').checked;
     connectionState();
+    accountController?.setBlocked(saving);
   }
   function listenerState() {
     let label;
@@ -176,9 +239,9 @@
     } catch (error) { $('diagnostics').textContent = `本地检查失败：${error.message}`; }
   }
   function connectionState() {
-    for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked || saving || !baseline;
-    $('connect').disabled = !unlocked || saving || !baseline;
-    $('reconnect').disabled = !connected || unlocked || saving || !baseline;
+    for (const id of ['app-id', 'recipient-id', 'lark-path', 'secret']) $(id).disabled = !unlocked || saving || accountWorking || !baseline;
+    $('connect').disabled = !unlocked || saving || accountWorking || !baseline;
+    $('reconnect').disabled = !connected || unlocked || saving || accountWorking || !baseline;
     listenerState();
   }
   function fill(settings) {
@@ -203,6 +266,29 @@
     if (settings.version) $('update-state').textContent = `v${settings.version}`;
     controls();
   }
+  accountController = createAccountsSettings({
+    api: window.api,
+    onWorking: async (working) => {
+      accountWorking = working;
+      controls();
+      await notifyDraft();
+    },
+    onDraftDirty: async (value) => {
+      accountDraftDirty = value;
+      await notifyDraft();
+    },
+  });
+  for (const name of ['reminders', 'accounts']) {
+    $(`${name}-tab`).addEventListener('click', () => selectTab(name));
+    $(`${name}-tab`).addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      selectTab(event.key === 'Home' ? 'reminders' : event.key === 'End' ? 'accounts'
+        : selectedTab === 'accounts' ? 'reminders' : 'accounts', true);
+    });
+  }
+  window.api.onSettingsTab?.((tab) => selectTab(tab));
+  selectTab(location.hash.slice(1));
   controls();
   window.api.settingsRead().then(fill).catch((error) => status(error.message, true));
   window.api.onUpdateStatus(showUpdateState);
@@ -224,7 +310,7 @@
     finally { $('probe-codex').disabled = false; }
   });
   $('repair-codex').addEventListener('click', async () => {
-    if (saving) return;
+    if (saving || accountWorking) return;
     saving = true; controls();
     status('请选择 Codex 程序');
     try {
@@ -268,7 +354,7 @@
   });
   $('open-update').addEventListener('click', () => window.api.openUpdate()
     .catch((error) => { $('update-state').textContent = error.message; }));
-  document.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
+  $('reminders-panel').querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
     controls();
     if ($('feishu').checked && !connected) $('feishu-connection').open = true;
     status(dirty() ? '未保存' : '');
@@ -280,7 +366,7 @@
     controls();
   });
   $('connect').addEventListener('click', async () => {
-    if (saving) return;
+    if (saving || accountWorking) return;
     saving = true; controls();
     status('正在配置机器人并发送测试私聊…');
     try {
@@ -314,14 +400,14 @@
   });
   $('cancel').addEventListener('click', () => window.api.settingsClose().catch((error) => status(error.message, true)));
   $('save').addEventListener('click', async () => {
-    if (saving) return;
-    if (connectionDirty()) { status('请先连接并测试飞书', true); $('feishu-connection').open = true; return; }
-    if ($('feishu').checked && !connected) { status('飞书尚未连接', true); $('feishu-connection').open = true; return; }
+    if (saving || accountWorking) return;
+    if (connectionDirty()) { selectTab('reminders'); status('请先连接并测试飞书', true); $('feishu-connection').open = true; return; }
+    if ($('feishu').checked && !connected) { selectTab('reminders'); status('飞书尚未连接', true); $('feishu-connection').open = true; return; }
     if ($('quiet').checked && (!$('quiet-start').value || !$('quiet-end').value || $('quiet-start').value === $('quiet-end').value)) {
-      status('免打扰起止时间不能为空或相同。', true); return;
+      selectTab('reminders'); status('免打扰起止时间不能为空或相同。', true); return;
     }
     if ($('preflight').checked && !$('retry').checkValidity()) {
-      $('advanced-settings').open = true; $('retry').reportValidity(); return;
+      selectTab('reminders'); $('advanced-settings').open = true; $('retry').reportValidity(); return;
     }
     saving = true;
     controls();

@@ -59,7 +59,7 @@ test('all accounts continue synchronizing and reminding when CLI and displayed a
   assert.equal(consume.params.creditId, 'shared-credit');
   const savedSecond = profiles.get(second.scopeId);
   profiles.delete(second.scopeId);
-  await assert.rejects(run('resetCardFromReminder', { cardId: other.cards[0].id, expectedExpiresAt: expiry }), /账号管理中登录/);
+  await assert.rejects(run('resetCardFromReminder', { cardId: other.cards[0].id, expectedExpiresAt: expiry }), /设置 → 账号.*登录/);
   assert.equal(calls.filter((call) => call.method === 'account/rateLimitResetCredit/consume').length, 1,
     'current CLI fallback is readable but cannot consume without a pinned account session');
   profiles.set(second.scopeId, savedSecond);

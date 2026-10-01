@@ -23,7 +23,13 @@ contextBridge.exposeInMainWorld('api', {
   setupProbeCodex: (path) => invoke('setup:probeCodex', path),
   setupBrowse: () => invoke('setup:browse'),
   setupSave: (options) => invoke('setup:save', options),
-  openSettings: () => invoke('settings:open'),
+  openSettings: (tab) => invoke('settings:open', tab),
+  onSettingsTab: (callback) => {
+    const listener = (_event, tab) => callback(tab);
+    ipcRenderer.on('settings:tab', listener);
+    return () => ipcRenderer.removeListener('settings:tab', listener);
+  },
+  viewAccount: (scopeId) => invoke('settings:viewAccount', scopeId),
   settingsRead: () => invoke('settings:read'),
   listenerStatus: () => invoke('settings:listenerStatus'),
   diagnoseLocal: () => invoke('settings:diagnoseLocal'),

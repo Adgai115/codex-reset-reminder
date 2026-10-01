@@ -49,7 +49,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
       if (accounts) {
         const config = JSON.parse(await readFile(configPath(), 'utf8'));
         try { await accounts('capture', { binding, script: config.codexScript }); }
-        catch { /* 当前 CLI 仍可读取；独立登录失败可在账号管理中恢复。 */ }
+        catch { /* 当前 CLI 仍可读取；独立登录失败可在设置的账号页恢复。 */ }
       }
     }
     return result;
@@ -99,7 +99,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
   const consumeForCard = async (id, key) => {
     const scopeId = accountForCard(id);
     if (accounts && !(await profileExists(scopeId))) {
-      const error = new Error('请先在账号管理中登录此账号，再确认立即重置');
+      const error = new Error('请先在“设置 → 账号”中登录此账号，再确认立即重置');
       error.code = 'ACCOUNT_LOGIN_REQUIRED'; throw error;
     }
     if (accounts && scopeId === currentId()) {

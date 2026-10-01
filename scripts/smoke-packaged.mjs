@@ -40,7 +40,7 @@ async function page(port, suffix, child, deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(1500) });
       const tabs = await response.json();
-      const found = tabs.find((tab) => tab.type === 'page' && tab.url?.endsWith(suffix));
+      const found = tabs.find((tab) => tab.type === 'page' && tab.url?.split('#')[0].endsWith(suffix));
       if (found?.webSocketDebuggerUrl) return found;
     } catch { /* 调试端口仍在启动。 */ }
     await sleep(300);
@@ -125,13 +125,19 @@ async function untilClosed(port, suffix, timeout = 15000) {
   const deadline = Date.now() + timeout;
   do {
     const tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-    if (!tabs.some((tab) => tab.url?.endsWith(suffix))) return;
+    if (!tabs.some((tab) => tab.url?.split('#')[0].endsWith(suffix))) return;
     await sleep(200);
   } while (Date.now() < deadline);
   throw new Error(`窗口未按预期关闭：${suffix}`);
 }
 
 async function checkCompactLayout(tab) {
+  assert.deepEqual(await evaluate(tab, `({
+    statusVisible: document.querySelector('#sync-status').checkVisibility() && document.querySelector('#account-status').checkVisibility(),
+    collapsed: Boolean(document.querySelector('#sync-status').closest('details') || document.querySelector('#account-status').closest('details')),
+    settingsLabel: document.querySelector('#settings').textContent,
+    currentSuffix: [...document.querySelector('#account-select').options].some(option=>option.textContent.includes('Codex 当前'))
+  })`), { statusVisible: true, collapsed: false, settingsLabel: '设置', currentSuffix: false });
   assert.equal(await evaluate(tab, `CSS.supports('selector(select:open)')`), true,
     '安装包的 Chromium 必须能够区分已展开菜单与仅保留焦点的选择框');
   // Emulation belongs to its debugging session. Keep that connection open until
@@ -429,7 +435,7 @@ try {
     const firstId = first.account.scopeId;
     await writeFile(sourceAuth, JSON.stringify({ mockProfile: accountB.replaceAll('\\', '/') }));
     await evaluate(manage, `window.api.core('checkAccount')`);
-    await until(manage, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
+    await until(manage, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value).length === 2
       && document.querySelector('#cards tbody').textContent.includes('工作号卡片')`, '换号后自动显示新账号官方卡');
     const second = await evaluate(manage, `window.api.core('manageSnapshot')`);
     const secondId = second.account.scopeId;
@@ -444,8 +450,23 @@ try {
       window.api.core('manageSnapshot',{scopeId:${JSON.stringify(firstId)}}),
       window.api.core('manageSnapshot',{scopeId:${JSON.stringify(secondId)}})
     ]).then(rows=>rows.map(row=>row.syncHistory.length))`);
-    await evaluate(manage, `document.querySelector('#check-account').click();true`);
-    await until(manage, `!document.querySelector('#sync').disabled`, '所选账号手动核对完成');
+    await triggerWindow(manage, `document.querySelector('#settings').click();true`);
+    const accountSettings = await page(port, '/ui/settings/index.html', child, Date.now()+15000);
+    await until(accountSettings, `document.querySelector('#desktop')?.disabled === false`, '提醒设置读取完成');
+    await evaluate(accountSettings, `window.smokeDesktopOriginal=document.querySelector('#desktop').checked;
+      document.querySelector('#desktop').checked=!window.smokeDesktopOriginal;
+      document.querySelector('#desktop').dispatchEvent(new Event('input',{bubbles:true}));
+      document.querySelector('#accounts-tab').click();true`);
+    await until(accountSettings, `document.querySelectorAll('.account-row').length === 2`, '统一设置中的账号列表');
+    await evaluate(accountSettings, `document.querySelector('#check-account').click();true`);
+    await until(accountSettings, `!document.querySelector('#check-account').disabled`, '所选账号手动核对完成');
+    assert.equal(await evaluate(manage, `document.querySelector('#account-select').value`), firstId,
+      '设置中的账号核对不能切换到另一个 CLI 账号');
+    const denied = await evaluate(accountSettings, `Promise.all([
+      window.api.core('snooze',{}),window.api.core('retryFailedChannels',{}),window.api.quitApp(),
+      window.api.reminderAction('reset',{}),window.api.openPendingReminders()
+    ].map(p=>p.then(()=>false,e=>/不允许|提醒窗口无效/.test(e.message))))`);
+    assert.deepEqual(denied,[true,true,true,true,true],'设置页面不能执行卡片、发送或退出操作');
     const recordsAfter = await evaluate(manage, `Promise.all([
       window.api.core('manageSnapshot',{scopeId:${JSON.stringify(firstId)}}),
       window.api.core('manageSnapshot',{scopeId:${JSON.stringify(secondId)}})
@@ -462,22 +483,59 @@ try {
     await until(manage, `document.querySelector('#records tbody').textContent.includes('个人号卡片')
       && !document.querySelector('#records tbody').textContent.includes('工作号卡片')`, '提醒记录按账号展示');
     await screenshot(manage, 'accounts-reminder-history');
-    await choose(manage, 'account-select', '@manage');
-    assert.equal(await evaluate(manage, `document.querySelector('#account-select').value`), firstId,
-      '账号管理入口不能改变当前查看账号');
-    await until(manage, `document.querySelectorAll('.account-row').length === 2`, '账号管理列表');
-    const locked = await evaluate(manage, `(()=>{
+    assert.equal(await evaluate(manage, `Boolean(document.querySelector('#accounts-dialog'))
+      || [...document.querySelector('#account-select').options].some(o=>o.value==='@manage')`), false,
+      '账号操作只在统一设置中显示');
+    const locked = await evaluate(accountSettings, `(()=>{
       const field=[...document.querySelectorAll('.account-name input')].find(el=>el.dataset.scope===${JSON.stringify(firstId)});
       field.value='Smoke Personal';field.dispatchEvent(new Event('change'));
       return [...document.querySelectorAll('#account-list input')].every(el=>el.disabled);
     })()`);
     assert.equal(locked, true, '账号保存期间必须锁定昵称和提醒开关');
-    await until(manage, `!document.querySelector('#sync').disabled`, '账号昵称保存完成');
+    await until(accountSettings, `!document.querySelector('#check-account').disabled`, '账号昵称保存完成');
     const namedAccount = await evaluate(manage, `window.api.core('manageSnapshot')`);
     assert.equal(namedAccount.account.nickname, 'Smoke Personal');
     assert.equal(namedAccount.account.state, 'verified', '保存昵称不应使已连接账号失联');
-    await screenshot(manage, 'accounts-manager');
-    await evaluate(manage, `document.querySelector('#close-accounts').click();document.querySelector('#back-to-cards').click();true`);
+    await screenshot(accountSettings, 'accounts-manager');
+    await triggerWindow(manage, `window.api.openSettings('accounts');true`);
+    assert.equal(await evaluate(accountSettings, `document.querySelector('#desktop').checked`),
+      !await evaluate(accountSettings, `window.smokeDesktopOriginal`), '复用设置窗口保留提醒草稿');
+    await evaluate(accountSettings, `document.querySelector('[data-view=${JSON.stringify(secondId)}]').click();true`);
+    await until(manage, `document.querySelector('#account-select').value===${JSON.stringify(secondId)}
+      && document.querySelector('#cards tbody').textContent.includes('工作号卡片')`, '设置中查看账号显示对应卡片');
+    await until(accountSettings, `!document.querySelector('#check-account').disabled`, '账号查看完成');
+    await until(accountSettings, `document.hidden`, '查看账号后显示卡片窗口并收起设置');
+    await triggerWindow(manage, `document.querySelector('#settings').click();true`);
+    await until(accountSettings, `!document.hidden`, '再次打开设置保留同一窗口');
+    await evaluate(accountSettings, `document.querySelector('#accounts-tab').click();true`);
+    await evaluate(accountSettings, `document.querySelector('[data-view=${JSON.stringify(firstId)}]').click();true`);
+    await until(manage, `document.querySelector('#account-select').value===${JSON.stringify(firstId)}`, '恢复查看个人账号');
+    await until(accountSettings, `!document.querySelector('#check-account').disabled`, '恢复账号查看完成');
+    await triggerWindow(manage, `document.querySelector('#settings').click();true`);
+    await until(accountSettings, `!document.hidden`, '恢复提醒草稿窗口');
+    await evaluate(accountSettings, `document.querySelector('#reminders-tab').click();true`);
+    assert.equal(await evaluate(accountSettings, `document.querySelector('#desktop').checked`),
+      !await evaluate(accountSettings, `window.smokeDesktopOriginal`), '账号保存和切换页签保留提醒草稿');
+    await evaluate(accountSettings, `document.querySelector('#desktop').checked=window.smokeDesktopOriginal;
+      document.querySelector('#desktop').dispatchEvent(new Event('input',{bubbles:true}));true`);
+    if (nativeDialogs) {
+      await evaluate(accountSettings, `(() => { document.querySelector('#accounts-tab').click();
+        const field=document.querySelector('[data-account-name][data-scope=${JSON.stringify(firstId)}]');
+        field.focus();window.smokeNameOriginal=field.value;field.value='Uncommitted name';
+        field.dispatchEvent(new Event('input',{bubbles:true}));return true; })()`);
+      await sleep(250);
+      await triggerWindow(accountSettings, `window.api.settingsClose();true`);
+      await clickNative('继续编辑');
+      assert.equal(await evaluate(accountSettings, `document.querySelector('[data-account-name][data-scope=${JSON.stringify(firstId)}]').value`),
+        'Uncommitted name', '原生关闭保护必须保留未自动保存的账号名称');
+      await evaluate(accountSettings, `(() => { const field=document.querySelector('[data-account-name][data-scope=${JSON.stringify(firstId)}]');
+        field.value=window.smokeNameOriginal;field.dispatchEvent(new Event('input',{bubbles:true}));field.blur();return true; })()`);
+      await until(accountSettings, `!document.querySelector('#check-account').disabled`, '恢复账号名称后解除操作保护');
+      await sleep(250);
+    }
+    await triggerWindow(accountSettings, `window.api.settingsClose();true`);
+    await untilClosed(port,'/ui/settings/index.html');
+    await evaluate(manage, `document.querySelector('#back-to-cards').click();true`);
     assert.equal(await evaluate(manage, `document.querySelector('#record-select').value`), '',
       '返回卡片后记录入口恢复占位');
     assert.equal(await evaluate(manage, `document.activeElement.id`), 'card-filter');
@@ -501,7 +559,7 @@ try {
       '多账号正常退出应关闭所有会话且进程结束');
     await stopTree(child); port=await freePort(); launch();
     const restarted = await page(port, '/ui/manage/index.html', child, Date.now()+60000);
-    await until(restarted, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value && option.value !== '@manage').length === 2
+    await until(restarted, `[...(document.querySelector('#account-select')?.options || [])].filter(option => option.value).length === 2
       && document.querySelector('#pending-filter')?.textContent === '已提醒 3'`, '重启后恢复多个账号和提醒记录');
     await evaluate(restarted, `window.api.core('selectAccount',{scopeId:${JSON.stringify(firstId)}})`);
     await until(restarted, `document.querySelector('#cards tbody').textContent.includes('个人号卡片')`, '登录失败账号仍可查看缓存');
@@ -745,12 +803,12 @@ try {
   })`);
   assert.deepEqual(visible, { expired: false, nearDisabled: true, overflow: false, manual: false, addOrEdit: false });
   assert.deepEqual(await evaluate(manage, `({
-    automationVisible: document.querySelector('#automation-status').checkVisibility(),
-    accountDetailVisible: document.querySelector('#account-detail').checkVisibility(),
+    syncVisible: document.querySelector('#sync-status').checkVisibility(),
+    connectionVisible: document.querySelector('#account-status').checkVisibility(),
     footerCopy: Boolean(document.querySelector('.footnote')),
     firstCardVisible: document.querySelector('.card-name').checkVisibility(),
     expiryVisible: document.querySelector('.expiry-time').checkVisibility()
-  })`), { automationVisible: false, accountDetailVisible: false, footerCopy: false, firstCardVisible: true, expiryVisible: true });
+  })`), { syncVisible: true, connectionVisible: true, footerCopy: false, firstCardVisible: true, expiryVisible: true });
   const blocked = await evaluate(manage, `(async () => {
     const errors = [];
     for (const op of ['addManualCard', 'updateManualCard', 'markManualUsed', 'reportCardUsed']) {

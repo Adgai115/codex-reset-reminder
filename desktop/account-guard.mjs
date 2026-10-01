@@ -144,7 +144,7 @@ export function checkAccount(configPath, options = {}) {
 
 const messages = {
   mismatch: '此账号的登录会话已变化，请重新登录此账号；其他账号继续提醒。',
-  needsBinding: '现有 Codex 卡尚未绑定账号；请确认正在使用原 CLI 账号，再在管理页绑定。',
+  needsBinding: '现有 Codex 卡尚未绑定账号；请确认正在使用原 CLI 账号，再到“设置 → 账号”确认。',
   unavailable: '暂时无法核实 Codex 登录账号；请检查连接后重新核对。',
   unidentified: 'Codex 未提供可辨认的账号身份；已暂停 Codex 卡操作。',
   checking: 'Codex 账号尚未核实，请稍后重试。',
