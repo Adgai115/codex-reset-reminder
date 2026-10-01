@@ -23,6 +23,7 @@ const appRoot = await appDirectory();
 for (const name of ['desktop/main.mjs', 'desktop/diagnostics.mjs', 'core/store.mjs',
   'legacy/node/sync.mjs', 'legacy/node/check.mjs', 'legacy/node/remind.mjs',
   'ui/manage/index.html', 'ui/manage/app.mjs', 'ui/manage/view-model.mjs',
+  'ui/settings/index.html', 'ui/settings/accounts.mjs',
   'desktop/cli-repair.mjs', 'desktop/reminder-items.mjs', 'desktop/reset-card.mjs', 'core/pending-reminders.mjs',
   'desktop/account-guard.mjs', 'desktop/account-sessions.mjs', 'desktop/codex-session.mjs',
   'ui/reminder/index.html', 'ui/reminder/app.mjs', 'ui/setup/index.html', 'config.example.json']) {
