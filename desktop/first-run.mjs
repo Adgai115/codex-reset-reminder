@@ -74,7 +74,7 @@ export async function migrateLegacy(root, userData) {
   }
   if (!existsSync(targetConfig)) {
     const config = JSON.parse(await readFile(oldConfig, 'utf8'));
-    if (config.wechat) config.wechat.enabled = false; // 微信渠道暂未移植到桌面版。
+    if (config.wechat) config.wechat.enabled = false; // 旧公众号依赖需重新确认；PushPlus 在设置中另行配置。
     await writeFile(targetConfig, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx' });
   }
   const taskFailures = stopLegacyTasks();

@@ -12,9 +12,11 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
 let desktopPresenter = null;
 let accountProvider = null;
+let wechatTransport = null;
 
 export function setDesktopPresenter(presenter) { desktopPresenter = presenter; }
 export function setAccountProvider(provider) { accountProvider = provider; }
+export function setWechatTransport(transport) { wechatTransport = transport; }
 
 async function detectSqlite() {
   try {
@@ -29,7 +31,8 @@ async function createInProcessHandler() {
   const { runCoreOperation } = await import('./core-operations.mjs');
   return {
     status: () => ({ mode: 'in-process', platform: process.platform }),
-    request: (op, args) => runCoreOperation(op, args, { desktop: desktopPresenter, accounts: accountProvider }),
+    request: (op, args) => runCoreOperation(op, args, { desktop: desktopPresenter, accounts: accountProvider,
+      wechat: wechatTransport }),
   };
 }
 
@@ -69,6 +72,13 @@ async function createSidecarHandler() {
               (result) => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: true, result })}\n`),
               (error) => worker.stdin.write(`${JSON.stringify({ type: 'account-result', eventId: message.eventId, ok: false,
                 ...accountErrorPayload(error) })}\n`),
+            ).catch(() => {});
+          }
+          else if (message.type === 'wechat') {
+            Promise.resolve().then(() => wechatTransport(message.config, message.payload)).then(
+              (result) => worker.stdin.write(`${JSON.stringify({ type: 'wechat-result', eventId: message.eventId, ok: true, result })}\n`),
+              (error) => worker.stdin.write(`${JSON.stringify({ type: 'wechat-result', eventId: message.eventId, ok: false,
+                error: error.message, ...(/^PUSHPLUS_[A-Z_]{1,48}$/.test(error.code || '') ? { code: error.code } : {}) })}\n`),
             ).catch(() => {});
           }
           else if (message.type === 'desktop') {

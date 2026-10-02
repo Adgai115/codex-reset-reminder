@@ -62,10 +62,22 @@ export function openStore() {
       next_retry_at INTEGER,
       error_code TEXT,
       error_text TEXT,
+      confirmation TEXT,
       PRIMARY KEY (card_id, expires_at, node_kind, node_at, channel),
       FOREIGN KEY (card_id) REFERENCES cards(id)
     );
     CREATE INDEX IF NOT EXISTS reminder_attempts_retry ON reminder_attempts(state, next_retry_at);
+    CREATE TABLE IF NOT EXISTS pushplus_submissions (
+      card_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      node_kind TEXT NOT NULL CHECK (node_kind IN ('fixed', 'snooze')),
+      node_at INTEGER NOT NULL,
+      credential_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('unknown', 'accepted', 'rejected')),
+      message_id TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (card_id, expires_at, node_kind, node_at, credential_id)
+    );
     CREATE TABLE IF NOT EXISTS sync_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       checked_at INTEGER NOT NULL,
@@ -145,6 +157,8 @@ export function openStore() {
   }
   const snoozeColumns = new Set(db.prepare('PRAGMA table_info(snoozes)').all().map((column) => column.name));
   if (!snoozeColumns.has('wechat_delivered_at')) db.exec('ALTER TABLE snoozes ADD COLUMN wechat_delivered_at INTEGER');
+  const attemptColumns = new Set(db.prepare('PRAGMA table_info(reminder_attempts)').all().map((column) => column.name));
+  if (!attemptColumns.has('confirmation')) db.exec('ALTER TABLE reminder_attempts ADD COLUMN confirmation TEXT');
   return db;
 }
 
@@ -488,7 +502,7 @@ export function getReminderAttempt(db, { cardId, expiresAt, nodeKind, nodeAt, ch
   return db.prepare(`SELECT card_id AS cardId, expires_at AS expiresAt, node_kind AS nodeKind,
     node_at AS nodeAt, threshold_days AS thresholdDays, channel, state, attempts,
     attempted_at AS attemptedAt, succeeded_at AS succeededAt,
-    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText
+    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText, confirmation
     FROM reminder_attempts WHERE card_id = ? AND expires_at = ? AND node_kind = ? AND node_at = ? AND channel = ?`)
     .get(cardId, expiresAt, nodeKind, nodeAt, channel) || null;
 }
@@ -503,36 +517,37 @@ export function beginReminderAttempt(db, node, channel, attemptedAt) {
     ON CONFLICT(card_id, expires_at, node_kind, node_at, channel) DO UPDATE SET
       state = 'sending', attempts = excluded.attempts,
       attempted_at = excluded.attempted_at, next_retry_at = excluded.next_retry_at,
-      error_code = NULL, error_text = NULL`)
+      error_code = NULL, error_text = NULL, confirmation = NULL`)
     .run(node.cardId, node.expiresAt, node.nodeKind, node.nodeAt, node.thresholdDays,
       channel, attempts, attemptedAt, plannedRetry < node.expiresAt ? plannedRetry : null);
   return attempts;
 }
 
 export function recordReminderResult(db, node, channel, { state, attemptedAt, nextRetryAt = null,
-  errorCode = null, errorText = null }) {
+  errorCode = null, errorText = null, confirmation = null }) {
   if (!['sent', 'failed'].includes(state)) throw new Error('无效的提醒发送结果');
+  if (confirmation !== null && confirmation !== 'accepted') throw new Error('无效的提醒确认结果');
   db.prepare(`INSERT INTO reminder_attempts (card_id, expires_at, node_kind, node_at,
     threshold_days, channel, state, attempts, attempted_at, succeeded_at, next_retry_at,
-    error_code, error_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+    error_code, error_text, confirmation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(card_id, expires_at, node_kind, node_at, channel) DO UPDATE SET
       state = excluded.state,
       attempts = CASE WHEN reminder_attempts.state = 'sending' THEN reminder_attempts.attempts
         ELSE reminder_attempts.attempts + 1 END,
       attempted_at = excluded.attempted_at, succeeded_at = excluded.succeeded_at,
       next_retry_at = excluded.next_retry_at, error_code = excluded.error_code,
-      error_text = excluded.error_text`)
+      error_text = excluded.error_text, confirmation = excluded.confirmation`)
     .run(node.cardId, node.expiresAt, node.nodeKind, node.nodeAt, node.thresholdDays,
       channel, state, attemptedAt, state === 'sent' ? attemptedAt : null, nextRetryAt,
-      errorCode, errorText);
+      errorCode, errorText, state === 'sent' ? confirmation : null);
 }
 
 export function listReminderResults(db, cardId) {
   const attempts = db.prepare(`SELECT card_id AS cardId, expires_at AS expiresAt,
     node_kind AS nodeKind, node_at AS nodeAt, threshold_days AS thresholdDays, channel,
     state, attempts, attempted_at AS attemptedAt, succeeded_at AS succeededAt,
-    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText
+    next_retry_at AS nextRetryAt, error_code AS errorCode, error_text AS errorText, confirmation
     FROM reminder_attempts WHERE card_id = ? ORDER BY node_at DESC, attempted_at DESC`).all(cardId);
   const oldDeliveries = db.prepare(`SELECT d.card_id AS cardId, d.expires_at AS expiresAt,
     CASE WHEN d.threshold_days = 0 THEN 'snooze' ELSE 'fixed' END AS nodeKind,

@@ -26,10 +26,11 @@ for (const name of ['desktop/main.mjs', 'desktop/diagnostics.mjs', 'core/store.m
   'ui/settings/index.html', 'ui/settings/accounts.mjs',
   'desktop/cli-repair.mjs', 'desktop/reminder-items.mjs', 'desktop/reset-card.mjs', 'core/pending-reminders.mjs',
   'desktop/account-guard.mjs', 'desktop/account-sessions.mjs', 'desktop/codex-session.mjs',
+  'desktop/channel-credentials.mjs', 'core/pushplus.mjs', 'core/pushplus-http.mjs',
   'ui/reminder/index.html', 'ui/reminder/app.mjs', 'ui/setup/index.html', 'config.example.json']) {
   assert.ok(existsSync(join(appRoot, name)), `安装包缺少 ${name}`);
 }
-for (const name of ['config.json', '.state', '.env', 'data.db']) {
+for (const name of ['config.json', '.state', '.env', 'data.db', 'channels', 'accounts']) {
   assert.ok(!existsSync(join(appRoot, name)), `安装包包含用户数据 ${name}`);
 }
 const resources = dirname(appRoot);

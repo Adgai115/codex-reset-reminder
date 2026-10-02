@@ -1,18 +1,21 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { callFeishuCli } from '../core/feishu.mjs';
 import { quietHours } from '../core/reminder-policy.mjs';
 import { autoStartEnabled, setAutoStart } from './autostart.mjs';
 import { commitPreferences } from './preference-commit.mjs';
+import { commitWechatSettings, wechatSettingsStatus } from './channel-credentials.mjs';
 
 async function readConfig(path) { return JSON.parse(await readFile(path, 'utf8')); }
 async function writeConfig(path, config) {
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-  await rename(temporary, path);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    await rename(temporary, path);
+  } finally { await rm(temporary, { force: true }).catch(() => {}); }
 }
 
 export function discoverLarkScript() {
@@ -34,6 +37,7 @@ export function discoverLarkScript() {
 export async function readSettings(configPath, { discoverLark = true } = {}) {
   const config = await readConfig(configPath);
   return {
+    ...await wechatSettingsStatus(configPath, config),
     autoStartEnabled: autoStartEnabled(),
     desktopEnabled: config.desktop?.enabled !== false,
     feishuEnabled: config.feishu?.enabled === true,
@@ -49,7 +53,7 @@ export async function readSettings(configPath, { discoverLark = true } = {}) {
   };
 }
 
-export async function saveSettings(configPath, input) {
+export async function saveSettings(configPath, input, { crypto } = {}) {
   const config = await readConfig(configPath);
   if (input.feishuEnabled && !(config.feishu?.profile && config.feishu?.userId && config.larkCliScript)) {
     throw new Error('请先连接飞书机器人');
@@ -66,8 +70,9 @@ export async function saveSettings(configPath, input) {
     preflightSync: { enabled: input.preflightEnabled === true, retryMinutes },
   };
   quietHours(config);
-  await commitPreferences({ previousAutoStart: autoStartEnabled(), nextAutoStart: input.autoStartEnabled === true,
-    setAutoStart, write: () => writeConfig(configPath, config) });
+  await commitWechatSettings(configPath, config, input, (candidate) =>
+    commitPreferences({ previousAutoStart: autoStartEnabled(), nextAutoStart: input.autoStartEnabled === true,
+      setAutoStart, write: () => writeConfig(configPath, candidate) }), { crypto });
   return readSettings(configPath, { discoverLark: false });
 }
 

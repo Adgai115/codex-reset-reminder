@@ -54,7 +54,7 @@ export function accountSummary(account) {
   return '核对账号…';
 }
 
-const channelLabels = { desktop: '桌面', feishu: '飞书', wechat: '公众号' };
+const channelLabels = { desktop: '桌面', feishu: '飞书', wechat: '微信' };
 
 export function deliveryNodeLabel(result) {
   return result.nodeKind === 'snooze'
@@ -64,6 +64,8 @@ export function deliveryNodeLabel(result) {
 
 export function deliveryResultLabel(result) {
   const channel = channelLabels[result.channel] || '提醒';
+  if (result.state === 'sent' && result.confirmation === 'accepted') return `${channel}已提交`;
+  if (result.errorCode === 'pushplus_unknown') return `${channel}结果待核实`;
   if (result.state === 'sent') return result.channel === 'desktop' ? '桌面已弹出' : `${channel}已发送`;
   if (result.state === 'sending') return `${channel}结果待核实`;
   if (result.autoPending) return `${channel}等待重试`;
@@ -93,6 +95,8 @@ export function nextReminder(card, channels, now = Date.now() / 1000, account) {
   if (plan.dueAt) return `${kindLabel(plan.dueKind)}待补查`;
   if (plan.nextAt) return `${kindLabel(plan.nextKind)} · ${formatShortTime(plan.nextAt)}`;
   if (!channels.length) return '提醒渠道已关闭';
+  if (card.deliveryResults?.some((result) => result.expiresAt === card.expiresAt
+    && result.errorCode === 'pushplus_unknown')) return '微信结果待核实，请检查接收记录';
   if (card.deliveryResults?.some((result) => result.expiresAt === card.expiresAt
     && result.state === 'failed' && !result.nextRetryAt)) return '部分渠道发送失败，已达补发上限';
   return '本轮提醒已完成';

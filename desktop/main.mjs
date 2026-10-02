@@ -6,7 +6,9 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { coreRequest, coreStatus, setDesktopPresenter, setAccountProvider } from './core-host.mjs';
+import { coreRequest, coreStatus, setDesktopPresenter, setAccountProvider, setWechatTransport } from './core-host.mjs';
+import { requestPushplus } from '../core/pushplus-http.mjs';
+import { readWechatToken } from './channel-credentials.mjs';
 import { createAccountSessions } from './account-sessions.mjs';
 import { createReminderManager } from './reminder-window.mjs';
 import { createScheduler } from './scheduler.mjs';
@@ -52,6 +54,9 @@ if (!gotLock) {
   let checkingCurrent = false;
   let lastCurrentScope = null;
   let sessionsClosed = false;
+  let testingWechat = false;
+  let preferencesWorking = false;
+  let lastWechatTestAt = 0;
   let closingSessions = false;
 
   function stateChanged() {
@@ -65,7 +70,7 @@ if (!gotLock) {
   }
 
   async function discardSettings() {
-    if (settingsDraft.working) {
+    if (settingsDraft.working || preferencesWorking || testingWechat) {
       settingsWindow?.show(); settingsWindow?.focus();
       await dialog.showMessageBox(settingsWindow, { type: 'info', message: '正在处理操作，请稍候再关闭。' });
       return false;
@@ -157,7 +162,7 @@ if (!gotLock) {
     settingsWindow.once('ready-to-show', () => settingsWindow.show());
     let confirming = false;
     settingsWindow.on('close', async (event) => {
-      if (quitting || closingSettings || (!settingsDraft.dirty && !settingsDraft.working)) return;
+      if (quitting || closingSettings || (!settingsDraft.dirty && !settingsDraft.working && !preferencesWorking && !testingWechat)) return;
       event.preventDefault();
       if (confirming) return;
       confirming = true;
@@ -387,13 +392,17 @@ if (!gotLock) {
   });
   ipcMain.handle('settings:save', async (event, input) => {
     checkSettingsPage(event);
-    const settings = await saveSettings(currentConfigPath(), input);
-    if (settings.feishuEnabled) callbackListener?.start().catch((error) => console.warn(`[feishu] ${error.message}`));
-    else callbackListener?.stop();
-    scheduler?.check('settings-change');
-    settingsDraft = { dirty: false, working: false };
-    stateChanged();
-    return settings;
+    if (preferencesWorking || testingWechat) throw new Error('设置操作正在进行，请稍后重试');
+    preferencesWorking = true;
+    try {
+      const settings = await saveSettings(currentConfigPath(), input, { crypto: safeStorage });
+      if (settings.feishuEnabled) callbackListener?.start().catch((error) => console.warn(`[feishu] ${error.message}`));
+      else callbackListener?.stop();
+      scheduler?.check('settings-change');
+      settingsDraft = { dirty: false, working: false };
+      stateChanged();
+      return settings;
+    } finally { preferencesWorking = false; }
   });
   ipcMain.handle('settings:draft', (event, state) => {
     checkSettingsPage(event);
@@ -405,10 +414,14 @@ if (!gotLock) {
   });
   ipcMain.handle('feishu:connect', async (event, input) => {
     checkSettingsPage(event);
-    const settings = await connectFeishu(currentConfigPath(), input);
-    callbackListener?.refresh().catch((error) => console.warn(`[feishu] ${error.message}`));
-    scheduler?.check('feishu-connected');
-    return settings;
+    if (preferencesWorking || testingWechat) throw new Error('设置操作正在进行，请稍后重试');
+    preferencesWorking = true;
+    try {
+      const settings = await connectFeishu(currentConfigPath(), input);
+      callbackListener?.refresh().catch((error) => console.warn(`[feishu] ${error.message}`));
+      scheduler?.check('feishu-connected');
+      return settings;
+    } finally { preferencesWorking = false; }
   });
   ipcMain.handle('settings:testDesktop', async (event) => {
     checkSettingsPage(event);
@@ -418,6 +431,29 @@ if (!gotLock) {
       expiresLocal: new Date(Date.now() + 7 * 86400000).toLocaleString('zh-CN', { hour12: false }),
       days: 7, currentAvailableCount: null, stackIndex: 0, simulated: true });
     return true;
+  });
+  ipcMain.handle('settings:openPushplusSetup', async (event) => {
+    checkSettingsPage(event);
+    await shell.openExternal('https://www.pushplus.plus/');
+  });
+  ipcMain.handle('settings:testWechat', async (event) => {
+    checkSettingsPage(event);
+    if (testingWechat || preferencesWorking) throw new Error('设置操作正在进行，请稍后重试');
+    if (Date.now() - lastWechatTestAt < 60_000) throw new Error('请稍后再测试微信，避免频繁发送');
+    testingWechat = true;
+    try {
+      const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
+      if (config.wechat?.provider !== 'pushplus') throw new Error('请先保存 PushPlus 配置');
+      const token = await readWechatToken(currentConfigPath(), config, { crypto: safeStorage });
+      const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
+        message: '发送一条微信测试消息？', detail: '将通过已保存的 PushPlus 配置发送，不会使用重置卡。',
+        buttons: ['发送测试', '取消'], defaultId: 1, cancelId: 1 });
+      if (response !== 0) return { canceled: true, message: '已取消微信测试' };
+      lastWechatTestAt = Date.now();
+      const result = await requestPushplus({ title: '【测试】Codex 重置卡提醒', template: 'txt', channel: 'wechat',
+        content: '这是你主动发送的微信渠道测试消息。\n没有使用任何重置卡。\n后续到期提醒会包含所属账号、卡片与到期时间。' }, { token });
+      return { confirmation: result.confirmation, message: '测试请求已提交，请到微信确认接收' };
+    } finally { testingWechat = false; }
   });
 
   const setupPage = pathToFileURL(join(projectRoot, 'ui', 'setup', 'index.html')).href;
@@ -470,6 +506,10 @@ if (!gotLock) {
       if (action === 'has') return accountSessions.has(args.scopeId);
       if (['request', 'capture', 'loginRequest'].includes(action)) return accountSessions[action](args);
       throw new Error('不允许的账号会话操作');
+    });
+    setWechatTransport(async (config, payload) => {
+      const token = await readWechatToken(currentConfigPath(), config, { crypto: safeStorage });
+      return requestPushplus(payload, { token });
     });
     scheduler = createScheduler({ coreRequest, powerMonitor, onResult: () => stateChanged(),
       onChanged: stateChanged });
