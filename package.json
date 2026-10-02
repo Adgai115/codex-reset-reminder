@@ -16,6 +16,7 @@
     "start": "electron .",
     "test": "node --test \"./**/*.test.mjs\"",
     "probe:sqlite": "node desktop/check-electron-sqlite.mjs",
+    "probe:wechat": "node scripts/wechat-official/launch.mjs",
     "prepare:sidecar": "node desktop/prepare-sidecar.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "verify:updates": "node scripts/verify-update-assets.mjs",
@@ -28,7 +29,8 @@
   },
   "devDependencies": {
     "electron": "^37.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "qrcode-terminal": "0.12.0"
   },
   "build": {
     "appId": "com.adgai.codexresetreminder",
