@@ -50,4 +50,6 @@ contextBridge.exposeInMainWorld('api', {
   settingsClose: () => invoke('settings:close'),
   feishuConnect: (settings) => invoke('feishu:connect', settings),
   testDesktopReminder: () => invoke('settings:testDesktop'),
+  openPushplusSetup: () => invoke('settings:openPushplusSetup'),
+  testWechatReminder: () => invoke('settings:testWechat'),
 });

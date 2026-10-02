@@ -16,6 +16,7 @@ import { accountStatus, checkAccount, requireAccount, requireCardInScope } from 
 import { accountDisplayLabels } from '../core/account-labels.mjs';
 import { resetCardFromReminder } from './reset-card.mjs';
 import { callAppServer } from '../legacy/node/check.mjs';
+import { sendWechatReminder } from '../core/wechat.mjs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -26,7 +27,7 @@ const readDb = (run) => { const db = store.openStore(); try { return run(db); } 
 const syncingAccounts = new Map();
 
 export async function runCoreOperation(op, args = {}, context = {}) {
-  const { desktop, accounts } = context;
+  const { desktop, accounts, wechat } = context;
   const recurse = (operation, arguments_ = {}) => runCoreOperation(operation, arguments_, context);
   const selectedId = () => readDb((db) => store.getActiveAccountScope(db)?.scopeId ?? null);
   const scopes = () => readDb(store.listAccountScopes);
@@ -80,6 +81,7 @@ export async function runCoreOperation(op, args = {}, context = {}) {
     const accountReady = accounts ? await profileExists(scope.scopeId) : true;
     return runReminders({ configPath: configPath(), desktop: desktop && ((payload) => desktop({ ...payload,
       cards: (payload.cards || [payload]).map((card) => ({ ...card, accountReady })) })),
+      wechat: (config, card, days, options) => sendWechatReminder(config, card, days, { ...options, transport: wechat }),
       trackAttempts: true, batchDesktop: true, ...args, allowCodex: true,
       accountScopeId: scope.scopeId, verifyScope: () => {
         if (!readDb((db) => store.getAccountScope(db, scope.scopeId)?.remindersEnabled))
@@ -269,12 +271,13 @@ export async function runCoreOperation(op, args = {}, context = {}) {
                 const activeNode = nodeIsCurrent(card, snooze, result);
                 const accountReady = account.state === 'verified' && account.remindersEnabled !== false;
                 const retryOpen = activeNode && result.state === 'failed'
-                  && result.attempts < maxReminderAttempts;
+                  && result.attempts < maxReminderAttempts && result.errorCode !== 'pushplus_unknown';
                 return { ...result,
                   autoPending: retryOpen && accountReady && Boolean(result.nextRetryAt),
                   retryable: retryOpen && accountReady
                     && nowSeconds >= deliveryTime(nowSeconds, card.expiresAt, options.quiet),
-                  suspendedReason: result.state !== 'failed' || result.attempts >= maxReminderAttempts ? null
+                  suspendedReason: result.errorCode === 'pushplus_unknown' ? '结果未确认，为避免重复消息已停止补发；请到微信或 PushPlus 核对。'
+                    : result.state !== 'failed' || result.attempts >= maxReminderAttempts ? null
                     : !activeNode ? '当前节点已结束或渠道已关闭，停止补发。'
                       : account.remindersEnabled === false ? '此账号提醒已暂停。'
                         : !accountReady ? 'Codex 账号待核实，暂停补发。' : null,

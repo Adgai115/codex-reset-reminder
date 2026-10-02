@@ -11,11 +11,18 @@ export const projectRoot = join(directory, '..');
 let nextEventId = 1;
 const pendingDesktop = new Map();
 const pendingAccounts = new Map();
+const pendingWechat = new Map();
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', async (line) => {
   let request;
   try { request = JSON.parse(line); } catch { return; }
+  if (request.type === 'wechat-result') {
+    const pending = pendingWechat.get(request.eventId);
+    if (pending) { pendingWechat.delete(request.eventId);
+      if (request.ok) pending.resolve(request.result); else pending.reject(restoreCoreError(request)); }
+    return;
+  }
   if (request.type === 'account-result') {
     const pending = pendingAccounts.get(request.eventId);
     if (pending) { pendingAccounts.delete(request.eventId);
@@ -34,6 +41,11 @@ rl.on('line', async (line) => {
   const { id, op, args = {} } = request;
   try {
     const result = await runCoreOperation(op, args, {
+      wechat: (config, payload) => new Promise((resolve, reject) => {
+        const eventId = nextEventId++;
+        pendingWechat.set(eventId, { resolve, reject });
+        process.stdout.write(`${JSON.stringify({ type: 'wechat', eventId, config, payload })}\n`);
+      }),
       accounts: (action, args) => new Promise((resolve, reject) => {
         const eventId = nextEventId++;
         pendingAccounts.set(eventId, { resolve, reject });

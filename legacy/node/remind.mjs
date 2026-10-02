@@ -30,15 +30,16 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
   const startedAt = Date.now();
   let shownIndex = 0;
   try {
-    const saveResult = (node, channel, state, error = null) => {
-      if (!trackAttempts || dryRun) return error ? `failed: ${error.message}` : state;
+    const saveResult = (node, channel, state, error = null, receipt = null) => {
+      const displayState = receipt?.confirmation === 'accepted' ? 'submitted' : state;
+      if (!trackAttempts || dryRun) return error ? `failed: ${error.message}` : displayState;
       const failure = error ? safeDeliveryFailure(error, channel) : null;
       const attempts = getReminderAttempt(db, { ...node, channel })?.attempts ?? 1;
-      const plannedRetry = error ? nextRetryAfter(attempts, nowSeconds) : null;
+      const plannedRetry = error && failure?.retryable !== false ? nextRetryAfter(attempts, nowSeconds) : null;
       recordReminderResult(db, node, channel, { state: error ? 'failed' : 'sent',
         attemptedAt: nowSeconds, nextRetryAt: plannedRetry < node.expiresAt ? plannedRetry : null,
-        errorCode: failure?.code, errorText: failure?.text });
-      return error ? `failed: ${failure.text}` : state;
+        errorCode: failure?.code, errorText: failure?.text, confirmation: receipt?.confirmation ?? null });
+      return error ? `failed: ${failure.text}` : displayState;
     };
     const maySend = (node, channel) => {
       if (!trackAttempts || dryRun) return !manualRetry;
@@ -148,9 +149,11 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
             if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
             const claimed = await claimCurrent(node, 'wechat');
             if (!claimed) { result.wechat = 'deferred'; } else {
-              await wechat(claimed.config, claimed.card, days, { currentAvailableCount: syncedCount });
+              const sent = await wechat(claimed.config, claimed.card, days, {
+                currentAvailableCount: syncedCount, accountDisplay,
+                nodeKind: node.nodeKind, nodeAt: node.nodeAt, nowSeconds });
               recordDelivery(db, card.id, card.expiresAt, days, 'wechat');
-              result.wechat = saveResult(node, 'wechat', 'sent');
+              result.wechat = saveResult(node, 'wechat', 'sent', null, sent);
             }
           } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
         }
@@ -215,11 +218,12 @@ export async function runReminders({ nowSeconds = Math.floor(Date.now() / 1000),
           if (verifyScope && await verifyScope() !== accountScopeId) throw new Error('账号已变更，暂停提醒');
           const claimed = await claimCurrent(node, 'wechat');
           if (!claimed) { result.wechat = 'deferred'; } else {
-            await wechat(claimed.config, claimed.card, remainingDays,
-              { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt });
+            const sent = await wechat(claimed.config, claimed.card, remainingDays,
+              { currentAvailableCount: syncedCount, snoozeTargetAt: snooze.targetAt, accountDisplay,
+                nodeKind: node.nodeKind, nodeAt: node.nodeAt, nowSeconds });
             recordDelivery(db, card.id, card.expiresAt, 0, 'wechat');
             markSnoozeDelivered(db, card.id, 'wechat');
-            result.wechat = saveResult(node, 'wechat', 'sent');
+            result.wechat = saveResult(node, 'wechat', 'sent', null, sent);
           }
         } catch (error) { result.wechat = saveResult(node, 'wechat', 'failed', error); }
       }
@@ -275,7 +279,7 @@ if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
     const hasFailure = result.due.some((row) => ['desktop', 'feishu', 'wechat']
       .some((channel) => row[channel].startsWith('failed:')));
     const hasActivity = result.due.some((row) => ['desktop', 'feishu', 'wechat']
-      .some((channel) => ['sent', 'shown', 'due'].includes(row[channel])));
+      .some((channel) => ['sent', 'submitted', 'shown', 'due'].includes(row[channel])));
     if (!process.argv.includes('--quiet') || hasFailure || hasActivity) {
       console.log(JSON.stringify(result, null, 2));
     }

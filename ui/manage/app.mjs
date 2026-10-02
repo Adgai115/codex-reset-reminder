@@ -120,7 +120,7 @@ function renderCardDetails() {
     for (const result of results) {
       const line = text(group, 'div', deliveryResultLabel(result),
         `delivery-line ${result.state === 'failed' ? 'failed' : ''}`);
-      text(line, 'span', `${result.state === 'sent' ? '发送' : '尝试'}：${formatTime(result.attemptedAt)}`, 'sub');
+      text(line, 'span', `${result.confirmation === 'accepted' ? '提交' : result.state === 'sent' ? '发送' : '尝试'}：${formatTime(result.attemptedAt)}`, 'sub');
       if (result.errorText) text(line, 'span', result.errorText, 'sub');
       if (result.autoPending) text(line, 'span', `第 ${result.attempts}/4 次尝试 · 下次补发 ${formatTime(result.nextRetryAt)}`, 'sub');
       else if (result.suspendedReason) text(line, 'span', result.suspendedReason, 'sub');
@@ -172,9 +172,10 @@ async function retryNode(result) {
     const rows = response.due || [];
     const sent = rows.flatMap((row) => [row.desktop, row.feishu, row.wechat])
       .filter((state) => state === 'sent' || state === 'shown').length;
+    const submitted = rows.filter((row) => row.wechat === 'submitted').length;
     const failed = rows.flatMap((row) => [row.desktop, row.feishu, row.wechat])
       .filter((state) => state?.startsWith('failed:')).length;
-    notice(sent || failed ? `补发完成 · 成功 ${sent} / 失败 ${failed}`
+    notice(sent || submitted || failed ? `补发完成 · 成功 ${sent}${submitted ? ` / 已提交 ${submitted}` : ''} / 失败 ${failed}`
       : '暂无可重试渠道', failed > 0);
   } catch (error) { notice('补发失败', true, error.message); }
   finally {

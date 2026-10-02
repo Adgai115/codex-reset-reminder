@@ -954,7 +954,16 @@ try {
   // 关闭会销毁调用方页面；确认窗口消失，不把丢失 CDP 回执误判为应用卡住。
   await triggerWindow(reminderTab, `document.querySelector('#close').click(); true`);
   await untilClosed(port, '/ui/reminder/index.html');
+  // The wrong page cannot send a WeChat test. This fails before credential
+  // lookup or network I/O, even though the shared preload exposes the method.
+  assert.match(await evaluate(manage, `window.api.testWechatReminder().then(()=> 'unexpected', error=>error.message)`), /不允许/);
+  if (process.platform === 'win32') {
+    await evaluate(settingsTab, `document.querySelector('#wechat-token').value = 'fixture-pushplus-token-isolated-01';
+      document.querySelector('#wechat-token').dispatchEvent(new Event('input', {bubbles:true})); true`);
+  }
   // 保存只修改隔离配置，系统自启开关保持读取值，不注册测试启动项。
+  assert.equal(await evaluate(settingsTab, `document.querySelector('#wechat').checked`), false,
+    '保存前确认微信关闭，测试不得提交真实通知');
   await triggerWindow(settingsTab, `document.querySelector('#save').click(); true`);
   await untilClosed(port, '/ui/settings/index.html');
   assert.equal(await evaluate(manage, `Boolean(window.api) && document.querySelector('#cards tbody').textContent.includes('CI 演示重置卡')`), true);
@@ -962,6 +971,26 @@ try {
   assert.equal(saved.reminders.quietHours.enabled, false);
   assert.equal(saved.desktop.enabled, false);
   assert.equal(saved.feishu.enabled, false);
+  assert.equal(saved.wechat.enabled, false, 'isolated smoke never enables network notifications');
+  if (process.platform === 'win32') {
+    assert.equal(saved.wechat.provider, 'pushplus');
+    assert.equal(JSON.stringify(saved).includes('fixture-pushplus-token-isolated-01'), false);
+    const encrypted = await readFile(join(profile, 'channels', 'credentials', `pushplus-${saved.wechat.credentialId}.bin`));
+    assert.equal(encrypted.includes(Buffer.from('fixture-pushplus-token-isolated-01')), false);
+    await triggerWindow(manage, 'window.api.openSettings(); true');
+    const reopenedSettings = await page(port, '/ui/settings/index.html', child, deadline);
+    await until(reopenedSettings, `document.querySelector('#wechat-state')?.textContent === '已配置'`, '加密 Token 状态恢复');
+    assert.equal(await evaluate(reopenedSettings, `document.querySelector('#wechat-token').value`), '');
+    assert.equal(await evaluate(reopenedSettings, `window.api.settingsRead().then(value=>Object.hasOwn(value,'wechatToken'))`), false);
+    if (nativeDialogs) {
+      await triggerWindow(reopenedSettings, 'window.api.testWechatReminder().then(value=>window.wechatTestResult=value); true');
+      await clickNative('取消');
+      await until(reopenedSettings, `window.wechatTestResult?.canceled === true`, '取消微信测试不发送');
+    }
+    await triggerWindow(reopenedSettings, 'window.api.settingsClose(); true');
+    await untilClosed(port, '/ui/settings/index.html');
+    console.log('微信加密 Token 保存、状态恢复、页面权限与取消测试通过；未发送微信');
+  }
   if (nativeDialogs) {
     await clickNative('__close_manage__');
     await clickNative('收起到托盘');

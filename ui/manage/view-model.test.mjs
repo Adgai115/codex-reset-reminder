@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { accountSummary, automationSummary, cardState, deliveryGroups, formatShortTime,
-  nextReminder, syncDescription, syncSummary } from './view-model.mjs';
+  nextReminder, syncDescription, syncSummary, deliveryResultLabel } from './view-model.mjs';
+
+test('微信渠道区分请求已提交、结果待核实和已发送', () => {
+  assert.equal(deliveryResultLabel({ channel: 'wechat', state: 'sent', confirmation: 'accepted' }), '微信已提交');
+  assert.equal(deliveryResultLabel({ channel: 'wechat', state: 'failed', errorCode: 'pushplus_unknown' }), '微信结果待核实');
+  assert.equal(deliveryResultLabel({ channel: 'wechat', state: 'sent' }), '微信已发送');
+});
 
 test('离线过期卡不再显示可用，已使用卡保留使用结果', () => {
   assert.equal(cardState({ status: 'available', expiresAt: 100 }, 100).active, false);

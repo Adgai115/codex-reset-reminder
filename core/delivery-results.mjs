@@ -1,5 +1,17 @@
 // 只保存可操作的错误分类。外部 CLI 错误可能包含 URL、令牌或配置值。
 export function safeDeliveryFailure(error, channel) {
+  if (error?.code === 'PUSHPLUS_UNKNOWN') return {
+    code: 'pushplus_unknown', text: '微信提交结果未知；可能已接收，已停止补发，请在 PushPlus 核对。', retryable: false,
+  };
+  if (error?.code === 'PUSHPLUS_REJECTED') return {
+    code: 'pushplus_rejected', text: 'PushPlus 拒绝提交；请检查微信连接、公众号关注及服务额度。',
+  };
+  if (error?.code === 'PUSHPLUS_LIMITED') return {
+    code: 'pushplus_limited', text: 'PushPlus 账号受限；已停止自动补发，核对并恢复后可手动重试。', retryable: false,
+  };
+  if (error?.code === 'PUSHPLUS_CONFIGURATION') return {
+    code: 'configuration', text: '微信连接未配置或无效；请在“设置 → 提醒”中检查。',
+  };
   const message = String(error?.message || '');
   if (/timed? ?out|超时|ETIMEDOUT/i.test(message)) return {
     code: 'timeout', text: '发送超时；服务端可能已接收，补发会复用同一消息幂等键。',

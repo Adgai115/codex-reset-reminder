@@ -32,6 +32,11 @@ test('reset feedback separates a blocked request from an uncertain submitted req
   assert.equal(resetFailureResult(new Error('connection dropped')).outcome, 'unconfirmed');
 });
 
+test('PushPlus transport retains only its public error codes across the sidecar boundary', () => {
+  assert.equal(restoreCoreError({ error: '结果待核实', code: 'PUSHPLUS_UNKNOWN' }).code, 'PUSHPLUS_UNKNOWN');
+  assert.equal(restoreCoreError({ error: 'unknown', code: 'PRIVATE_TOKEN' }).code, undefined);
+});
+
 test('sidecar retains the after-request flag through a simulated reset failure', { timeout: 15000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'codex-rpc-boundary-'));
   const configPath = join(directory, 'config.json');

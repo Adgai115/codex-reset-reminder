@@ -20,4 +20,6 @@ vendor-node/
 *.pfx
 *.pem
 *.key
+channels/credentials/
+accounts/credentials/
 *.mobileprovision
