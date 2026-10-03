@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('wechatProbe', {
   cancel: () => invoke('wechat-probe:cancel'),
   confirm: (testId) => invoke('wechat-probe:confirm', testId),
   forget: () => invoke('wechat-probe:forget'),
+  gatewayEnable: () => invoke('wechat-probe:gateway-enable'),
+  gatewayDisable: () => invoke('wechat-probe:gateway-disable'),
+  gatewayAddClient: (label) => invoke('wechat-probe:gateway-add-client', label),
+  gatewayRevokeClient: (clientId) => invoke('wechat-probe:gateway-revoke-client', clientId),
   onStatus: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, status) => callback(status);

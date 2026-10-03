@@ -3,9 +3,11 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 // This development profile never reads the reminder application's config or DB.
-export function createProbeStorage(directory, crypto) {
-  const secretPath = join(directory, 'session.bin');
-  const statusPath = join(directory, 'status.json');
+export function createProbeStorage(directory, crypto, { secretName = 'session.bin', statusName = 'status.json' } = {}) {
+  if (![secretName, statusName].every((name) => typeof name === 'string' && /^[a-z0-9-]+\.(?:bin|json)$/.test(name)))
+    throw new Error('本机存储文件名无效。');
+  const secretPath = join(directory, secretName);
+  const statusPath = join(directory, statusName);
   let writes = Promise.resolve();
   function requireEncryption() {
     if (!crypto?.isEncryptionAvailable?.()

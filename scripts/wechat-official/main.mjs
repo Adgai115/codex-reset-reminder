@@ -1,11 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, session as electronSession } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, safeStorage, session as electronSession } from 'electron';
 import { mkdirSync } from 'node:fs';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createWechatClient } from './client.mjs';
 import { WechatProbe, probeErrorMessage, SYNTHETIC_TEXT } from './controller.mjs';
 import { createProbeStorage } from './storage.mjs';
 import { renderQrDataUrl } from './qr.mjs';
+import { WechatGateway } from './gateway.mjs';
+import { createSharedWechatSender } from './shared-send.mjs';
+import { requestLocalWechatNotification } from '../../core/wechat-local-http.mjs';
+import { invokeWechatLocalClient } from '../../core/wechat-local-client.mjs';
+import { exportLocalWechatClient } from '../../desktop/wechat-local-export.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = join(directory, '..', '..');
@@ -15,7 +21,7 @@ mkdirSync(join(profile, 'browser'), { recursive: true, mode: 0o700 });
 app.setName('Codex 微信直连验证');
 app.setPath('userData', join(profile, 'browser'));
 app.disableHardwareAcceleration();
-let window, probe, quitting = false, dialogBusy = false;
+let window, probe, gateway, gatewayStorage, quitting = false, dialogBusy = false;
 
 // An additional development instance cannot replace a running authorization.
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -50,6 +56,21 @@ function trusted(event) {
     && event.senderFrame === window.webContents.mainFrame
     && event.senderFrame.url === pathToFileURL(join(directory, 'ui', 'index.html')).href;
 }
+function publicStatus() {
+  const shared = gateway?.status() ?? { running: false, clients: [], receipts: [] };
+  return { ...probe.status(), gateway: probe.session ? shared : { ...shared, clients: [], receipts: [] } };
+}
+function publish() {
+  if (window && !window.isDestroyed() && probe) window.webContents.send('wechat-probe:changed', publicStatus());
+}
+function mainProblem(message) { return Object.assign(new Error(message), { code: 'PROBE_STATE' }); }
+function operationMessage(error) {
+  return ({ WECHAT_LOCAL_CAPACITY: '共享来源或通知记录已达容量上限，旧记录仍保留。',
+    WECHAT_LOCAL_STORAGE: '本机共享记录无法保存，请检查磁盘空间和目录权限。',
+    WECHAT_LOCAL_OFFLINE: '本机通知共享已关闭，请先开启共享。',
+    WECHAT_LOCAL_INVALID: '共享来源参数无效。',
+    WECHAT_LOCAL_NOT_FOUND: '共享来源不存在，请刷新后重试。' })[error?.code] || probeErrorMessage(error);
+}
 async function confirm(title, message) {
   const result = await dialog.showMessageBox(window, { type: 'question', title,
     message, buttons: ['取消', '继续'], defaultId: 0, cancelId: 0, noLink: true });
@@ -58,12 +79,39 @@ async function confirm(title, message) {
 function handle(name, action) {
   ipcMain.handle(`wechat-probe:${name}`, async (event, input) => {
     if (!trusted(event)) return { ok: false, error: '此窗口无权访问微信验证操作。' };
-    if (dialogBusy && name !== 'status') return { ok: false, error: '请先完成当前确认。', status: probe.status() };
+    if (dialogBusy && name !== 'status') return { ok: false, error: '请先完成当前确认。', status: publicStatus() };
     try {
       await action(input);
-      return { ok: true, status: probe.status() };
-    } catch (error) { return { ok: false, error: probeErrorMessage(error), status: probe.status() }; }
+      return { ok: true, status: publicStatus() };
+    } catch (error) { return { ok: false, error: operationMessage(error), status: publicStatus() }; }
   });
+}
+async function exportClient(label) {
+  if (!gateway.status().running) throw mainProblem('请先开启本机通知共享。');
+  if (typeof label !== 'string' || !label.trim() || label.length > 40 || /[\u0000-\u001f\u007f]/.test(label))
+    throw mainProblem('请输入 1 至 40 个字的来源名称。');
+  probe.available(); dialogBusy = true;
+  let client;
+  try {
+    if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+      throw mainProblem('系统凭据加密不可用，无法导出共享客户端。');
+    const selected = await dialog.showSaveDialog(window, {
+      title: '导出本机微信客户端', buttonLabel: '保存加密客户端',
+      defaultPath: join(app.getPath('documents'), 'wechat-local-client.bin'),
+      filters: [{ name: '本机加密客户端', extensions: ['bin'] }],
+    });
+    if (selected.canceled || !selected.filePath) return;
+    client = await gateway.addClient(label.trim());
+    const encrypted = await exportLocalWechatClient(client, { crypto: safeStorage, userData: app.getPath('userData') });
+    await mkdir(dirname(selected.filePath), { recursive: true, mode: 0o700 });
+    await writeFile(selected.filePath, encrypted, { mode: 0o600 });
+    probe.message = '共享来源已创建，加密客户端文件仅供这台电脑上的对应 agent 使用。';
+    await probe.emit();
+  } catch (error) {
+    if (client) await gateway.revokeClient(client.clientId).catch(() => {});
+    if (error?.code === 'PROBE_STATE') throw error;
+    throw mainProblem('加密客户端未能导出，请核对保存位置后重试。');
+  } finally { dialogBusy = false; }
 }
 async function confirmed(title, message, operation) {
   probe.available(); dialogBusy = true;
@@ -90,7 +138,14 @@ app.whenReady().then(async () => {
   const storage = createProbeStorage(profile, safeStorage);
   probe = new WechatProbe({ client: mock ? mockClient() : createWechatClient({ fetchImpl: net.fetch.bind(net) }),
     storage, renderQr: renderQrDataUrl,
-    publish(status) { if (!window.isDestroyed()) window.webContents.send('wechat-probe:changed', status); },
+    publish,
+  });
+  gatewayStorage = createProbeStorage(profile, safeStorage, { secretName: 'gateway-state.bin', statusName: 'gateway-status.json' });
+  gateway = new WechatGateway({
+    storage: gatewayStorage,
+    sendText: createSharedWechatSender(probe, { canSend: () => !dialogBusy }),
+    discoveryPath: join(profile, 'gateway.json'), publish,
+    ...(process.argv.includes('--smoke') ? { cooldownMs: 0 } : {}),
   });
   handle('status', async () => {});
   handle('login', () => probe.login());
@@ -107,7 +162,17 @@ app.whenReady().then(async () => {
   });
   handle('cancel', () => probe.cancelSchedule());
   handle('confirm', (id) => probe.confirm(id));
-  handle('forget', () => confirmed('清除测试连接', '仅清除本机微信验证凭据和测试记录。微信侧解绑需在微信中操作。', () => probe.forget()));
+  handle('forget', () => confirmed('清除测试连接', '仅清除本机微信验证凭据和测试记录，并撤销全部共享来源。微信侧解绑需在微信中操作。', async () => { await gateway.reset(); await probe.forget(); }));
+  handle('gateway-enable', () => confirmed('开启本机微信通知共享', '允许已授权的本机 agent 通过当前连接发送通知。通知内容会发送给微信官方；不会上传 Codex 登录凭据。\n\n这是实验功能，可在此处随时关闭。省略会话上下文和长期定时投递仍需验证。', async () => {
+    if (!probe.session || probe.phase !== 'bound') throw mainProblem('请先扫码建立有效的微信连接。');
+    await gateway.start(); probe.message = '本机通知共享已开启，请为需要发送通知的 agent 创建来源。'; await probe.emit();
+  }));
+  handle('gateway-disable', async () => { await gateway.stop(); probe.message = '本机通知共享已关闭。'; await probe.emit(); });
+  handle('gateway-add-client', exportClient);
+  handle('gateway-revoke-client', async (id) => {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw mainProblem('共享来源无效。');
+    await gateway.revokeClient(id); probe.message = '此来源的微信发送权限已撤销。'; await probe.emit();
+  });
   await window.loadFile(join(directory, 'ui', 'index.html'));
   try { await probe.initialize(); }
   catch { probe.phase = 'error'; probe.message = '本机测试连接无法恢复，请清除测试连接后重新扫码。'; await probe.emit(); }
@@ -116,12 +181,12 @@ app.whenReady().then(async () => {
   window.on('close', (event) => {
     if (quitting) return;
     event.preventDefault();
-    if (dialogBusy || probe.busy) return;
+    if (dialogBusy || (probe.busy && !gateway.status().sending)) return;
     (async () => {
       dialogBusy = true;
       try {
         if (probe.scheduled && !(await confirm('退出微信验证', '退出将取消尚未发送的延迟测试。'))) return;
-        quitting = true; await probe.stop(); app.quit();
+        quitting = true; await gateway.stop(); await probe.stop(); app.quit();
       } finally { dialogBusy = false; }
     })().catch(() => { quitting = true; app.quit(); });
   });
@@ -134,13 +199,46 @@ app.whenReady().then(async () => {
     if (probe.status().tests[0]?.confirmation !== 'accepted') throw new Error('MOCK_SEND_FAILED');
     await probe.confirm(probe.status().tests[0].id);
     await probe.schedule(1500); await probe.cancelSchedule();
-    const html = await window.webContents.executeJavaScript('document.documentElement.scrollWidth <= innerWidth && Boolean(window.wechatProbe)');
+    // The smoke profile has a fake WeChat client; no real API or credential is used.
+    probe.cooldownMs = 0; probe.lastSendAt = -Infinity;
+    await gateway.reset(); await gateway.start();
+    const firstClient = await gateway.addClient('模拟 Agent A');
+    const secondClient = await gateway.addClient('模拟 Agent B');
+    const first = await requestLocalWechatNotification(firstClient, { id: 'mock-shared-a', title: '共享测试', text: '模拟通知 A，不含真实资料。' });
+    const clientFile = join(profile, 'mock-client-b.bin');
+    let second;
+    try {
+      await writeFile(clientFile, await exportLocalWechatClient(secondClient, { crypto: safeStorage, userData: app.getPath('userData') }), { mode: 0o600 });
+      second = await invokeWechatLocalClient({ electronPath: process.execPath, clientFile,
+        request: { id: 'mock-shared-b', title: '共享测试', text: '模拟通知 B，不含真实资料。' }, timeoutMs: 10000 });
+    } finally { await rm(clientFile, { force: true }); }
+    if (first.state !== 'accepted' || second.state !== 'accepted') {
+      process.stderr.write(`MOCK_SHARED_STATES ${first.state}/${first.code} ${second.state}/${second.code}\n`);
+      throw new Error('MOCK_SHARED_SEND_FAILED');
+    }
+    await gateway.revokeClient(firstClient.clientId);
+    const revoked = await requestLocalWechatNotification(firstClient, { id: 'mock-shared-revoked', title: '共享测试', text: '这条模拟通知不能发送。' });
+    if (revoked.state !== 'unsent') throw new Error('MOCK_SHARED_REVOKE_FAILED');
+    const html = await window.webContents.executeJavaScript('document.documentElement.scrollWidth <= innerWidth && Boolean(window.wechatProbe?.gatewayEnable) && !JSON.stringify(document.body.textContent).includes("mock-credential-only")');
     if (!html) throw new Error('MOCK_RENDER_FAILED');
+    window.setMinimumSize(0, 0);
+    for (const theme of ['light', 'dark']) {
+      nativeTheme.themeSource = theme;
+      window.setSize(480, 740);
+      await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      const fits = await window.webContents.executeJavaScript('document.documentElement.scrollWidth <= innerWidth && document.querySelector("#sourceForm").scrollWidth <= document.querySelector("#sourceForm").clientWidth');
+      if (!fits) throw new Error('MOCK_SHARED_LAYOUT_FAILED');
+      await window.webContents.executeJavaScript('window.scrollTo(0, document.documentElement.scrollHeight); new Promise(resolve => requestAnimationFrame(resolve))');
+      const screenshot = await window.webContents.capturePage();
+      await writeFile(join(profile, `shared-ui-${theme}.png`), screenshot.toPNG(), { mode: 0o600 });
+    }
     process.stdout.write('WECHAT_PROBE_SMOKE_OK\n');
-    quitting = true; await probe.stop(); app.quit();
+    quitting = true; await gateway.stop(); await probe.stop(); app.quit();
   }
-}).catch(() => {
+}).catch((error) => {
+  if (process.argv.includes('--smoke') && /^[A-Z_]{1,80}$/.test(error?.message || ''))
+    process.stderr.write(`${error.message}\n`);
   process.stderr.write('微信验证工具启动失败（未输出凭据或接口正文）。\n');
   quitting = true; app.exit(1);
 });
-app.on('window-all-closed', () => { if (!quitting) { quitting = true; probe?.stop().finally(() => app.quit()); } });
+app.on('window-all-closed', () => { if (!quitting) { quitting = true; (async () => { await gateway?.stop(); await probe?.stop(); })().finally(() => app.quit()); } });

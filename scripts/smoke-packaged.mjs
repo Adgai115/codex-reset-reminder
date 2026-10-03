@@ -987,9 +987,42 @@ try {
       await clickNative('取消');
       await until(reopenedSettings, `window.wechatTestResult?.canceled === true`, '取消微信测试不发送');
     }
-    await triggerWindow(reopenedSettings, 'window.api.settingsClose(); true');
+    // The local gateway selector persists only an opaque isolated fixture path.
+    // The channel stays disabled and no helper or WeChat transport is invoked.
+    const localFixture = join(profile, 'fixture-local-client.bin');
+    await writeFile(localFixture, 'isolated-opaque-test-file-not-a-real-capability');
+    await evaluate(reopenedSettings, `document.querySelector('#wechat-connection').open = true;
+      document.querySelector('#wechat-provider').value = 'local-gateway';
+      document.querySelector('#wechat-provider').dispatchEvent(new Event('input', {bubbles:true}));
+      document.querySelector('#wechat-client-file').value = ${JSON.stringify(localFixture)};
+      document.querySelector('#wechat-client-file').dispatchEvent(new Event('input', {bubbles:true})); true`);
+    assert.equal(await evaluate(reopenedSettings, `document.querySelector('#wechat-token-field').hidden
+      && !document.querySelector('#wechat-client-field').hidden && !document.querySelector('#wechat-browse').hidden
+      && document.querySelector('#wechat-help').hidden && document.querySelector('#wechat-test').disabled
+      && document.documentElement.scrollWidth <= innerWidth`), true);
+    await triggerWindow(reopenedSettings, `document.querySelector('#save').click(); true`);
+    await untilClosed(port, '/ui/settings/index.html');
+    const localSaved = JSON.parse(await readFile(join(profile, 'config.json'), 'utf8'));
+    assert.equal(localSaved.wechat.provider, 'local-gateway');
+    assert.equal(localSaved.wechat.enabled, false);
+    assert.equal(localSaved.wechat.gatewayClientFile, localFixture);
+    assert.equal(localSaved.wechat.credentialId, saved.wechat.credentialId);
+    await triggerWindow(manage, 'window.api.openSettings(); true');
+    const localSettings = await page(port, '/ui/settings/index.html', child, deadline);
+    await until(localSettings, `document.querySelector('#wechat-provider')?.value === 'local-gateway'
+      && document.querySelector('#wechat-state')?.textContent === '已配置'`, '本机调用文件状态恢复');
+    assert.equal(await evaluate(localSettings, `document.querySelector('#wechat-client-file').value`), localFixture);
+    await evaluate(localSettings, `document.querySelector('#wechat-connection').open = true; true`);
+    await screenshot(localSettings, 'settings-local-wechat');
+    if (nativeDialogs) {
+      await triggerWindow(localSettings, 'window.api.testWechatReminder().then(value=>window.wechatTestResult=value); true');
+      await clickNative('取消');
+      await until(localSettings, `window.wechatTestResult?.canceled === true`, '取消本机微信测试不发送');
+    }
+    await triggerWindow(localSettings, 'window.api.settingsClose(); true');
     await untilClosed(port, '/ui/settings/index.html');
     console.log('微信加密 Token 保存、状态恢复、页面权限与取消测试通过；未发送微信');
+    console.log('本机微信渠道切换、调用文件恢复、旧凭据保留与取消测试通过；渠道保持关闭');
   }
   if (nativeDialogs) {
     await clickNative('__close_manage__');

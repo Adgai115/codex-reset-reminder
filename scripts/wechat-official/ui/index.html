@@ -67,6 +67,14 @@
       .test-result.rejected { background: var(--red-soft); color: var(--red); }
       .test-result.received { background: var(--green-soft); color: var(--green); }
       .confirm-button { flex-shrink: 0; min-height: 30px; padding: 3px 9px; font-size: 12px; }
+      .share-form { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+      .share-form input { flex: 1; min-width: 0; }
+      .share-form button { flex-shrink: 0; }
+      #sharedClients, #sharedReceipts { margin-top: 8px; }
+      .source-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+      .source-copy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .source-row button { flex-shrink: 0; }
+      .receipt-row { padding: 5px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
       footer { margin-top: 12px; color: var(--muted); font-size: 11px; }
       @media (prefers-color-scheme: dark) {
         :root { --bg: #181b21; --surface: #22262e; --text: #e9edf4; --muted: #a0adbf; --line: #383f4a; --blue: #77a7ff; --blue-soft: #273953; --green: #7ac8a0; --green-soft: #243d32; --amber: #e5bd77; --amber-soft: #443724; --red: #f2a1a7; --red-soft: #472d33; }
@@ -81,7 +89,7 @@
     <main>
       <header>
         <div class="heading"><h1>微信直连验证</h1><span class="badge">独立试验</span></div>
-        <p class="subline">隔离测试，仅发送模拟提醒，不读取正式配置和 Codex 资料。</p>
+        <p class="subline">独立连接；模拟测试使用固定内容，共享通知由已授权的本机来源提供。</p>
       </header>
       <div id="statusBanner" class="status" role="status" aria-live="polite" data-tone="neutral"><span class="status-dot" aria-hidden="true"></span><p id="statusMessage">正在连接本地验证工具…</p></div>
 
@@ -111,6 +119,15 @@
       <section aria-labelledby="testsHeading">
         <div class="section-heading"><h2 id="testsHeading">3. 确认手机收到</h2><span class="muted">最近 12 次</span></div>
         <div id="tests"><p class="empty">尚无测试记录。手机看到消息后，点击对应记录的“已收到”。</p></div>
+      </section>
+      <section aria-labelledby="sharingHeading">
+        <div class="section-heading"><h2 id="sharingHeading">4. 本机通知共享</h2><button id="sharingButton" type="button" disabled>开启共享</button></div>
+        <p id="sharingState" class="muted">默认关闭，开启后供已授权的本机 agent 发送微信通知。</p>
+        <form id="sourceForm" class="share-form"><label for="sourceName" class="muted" style="margin: 0; flex-shrink: 0">来源</label><input id="sourceName" type="text" maxlength="40" placeholder="例如：卡片提醒、Agent A" autocomplete="off" spellcheck="false" disabled><button id="sourceButton" type="submit" disabled>创建并导出</button></form>
+        <p class="schedule-note">导出的加密客户端仅供这台电脑使用，可逐个撤销权限。关闭窗口停止共享，下次打开需手动开启。</p>
+        <div id="sharedClients"></div>
+        <div id="sharedReceipts"></div>
+        <p class="experiment">实验功能：通知内容会发送给微信官方；省略会话上下文及长期定时投递仍待验证。</p>
       </section>
       <footer>“微信已接受”仅表示接口接受发送；“手机已收到”需要你确认。绑定信息仅用于本机测试，下次打开可继续使用；发送计划不会自动恢复。</footer>
     </main>

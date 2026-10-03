@@ -78,7 +78,7 @@ async function createSidecarHandler() {
             Promise.resolve().then(() => wechatTransport(message.config, message.payload)).then(
               (result) => worker.stdin.write(`${JSON.stringify({ type: 'wechat-result', eventId: message.eventId, ok: true, result })}\n`),
               (error) => worker.stdin.write(`${JSON.stringify({ type: 'wechat-result', eventId: message.eventId, ok: false,
-                error: error.message, ...(/^PUSHPLUS_[A-Z_]{1,48}$/.test(error.code || '') ? { code: error.code } : {}) })}\n`),
+                error: error.message, ...(/^(?:PUSHPLUS|WECHAT)_[A-Z_]{1,48}$/.test(error.code || '') ? { code: error.code } : {}) })}\n`),
             ).catch(() => {});
           }
           else if (message.type === 'desktop') {

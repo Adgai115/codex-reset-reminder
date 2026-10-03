@@ -9,7 +9,7 @@ export function accountErrorPayload(error) {
 export function restoreCoreError(payload) {
   const error = new Error(payload.error);
   error.afterRequest = payload.afterRequest === true;
-  if (/^(?:ACCOUNT|PUSHPLUS)_[A-Z_]{1,48}$/.test(payload.code || '')) error.code = payload.code;
+  if (/^(?:ACCOUNT|PUSHPLUS|WECHAT)_[A-Z_]{1,48}$/.test(payload.code || '')) error.code = payload.code;
   return error;
 }
 

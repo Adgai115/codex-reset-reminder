@@ -3,11 +3,13 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, powerMonitor, safeStorage } from 'electron';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { coreRequest, coreStatus, setDesktopPresenter, setAccountProvider, setWechatTransport } from './core-host.mjs';
 import { requestPushplus } from '../core/pushplus-http.mjs';
+import { invokeWechatLocalClient } from '../core/wechat-local-client.mjs';
 import { readWechatToken } from './channel-credentials.mjs';
 import { createAccountSessions } from './account-sessions.mjs';
 import { createReminderManager } from './reminder-window.mjs';
@@ -25,12 +27,15 @@ import { repairCodexPath } from './cli-repair.mjs';
 const directory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(directory, '..');
 const require = createRequire(import.meta.url);
-if (process.env.CODEX_RESET_MONITOR_USER_DATA_DIR) {
+const localClientHelper = process.argv.includes('--wechat-local-client-helper');
+if (!localClientHelper && process.env.CODEX_RESET_MONITOR_USER_DATA_DIR) {
   mkdirSync(process.env.CODEX_RESET_MONITOR_USER_DATA_DIR, { recursive: true });
   app.setPath('userData', process.env.CODEX_RESET_MONITOR_USER_DATA_DIR);
 }
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+const gotLock = localClientHelper || app.requestSingleInstanceLock();
+if (localClientHelper) {
+  await import('./wechat-local-client-main.mjs');
+} else if (!gotLock) {
   app.quit();
 } else {
   let tray = null;
@@ -436,6 +441,16 @@ if (!gotLock) {
     checkSettingsPage(event);
     await shell.openExternal('https://www.pushplus.plus/');
   });
+  ipcMain.handle('settings:browseWechatClient', async (event) => {
+    checkSettingsPage(event);
+    if (preferencesWorking || testingWechat) throw new Error('设置操作正在进行，请稍后重试');
+    preferencesWorking = true;
+    try {
+      const result = await dialog.showOpenDialog(settingsWindow, { title: '选择微信网关加密调用文件',
+        properties: ['openFile'], filters: [{ name: '微信网关调用文件', extensions: ['bin'] }] });
+      return result.canceled ? null : result.filePaths[0];
+    } finally { preferencesWorking = false; }
+  });
   ipcMain.handle('settings:testWechat', async (event) => {
     checkSettingsPage(event);
     if (testingWechat || preferencesWorking) throw new Error('设置操作正在进行，请稍后重试');
@@ -443,13 +458,24 @@ if (!gotLock) {
     testingWechat = true;
     try {
       const config = JSON.parse(await readFile(currentConfigPath(), 'utf8'));
-      if (config.wechat?.provider !== 'pushplus') throw new Error('请先保存 PushPlus 配置');
-      const token = await readWechatToken(currentConfigPath(), config, { crypto: safeStorage });
+      const local = config.wechat?.provider === 'local-gateway';
+      if (!local && config.wechat?.provider !== 'pushplus') throw new Error('请先保存微信配置');
       const { response } = await dialog.showMessageBox(settingsWindow, { type: 'question', noLink: true,
-        message: '发送一条微信测试消息？', detail: '将通过已保存的 PushPlus 配置发送，不会使用重置卡。',
+        message: '发送一条微信测试消息？', detail: local ? '将通过本机微信网关发送，不会使用重置卡。' : '将通过已保存的 PushPlus 配置发送，不会使用重置卡。',
         buttons: ['发送测试', '取消'], defaultId: 1, cancelId: 1 });
       if (response !== 0) return { canceled: true, message: '已取消微信测试' };
       lastWechatTestAt = Date.now();
+      if (local) {
+        const result = await invokeWechatLocalClient({ electronPath: process.execPath,
+          clientFile: config.wechat.gatewayClientFile,
+          request: { id: `test-${randomUUID()}`, title: '【测试】Codex 重置卡提醒',
+            text: '这是你主动发送的微信渠道测试消息。\n没有使用任何重置卡，不包含真实账号或卡片。' } });
+        if (result.state !== 'accepted') throw new Error(result.state === 'unknown' || result.state === 'pending'
+          ? '微信发送结果未知，已停止补发，请到手机核对。'
+          : '微信测试未完成发送，请检查网关、调用文件及来源权限。');
+        return { confirmation: 'accepted', message: '微信已接受测试请求，请到手机确认接收' };
+      }
+      const token = await readWechatToken(currentConfigPath(), config, { crypto: safeStorage });
       const result = await requestPushplus({ title: '【测试】Codex 重置卡提醒', template: 'txt', channel: 'wechat',
         content: '这是你主动发送的微信渠道测试消息。\n没有使用任何重置卡。\n后续到期提醒会包含所属账号、卡片与到期时间。' }, { token });
       return { confirmation: result.confirmation, message: '测试请求已提交，请到微信确认接收' };
@@ -508,6 +534,8 @@ if (!gotLock) {
       throw new Error('不允许的账号会话操作');
     });
     setWechatTransport(async (config, payload) => {
+      if (config.wechat?.provider === 'local-gateway')
+        return invokeWechatLocalClient({ electronPath: process.execPath, clientFile: config.wechat.gatewayClientFile, request: payload });
       const token = await readWechatToken(currentConfigPath(), config, { crypto: safeStorage });
       return requestPushplus(payload, { token });
     });

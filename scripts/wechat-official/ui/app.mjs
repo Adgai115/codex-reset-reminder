@@ -5,6 +5,7 @@ const elements = Object.fromEntries([
   'qrArea', 'qrImage', 'verifyForm', 'verifyCode', 'verifyButton', 'boundNote',
   'contextInstruction', 'contextDetail', 'sendButton', 'omitButton', 'delayMinutes',
   'scheduleButton', 'scheduledNote', 'scheduledAt', 'cancelButton', 'tests',
+  'sharingButton', 'sharingState', 'sourceForm', 'sourceName', 'sourceButton', 'sharedClients', 'sharedReceipts',
 ].map((id) => [id, byId(id)]));
 
 let state = { phase: 'idle', message: '正在连接本地验证工具…', busy: true, bound: false, hasContext: false, contextAt: null, scheduled: null, tests: [], listening: false };
@@ -72,6 +73,42 @@ function renderTests(disabled) {
   elements.tests.replaceChildren(fragment);
 }
 
+function renderSharing(disabled) {
+  const gateway = state.gateway || {};
+  const running = Boolean(gateway.running);
+  elements.sharingButton.textContent = running ? '关闭共享' : '开启共享';
+  elements.sharingButton.disabled = !available || pending || (!running && (disabled || !state.bound));
+  const queue = Number.isInteger(gateway.queued) && gateway.queued > 0 ? ` · 排队 ${gateway.queued} 条` : '';
+  elements.sharingState.textContent = running ? `已开启 · ${gateway.sending ? '正在发送' : '等待通知'}${queue}` : '已关闭，开启后供已授权的本机 agent 发送微信通知。';
+  elements.sourceName.disabled = disabled || !running;
+  elements.sourceButton.disabled = disabled || !running || !elements.sourceName.value.trim();
+  const clients = Array.isArray(gateway.clients) ? gateway.clients : [];
+  const fragment = document.createDocumentFragment();
+  for (const client of clients) {
+    const row = document.createElement('div'); row.className = 'source-row';
+    const copy = document.createElement('span'); copy.className = 'source-copy';
+    copy.textContent = `${String(client.label || '共享来源')}${client.revoked ? ' · 已撤销' : ''}`;
+    copy.title = String(client.label || '共享来源'); row.append(copy);
+    if (!client.revoked) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'quiet';
+      button.textContent = '撤销'; button.disabled = !available || pending;
+      button.addEventListener('click', () => invoke('gatewayRevokeClient', client.id)); row.append(button);
+    }
+    fragment.append(row);
+  }
+  elements.sharedClients.replaceChildren(fragment);
+  const receipts = Array.isArray(gateway.receipts) ? gateway.receipts.slice(0, 6) : [];
+  const recent = document.createDocumentFragment();
+  const labels = { pending: '正在提交', queued: '排队中', accepted: '微信已接受', unknown: '结果待确认', rejected: '微信拒绝', unsent: '未发送', cancelled: '已取消' };
+  for (const receipt of receipts) {
+    const row = document.createElement('p'); row.className = 'receipt-row';
+    const label = clients.find((client) => client.id === receipt.clientId)?.label || '共享来源';
+    row.textContent = `${String(label)} · ${String(receipt.id || '').slice(0, 8)} · ${labels[receipt.state] || '结果待确认'}${receipt.at ? ` · ${timeLabel(receipt.at)}` : ''}`;
+    recent.append(row);
+  }
+  elements.sharedReceipts.replaceChildren(recent);
+}
+
 function render() {
   const disabled = !available || pending || Boolean(state.busy);
   const bound = Boolean(state.bound);
@@ -102,6 +139,7 @@ function render() {
   elements.scheduledAt.textContent = hasSchedule ? `计划发送：${timeLabel(state.scheduled.at)}` : '';
   elements.cancelButton.disabled = disabled || !hasSchedule;
   renderTests(disabled);
+  renderSharing(disabled);
 }
 
 async function invoke(method, argument) {
@@ -128,6 +166,13 @@ elements.omitButton.addEventListener('click', () => invoke('send', { omitContext
 elements.scheduleButton.addEventListener('click', () => invoke('schedule', Number(elements.delayMinutes.value)));
 elements.cancelButton.addEventListener('click', () => invoke('cancel'));
 elements.verifyCode.addEventListener('input', render);
+elements.sharingButton.addEventListener('click', () => invoke(state.gateway?.running ? 'gatewayDisable' : 'gatewayEnable'));
+elements.sourceName.addEventListener('input', render);
+elements.sourceForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const label = elements.sourceName.value.trim();
+  if (label) invoke('gatewayAddClient', label);
+});
 elements.verifyForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const code = elements.verifyCode.value.trim();
