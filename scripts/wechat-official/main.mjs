@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, safeStorage, session as electronSession } from 'electron';
 import { mkdirSync } from 'node:fs';
-import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { writeFile, mkdir, rm, rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createWechatClient } from './client.mjs';
@@ -95,16 +96,22 @@ async function exportClient(label) {
   try {
     if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend?.() === 'basic_text')
       throw mainProblem('系统凭据加密不可用，无法导出共享客户端。');
+    const clientDirectory = join(profile, 'client-files');
+    await mkdir(clientDirectory, { recursive: true, mode: 0o700 });
     const selected = await dialog.showSaveDialog(window, {
       title: '导出本机微信客户端', buttonLabel: '保存加密客户端',
-      defaultPath: join(app.getPath('documents'), 'wechat-local-client.bin'),
+      defaultPath: join(clientDirectory, `wechat-client-${randomUUID().slice(0, 8)}.bin`),
       filters: [{ name: '本机加密客户端', extensions: ['bin'] }],
     });
     if (selected.canceled || !selected.filePath) return;
     client = await gateway.addClient(label.trim());
     const encrypted = await exportLocalWechatClient(client, { crypto: safeStorage, userData: app.getPath('userData') });
     await mkdir(dirname(selected.filePath), { recursive: true, mode: 0o700 });
-    await writeFile(selected.filePath, encrypted, { mode: 0o600 });
+    const temporary = `${selected.filePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, encrypted, { mode: 0o600, flag: 'wx' });
+      await rename(temporary, selected.filePath);
+    } finally { await rm(temporary, { force: true }).catch(() => {}); }
     probe.message = '共享来源已创建，加密客户端文件仅供这台电脑上的对应 agent 使用。';
     await probe.emit();
   } catch (error) {
