@@ -271,12 +271,13 @@ export async function runCoreOperation(op, args = {}, context = {}) {
                 const activeNode = nodeIsCurrent(card, snooze, result);
                 const accountReady = account.state === 'verified' && account.remindersEnabled !== false;
                 const retryOpen = activeNode && result.state === 'failed'
-                  && result.attempts < maxReminderAttempts && result.errorCode !== 'pushplus_unknown';
+                  && result.attempts < maxReminderAttempts && !['pushplus_unknown', 'wechat_unknown', 'wechat_rejected'].includes(result.errorCode);
                 return { ...result,
                   autoPending: retryOpen && accountReady && Boolean(result.nextRetryAt),
                   retryable: retryOpen && accountReady
                     && nowSeconds >= deliveryTime(nowSeconds, card.expiresAt, options.quiet),
-                  suspendedReason: result.errorCode === 'pushplus_unknown' ? '结果未确认，为避免重复消息已停止补发；请到微信或 PushPlus 核对。'
+                  suspendedReason: ['pushplus_unknown', 'wechat_unknown'].includes(result.errorCode) ? '结果未确认，为避免重复消息已停止补发；请到微信核对。'
+                    : result.errorCode === 'wechat_rejected' ? '微信已拒绝此通知，停止补发；请核对微信连接。'
                     : result.state !== 'failed' || result.attempts >= maxReminderAttempts ? null
                     : !activeNode ? '当前节点已结束或渠道已关闭，停止补发。'
                       : account.remindersEnabled === false ? '此账号提醒已暂停。'

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>微信直连验证</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f5f7fa; --surface: #fff; --text: #19212d; --muted: #667283; --line: #e2e7ee; --blue: #2468de; --blue-soft: #edf4ff; --green: #218057; --green-soft: #edf7f1; --amber: #9c6415; --amber-soft: #fff7e8; --red: #b33c43; --red-soft: #fff0f1; }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; }
+      main { width: 100%; max-width: 650px; margin: 0 auto; padding: 22px 24px 24px; }
+      header { margin-bottom: 16px; }
+      .heading { display: flex; align-items: center; gap: 10px; }
+      h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.3px; }
+      h2 { margin: 0; font-size: 15px; font-weight: 650; }
+      p { margin: 0; }
+      .subline { margin-top: 5px; color: var(--muted); font-size: 12px; }
+      .badge { flex-shrink: 0; padding: 2px 7px; border-radius: 5px; background: var(--amber-soft); color: var(--amber); font-size: 11px; }
+      .status { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+      .status-dot { flex: 0 0 7px; height: 7px; margin-top: 8px; border-radius: 50%; background: var(--muted); }
+      .status[data-tone="success"] .status-dot { background: var(--green); }
+      .status[data-tone="error"] { background: var(--red-soft); }
+      .status[data-tone="error"] .status-dot { background: var(--red); }
+      #statusMessage { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+      section { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+      .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .section-heading:last-child { margin-bottom: 0; }
+      .muted { color: var(--muted); font-size: 12px; }
+      button, select, input { font: inherit; }
+      button { min-height: 34px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+      button:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+      button.primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+      button.primary:hover:not(:disabled) { filter: brightness(.95); color: #fff; }
+      button.quiet { padding: 2px 4px; min-height: 28px; border-color: transparent; background: transparent; color: var(--muted); font-size: 12px; }
+      button:disabled { cursor: default; opacity: .48; }
+      :focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+      .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .qr-area { margin-top: 14px; text-align: center; }
+      #qrImage { display: block; width: 220px; height: 220px; margin: 0 auto 7px; border: 10px solid #fff; border-radius: 9px; background: #fff; }
+      .verify-form { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
+      .verify-field { flex: 1; min-width: 0; }
+      label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+      input, select { width: 100%; min-height: 34px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); }
+      .connection-note { margin-top: 9px; padding: 9px 10px; border-radius: 7px; background: var(--blue-soft); color: var(--text); font-size: 12px; }
+      #contextDetail { margin-top: 4px; }
+      .preview { margin: 0 0 12px; padding: 10px 12px; border-radius: 7px; background: var(--bg); color: var(--muted); font: 12px/1.7 "Segoe UI", "Microsoft YaHei", sans-serif; white-space: pre-wrap; }
+      .experiment { margin-top: 9px; color: var(--muted); font-size: 11px; }
+      .schedule-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .schedule-field { flex: 1; min-width: 0; }
+      .schedule-row > button { margin-top: 23px; }
+      .schedule-note { margin-top: 7px; color: var(--muted); font-size: 11px; }
+      .scheduled { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: 7px; background: var(--amber-soft); color: var(--amber); font-size: 12px; }
+      #scheduledAt { overflow-wrap: anywhere; }
+      #tests { max-height: 230px; overflow-y: auto; scrollbar-width: thin; }
+      .empty { padding: 8px 0 3px; color: var(--muted); font-size: 12px; }
+      .test-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); }
+      .test-row:first-child { border-top: 0; padding-top: 0; }
+      .test-copy { min-width: 0; }
+      .test-title { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+      .test-meta { margin-top: 2px; color: var(--muted); font-size: 11px; }
+      .test-result { display: inline-block; margin-top: 4px; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+      .test-result.pending { background: var(--bg); color: var(--muted); }
+      .test-result.accepted { background: var(--blue-soft); color: var(--blue); }
+      .test-result.unknown { background: var(--amber-soft); color: var(--amber); }
+      .test-result.rejected { background: var(--red-soft); color: var(--red); }
+      .test-result.received { background: var(--green-soft); color: var(--green); }
+      .confirm-button { flex-shrink: 0; min-height: 30px; padding: 3px 9px; font-size: 12px; }
+      .share-form { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+      .share-form input { flex: 1; min-width: 0; }
+      .share-form button { flex-shrink: 0; }
+      #sharedClients, #sharedReceipts { margin-top: 8px; }
+      .source-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+      .source-copy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .source-row button { flex-shrink: 0; }
+      .receipt-row { padding: 5px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+      footer { margin-top: 12px; color: var(--muted); font-size: 11px; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #181b21; --surface: #22262e; --text: #e9edf4; --muted: #a0adbf; --line: #383f4a; --blue: #77a7ff; --blue-soft: #273953; --green: #7ac8a0; --green-soft: #243d32; --amber: #e5bd77; --amber-soft: #443724; --red: #f2a1a7; --red-soft: #472d33; }
+        button.primary { color: #101d31; }
+        button.primary:hover:not(:disabled) { color: #101d31; }
+      }
+      @media (max-width: 480px) { main { padding: 18px 14px; } section { padding: 14px; } .schedule-row { flex-wrap: wrap; } .schedule-row > button { margin-top: 0; } .schedule-field { flex-basis: 100%; } }
+    </style>
+    <script type="module" src="app.mjs"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="heading"><h1>微信直连验证</h1><span class="badge">独立试验</span></div>
+        <p class="subline">独立连接；模拟测试使用固定内容，共享通知由已授权的本机来源提供。</p>
+      </header>
+      <div id="statusBanner" class="status" role="status" aria-live="polite" data-tone="neutral"><span class="status-dot" aria-hidden="true"></span><p id="statusMessage">正在连接本地验证工具…</p></div>
+
+      <section aria-labelledby="connectionHeading">
+        <div class="section-heading"><h2 id="connectionHeading">1. 扫码绑定微信</h2><button id="forgetButton" class="quiet" type="button" disabled>清除测试连接</button></div>
+        <div class="actions"><button id="loginButton" class="primary" type="button" disabled>扫码绑定</button><span id="connectionState" class="muted">尚未绑定</span></div>
+        <div id="qrArea" class="qr-area" hidden><img id="qrImage" alt="微信 ClawBot 测试绑定二维码" width="220" height="220"><p class="muted">用手机微信扫码，按微信页面提示确认。</p></div>
+        <form id="verifyForm" class="verify-form" hidden><div class="verify-field"><label for="verifyCode">微信要求的验证码</label><input id="verifyCode" type="text" autocomplete="one-time-code" maxlength="64" spellcheck="false"></div><button id="verifyButton" class="primary" type="submit" disabled>提交验证码</button></form>
+        <div id="boundNote" class="connection-note" hidden><p id="contextInstruction">请在微信 ClawBot 会话中发送“验证”，建立测试会话。</p><p id="contextDetail" class="muted"></p></div>
+      </section>
+
+      <section aria-labelledby="sendHeading">
+        <div class="section-heading"><h2 id="sendHeading">2. 测试模拟提醒</h2><span class="muted">固定测试内容</span></div>
+        <pre class="preview">模拟到期提醒
+账号：模拟账号
+卡片：模拟重置卡
+到期：模拟到期
+此消息仅用于微信直连验证，不含真实 Codex 资料。</pre>
+        <p class="muted" style="margin: -5px 0 10px; font-size: 11px">每条消息附带测试编号，便于和下方记录核对。</p>
+        <div class="actions"><button id="sendButton" class="primary" type="button" disabled>立即测试</button><button id="omitButton" type="button" disabled>实验：省略会话上下文</button></div>
+        <p class="experiment">省略上下文的实验用于验证主动发送限制，可能被微信拒绝。</p>
+        <div class="schedule-row"><div class="schedule-field"><label for="delayMinutes">延迟发送</label><select id="delayMinutes" disabled><option value="5" selected>5 分钟后</option><option value="1500">25 小时后</option><option value="1">1 分钟后（快速验证）</option></select></div><button id="scheduleButton" type="button" disabled>安排测试</button></div>
+        <p class="schedule-note">延迟试验需电脑在线并保持本工具运行；关闭窗口会取消计划。</p>
+        <div id="scheduledNote" class="scheduled" hidden><span id="scheduledAt"></span><button id="cancelButton" type="button" disabled>取消计划</button></div>
+      </section>
+
+      <section aria-labelledby="testsHeading">
+        <div class="section-heading"><h2 id="testsHeading">3. 确认手机收到</h2><span class="muted">最近 12 次</span></div>
+        <div id="tests"><p class="empty">尚无测试记录。手机看到消息后，点击对应记录的“已收到”。</p></div>
+      </section>
+      <section aria-labelledby="sharingHeading">
+        <div class="section-heading"><h2 id="sharingHeading">4. 本机通知共享</h2><button id="sharingButton" type="button" disabled>开启共享</button></div>
+        <p id="sharingState" class="muted">默认关闭，开启后供已授权的本机 agent 发送微信通知。</p>
+        <form id="sourceForm" class="share-form"><label for="sourceName" class="muted" style="margin: 0; flex-shrink: 0">来源</label><input id="sourceName" type="text" maxlength="40" placeholder="例如：卡片提醒、Agent A" autocomplete="off" spellcheck="false" disabled><button id="sourceButton" type="submit" disabled>创建并导出</button></form>
+        <p class="schedule-note">导出的加密客户端仅供这台电脑使用，可逐个撤销权限。关闭窗口停止共享，下次打开需手动开启。</p>
+        <div id="sharedClients"></div>
+        <div id="sharedReceipts"></div>
+        <p class="experiment">实验功能：通知内容会发送给微信官方；省略会话上下文及长期定时投递仍待验证。</p>
+      </section>
+      <footer>“微信已接受”仅表示接口接受发送；“手机已收到”需要你确认。绑定信息仅用于本机测试，下次打开可继续使用；发送计划不会自动恢复。</footer>
+    </main>
+  </body>
+</html>

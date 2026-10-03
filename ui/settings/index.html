@@ -29,7 +29,7 @@
   .line { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
   .line input[type=checkbox] { width: 16px; height: 16px; }
   .field { display: block; margin: 10px 0; }
-  .field input { margin-top: 5px; display: block; width: 100%; padding: 8px; border: 1px solid var(--field-line); border-radius: 7px; background:var(--surface); color:var(--ink); font: inherit; }
+  .field input, .field select { margin-top: 5px; display: block; width: 100%; padding: 8px; border: 1px solid var(--field-line); border-radius: 7px; background:var(--surface); color:var(--ink); font: inherit; }
   .clocks { display: flex; gap: 14px; align-items: center; }
   .clocks input { width: 110px; }
   button { border: 1px solid var(--button-line); background: var(--surface); border-radius: 7px; padding: 8px 13px; cursor: pointer; color:var(--ink); font: inherit; white-space:nowrap; }
@@ -90,7 +90,7 @@
     <label class="line"><input id="desktop" type="checkbox">桌面提醒</label>
     <div class="toggle-row"><label class="line"><input id="feishu" type="checkbox">飞书私聊</label>
       <button id="feishu-state" class="status-link" type="button">读取中…</button></div>
-    <div class="toggle-row"><label class="line"><input id="wechat" type="checkbox">微信（PushPlus）</label>
+    <div class="toggle-row"><label class="line"><input id="wechat" type="checkbox">微信提醒</label>
       <button id="wechat-state" class="status-link" type="button">读取中…</button></div>
     <small id="channel-warning" hidden>提醒已关闭</small>
   </section>
@@ -99,8 +99,10 @@
     <div class="clocks" title="电脑本地时间"><input id="quiet-start" type="time" aria-label="免打扰开始时间">至<input id="quiet-end" type="time" aria-label="免打扰结束时间"></div>
   </section>
   <section class="secondary-settings"><details id="wechat-connection"><summary>微信配置</summary>
-    <label class="field">PushPlus Token<input id="wechat-token" type="password" autocomplete="new-password" placeholder="输入 PushPlus Token"></label>
-    <button id="wechat-help" type="button">获取 Token</button><button id="wechat-test" type="button">发送微信测试</button>
+    <label class="field">发送方式<select id="wechat-provider"><option value="pushplus">PushPlus</option><option value="local-gateway">本机微信网关（实验）</option></select></label>
+    <label class="field" id="wechat-token-field">PushPlus Token<input id="wechat-token" type="password" autocomplete="new-password" placeholder="输入 PushPlus Token"></label>
+    <label class="field" id="wechat-client-field" hidden>加密调用文件<input id="wechat-client-file" readonly placeholder="选择网关导出的 .bin 文件"></label>
+    <button id="wechat-browse" type="button" hidden>选择调用文件</button><button id="wechat-help" type="button">获取 Token</button><button id="wechat-test" type="button">发送微信测试</button>
     <p><small id="wechat-help-text">关注 PushPlus 公众号并获取 Token。保存后可发送一条测试通知。</small></p>
   </details>
   <details id="feishu-connection"><summary>飞书连接</summary>
@@ -175,7 +177,10 @@
     if (value.phase === 'downloading' || value.phase === 'ready') $('open-update').hidden = true;
   }
   const draft = () => ({ autoStartEnabled: $('autostart').checked, desktopEnabled: $('desktop').checked,
-    feishuEnabled: $('feishu').checked, wechatEnabled: $('wechat').checked, wechatToken: $('wechat-token').value,
+    feishuEnabled: $('feishu').checked, wechatEnabled: $('wechat').checked,
+    wechatProvider: $('wechat-provider').value,
+    wechatToken: $('wechat-provider').value === 'pushplus' ? $('wechat-token').value : '',
+    wechatGatewayClientFile: $('wechat-provider').value === 'local-gateway' ? $('wechat-client-file').value : '',
     quietEnabled: $('quiet').checked,
     quietStart: $('quiet-start').value, quietEnd: $('quiet-end').value,
     preflightEnabled: $('preflight').checked,
@@ -202,11 +207,21 @@
   }
   function controls() {
     const blocked = saving || accountWorking || !baseline;
-    for (const id of ['autostart', 'desktop', 'feishu', 'wechat', 'wechat-token', 'wechat-help', 'wechat-state', 'quiet', 'preflight', 'save', 'test', 'repair-codex']) $(id).disabled = blocked;
-    $('wechat-test').disabled = blocked || !wechatConfigured || Boolean($('wechat-token').value)
-      || $('wechat').checked !== baseline?.wechatEnabled;
-    $('wechat-test').title = !wechatConfigured ? '先保存 Token，再发送测试' : $('wechat-token').value
-      || $('wechat').checked !== baseline?.wechatEnabled ? '先保存微信修改，再发送测试' : '使用已保存的 Token 发送一条测试通知';
+    for (const id of ['autostart', 'desktop', 'feishu', 'wechat', 'wechat-provider', 'wechat-token', 'wechat-browse', 'wechat-help', 'wechat-state', 'quiet', 'preflight', 'save', 'test', 'repair-codex']) $(id).disabled = blocked;
+    const local = $('wechat-provider').value === 'local-gateway';
+    const configured = wechatConfigured && $('wechat-provider').value === baseline?.wechatProvider;
+    const changed = Boolean(!local && $('wechat-token').value) || $('wechat').checked !== baseline?.wechatEnabled
+      || $('wechat-provider').value !== baseline?.wechatProvider || $('wechat-client-file').value !== baseline?.wechatGatewayClientFile;
+    $('wechat-token-field').hidden = local;
+    $('wechat-client-field').hidden = $('wechat-browse').hidden = !local;
+    $('wechat-help').hidden = local;
+    $('wechat-state').textContent = configured ? '已配置' : '未配置';
+    $('wechat-help-text').textContent = local
+      ? '先在微信网关开启共用通知并导出调用文件。网关须保持运行；长期主动提醒仍待验证。'
+      : legacyWechatEnabled ? '原微信公众号通知继续保留。保存 PushPlus Token 后可切换到个人微信提醒。'
+        : '关注 PushPlus 公众号并获取 Token。保存后可发送一条测试通知。';
+    $('wechat-test').disabled = blocked || !configured || changed;
+    $('wechat-test').title = !configured || changed ? '先保存微信配置，再发送测试' : '发送一条模拟微信通知';
     $('cancel').disabled = saving || accountWorking;
     $('test').hidden = selectedTab === 'accounts';
     $('save').hidden = selectedTab === 'accounts' && !dirty();
@@ -266,7 +281,9 @@
     $('feishu').checked = settings.feishuEnabled;
     wechatConfigured = settings.wechatConfigured === true;
     legacyWechatEnabled = settings.wechatProvider === 'legacy' && settings.wechatEnabled === true;
-    $('wechat').checked = settings.wechatProvider === 'pushplus' && settings.wechatEnabled === true;
+    $('wechat-provider').value = settings.wechatProvider === 'local-gateway' ? 'local-gateway' : 'pushplus';
+    $('wechat-client-file').value = settings.wechatGatewayClientFile || '';
+    $('wechat').checked = ['pushplus', 'local-gateway'].includes(settings.wechatProvider) && settings.wechatEnabled === true;
     $('wechat-token').value = '';
     $('wechat-token').placeholder = wechatConfigured ? '已保存，留空保留原 Token' : '输入 PushPlus Token';
     $('wechat-state').textContent = wechatConfigured ? '已配置' : '未配置';
@@ -332,6 +349,17 @@
   });
   $('wechat-help').addEventListener('click', () => window.api.openPushplusSetup()
     .catch((error) => status(error.message, true)));
+  $('wechat-browse').addEventListener('click', async () => {
+    if (saving || accountWorking) return;
+    saving = true; controls();
+    try {
+      await notifyDraft();
+      const file = await window.api.browseWechatClient();
+      if (file) $('wechat-client-file').value = file;
+      status(dirty() ? '未保存' : '');
+    } catch (error) { status(error.message, true); }
+    finally { saving = false; controls(); notifyDraft().catch(() => {}); }
+  });
   $('wechat-test').addEventListener('click', async () => {
     if (saving || accountWorking || $('wechat-test').disabled) return;
     saving = true; controls();
@@ -395,7 +423,7 @@
   });
   $('open-update').addEventListener('click', () => window.api.openUpdate()
     .catch((error) => { $('update-state').textContent = error.message; }));
-  $('reminders-panel').querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
+  $('reminders-panel').querySelectorAll('input, select').forEach((input) => input.addEventListener('input', () => {
     controls();
     if ($('feishu').checked && !connected) $('feishu-connection').open = true;
     if ($('wechat').checked && !wechatConfigured) $('wechat-connection').open = true;
@@ -445,7 +473,11 @@
     if (saving || accountWorking) return;
     if (connectionDirty()) { selectTab('reminders'); status('请先连接并测试飞书', true); $('feishu-connection').open = true; return; }
     if ($('feishu').checked && !connected) { selectTab('reminders'); status('飞书尚未连接', true); $('feishu-connection').open = true; return; }
-    if ($('wechat').checked && !wechatConfigured && !$('wechat-token').value.trim()) {
+    if ($('wechat').checked && $('wechat-provider').value === 'local-gateway' && !$('wechat-client-file').value) {
+      selectTab('reminders'); status('请先选择微信网关调用文件', true); $('wechat-connection').open = true; $('wechat-browse').focus(); return;
+    }
+    if ($('wechat').checked && $('wechat-provider').value === 'pushplus'
+      && !(wechatConfigured && baseline?.wechatProvider === 'pushplus') && !$('wechat-token').value.trim()) {
       selectTab('reminders'); status('请先填写 PushPlus Token', true); $('wechat-connection').open = true; $('wechat-token').focus(); return;
     }
     if ($('quiet').checked && (!$('quiet-start').value || !$('quiet-end').value || $('quiet-start').value === $('quiet-end').value)) {

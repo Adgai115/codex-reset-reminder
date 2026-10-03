@@ -9,7 +9,7 @@ export function nextRetryAfter(attempts, attemptedAt) {
 
 export function mayAttemptReminder(attempt, nowSeconds, manual = false) {
   if (!attempt) return !manual;
-  if (attempt.errorCode === 'pushplus_unknown') return false;
+  if (['pushplus_unknown', 'wechat_unknown', 'wechat_rejected'].includes(attempt.errorCode)) return false;
   if (attempt.state === 'sent' || attempt.attempts >= maxReminderAttempts) return false;
   if (manual) return attempt.state === 'failed';
   return Number.isInteger(attempt.nextRetryAt) && attempt.nextRetryAt <= nowSeconds;
