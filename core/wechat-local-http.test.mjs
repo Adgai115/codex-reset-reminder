@@ -102,6 +102,43 @@ test('refused connection is unsent; cancellation before fetch differs from cance
   assert.equal((await pending).code, 'WECHAT_UNKNOWN');
 });
 
+test('cancellation during discovery read never starts transport', async () => {
+  const cancellation = new AbortController();
+  let finishRead, markReading, calls = 0;
+  const reading = new Promise((resolve) => { markReading = resolve; });
+  const pending = requestLocalWechatNotification(client, request, {
+    signal: cancellation.signal,
+    readFileImpl: () => {
+      markReading();
+      return new Promise((resolve) => { finishRead = resolve; });
+    },
+    fetchImpl: async () => { calls++; return response(accepted); },
+  });
+  await reading;
+  cancellation.abort();
+  finishRead(Buffer.from(JSON.stringify(discovery)));
+  assert.deepEqual(await pending, { id: request.id, state: 'unsent',
+    code: 'WECHAT_LOCAL_CANCELLED', unsent: true });
+  assert.equal(calls, 0);
+});
+
+test('synchronous cancellation while registering its listener is proved unsent', async () => {
+  const cancellation = new AbortController();
+  const addEventListener = cancellation.signal.addEventListener.bind(cancellation.signal);
+  cancellation.signal.addEventListener = (...args) => {
+    addEventListener(...args);
+    cancellation.abort();
+  };
+  let calls = 0;
+  const result = await requestLocalWechatNotification(client, request, {
+    discovery, signal: cancellation.signal,
+    fetchImpl: async () => { calls++; return response(accepted); },
+  });
+  assert.deepEqual(result, { id: request.id, state: 'unsent',
+    code: 'WECHAT_LOCAL_CANCELLED', unsent: true });
+  assert.equal(calls, 0);
+});
+
 test('status reads are GET and return only bounded public metadata', async () => {
   const value = { state: 'status', code: 'WECHAT_LOCAL_STATUS', running: true, queued: 1, sending: true,
     client: { id: 'mock-agent', label: '模拟 agent', token: client.token }, receipts: [accepted],

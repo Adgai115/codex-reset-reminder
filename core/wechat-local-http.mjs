@@ -143,6 +143,7 @@ export async function requestLocalWechatNotification(client, request, {
   try {
     if (!record) record = JSON.parse((await readFileImpl(client.discoveryPath, 2048)).toString('utf8'));
   } catch { return localWechatFailure('WECHAT_LOCAL_OFFLINE', request); }
+  if (signal?.aborted) return localWechatFailure('WECHAT_LOCAL_CANCELLED', request);
   const endpoint = record?.version === 1 && validateLocalWechatEndpoint(record.endpoint);
   if (!endpoint) return localWechatFailure('WECHAT_LOCAL_CONFIGURATION', request);
   const controller = new AbortController();
@@ -155,6 +156,10 @@ export async function requestLocalWechatNotification(client, request, {
     controller.signal.addEventListener('abort', onAbort, { once: true });
   });
   try {
+    // Cancellation during discovery or listener registration is still proved
+    // unsent. Once fetch begins, retain the conservative unknown result.
+    if (signal?.aborted || controller.signal.aborted)
+      return localWechatFailure('WECHAT_LOCAL_CANCELLED', request);
     const operation = (async () => {
       const response = await fetchImpl(`${endpoint}/v1/${mode === 'status' ? 'status' : 'notify'}`, {
         method: mode === 'status' ? 'GET' : 'POST', redirect: 'error', signal: controller.signal,
