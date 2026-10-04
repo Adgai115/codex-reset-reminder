@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL, safeWechatBaseUrl } from './client.mjs';
-import { safeProbeDiagnostics } from './storage.mjs';
+import { safeProbeDiagnostics, safeProbePoll } from './storage.mjs';
 
 export const SYNTHETIC_TEXT = '模拟到期提醒\n账号：模拟账号\n卡片：模拟重置卡\n到期：模拟到期\n此消息仅用于微信直连验证，不含真实 Codex 资料。';
 const errorText = {
@@ -23,6 +23,7 @@ function publicTestRecord(test) {
   return { id: test.id, label: test.label, at: test.at, confirmation: test.confirmation,
     ...(typeof test.code === 'string' && Object.hasOwn(errorText, test.code) ? { code: test.code } : {}),
     ...(typeof test.contextAgeMinutes === 'number' ? { contextAgeMinutes: test.contextAgeMinutes } : {}),
+    ...(['included', 'omitted'].includes(test.contextMode) ? { contextMode: test.contextMode } : {}),
     ...safeProbeDiagnostics(test),
   };
 }
@@ -44,6 +45,7 @@ export class WechatProbe {
     this.tests = []; this.busy = false; this.listening = false; this.qrDataUrl = '';
     this.loginAttempt = null; this.scheduled = null; this.scheduleTimer = null;
     this.listenAbort = null; this.sendAbort = null; this.generation = 0;
+    this.lastPoll = null;
     this.closed = false; this.lastSendAt = -Infinity;
   }
   status() {
@@ -51,6 +53,7 @@ export class WechatProbe {
       bound: Boolean(this.session) && this.phase !== 'expired',
       hasContext: Boolean(this.contextToken), contextAt: this.contextAt,
       qrDataUrl: this.qrDataUrl, listening: this.listening,
+      lastPoll: safeProbePoll(this.lastPoll),
       scheduled: this.scheduled ? { at: iso(this.scheduled.at) } : null,
       tests: this.tests.map(publicTestRecord),
     };
@@ -84,8 +87,8 @@ export class WechatProbe {
       ...test,
       confirmation: test.confirmation === 'pending' ? 'unknown' : test.confirmation,
     })) : [];
-    await this.emit();
     if (this.session) this.startListening();
+    await this.emit();
   }
   async login() {
     this.available();
@@ -125,6 +128,7 @@ export class WechatProbe {
           this.session = { token: response.bot_token, userId: response.ilink_user_id,
             baseUrl: safeWechatBaseUrl(response.baseurl || attempt.baseUrl) };
           this.cursor = ''; this.contextToken = ''; this.contextAt = null;
+          this.lastPoll = null;
           this.phase = 'bound'; this.message = '扫码绑定成功；请在微信 ClawBot 中发送“验证”。';
           this.qrDataUrl = '';
           try {
@@ -179,6 +183,7 @@ export class WechatProbe {
       try {
         try { await this.client.notify?.(session, 'start', { signal: abort.signal }); }
         catch (error) {
+          if (!current()) return;
           if (error.code === 'WECHAT_SESSION_EXPIRED') {
             this.phase = 'expired'; this.message = probeErrorMessage(error); return;
           }
@@ -190,25 +195,37 @@ export class WechatProbe {
             const response = await this.client.getUpdates(session, { cursor: this.cursor, signal: abort.signal });
             if (!current()) break;
             failures = 0;
+            if (response.pollOutcome === 'timeout') {
+              this.lastPoll = safeProbePoll({ state: 'waiting', at: iso(this.now()) });
+              await this.emit();
+              await delay(500, abort.signal);
+              continue;
+            }
             let changed = false;
+            let pairedCount = 0, contextCount = 0;
             for (const message of response.msgs) {
               // Bind to the scanning user only. Ignore other senders and media.
-              if (message.from_user_id !== session.userId || message.message_type !== 1
-                || typeof message.context_token !== 'string' || !message.context_token) continue;
+              if (message.from_user_id !== session.userId || message.message_type !== 1) continue;
+              pairedCount += 1;
+              if (typeof message.context_token !== 'string' || !message.context_token) continue;
+              contextCount += 1;
               this.contextToken = message.context_token; this.contextAt = iso(this.now()); changed = true;
             }
             if (typeof response.get_updates_buf === 'string' && response.get_updates_buf) {
               changed ||= response.get_updates_buf !== this.cursor;
               this.cursor = response.get_updates_buf;
             }
-            if (changed) {
-              await this.persist();
-              this.message = '已建立微信会话，可以发送模拟提醒。';
-              await this.emit();
-            }
+            this.lastPoll = safeProbePoll({ state: 'ok', at: iso(this.now()), messageCount: response.msgs.length,
+              pairedCount, contextCount });
+            if (changed) await this.persist();
+            if (contextCount) this.message = '已建立微信会话，可以发送模拟提醒。';
+            await this.emit();
             await delay(500, abort.signal);
           } catch (error) {
             if (!current()) break;
+            this.lastPoll = safeProbePoll({ state: 'error', at: iso(this.now()),
+              code: typeof error.code === 'string' && Object.hasOwn(errorText, error.code) ? error.code : 'WECHAT_UNKNOWN',
+              ...safeProbeDiagnostics(error) });
             if (error.code === 'WECHAT_SESSION_EXPIRED') {
               this.phase = 'expired'; this.message = probeErrorMessage(error);
               await this.cancelSchedule(); break;
@@ -236,6 +253,7 @@ export class WechatProbe {
     const generation = this.generation, session = this.session;
     const test = { id: randomUUID(), label: label || (omitContext ? '省略上下文实验' : '即时测试'),
       at: iso(this.now()), confirmation: 'pending',
+      contextMode: contextToken === undefined ? 'omitted' : 'included',
       ...(contextAt ? { contextAgeMinutes: Math.max(0, Math.floor((this.now() - Date.parse(contextAt)) / 60000)) } : {}),
     };
     this.tests.unshift(test); this.tests = this.tests.slice(0, 12);
@@ -295,6 +313,7 @@ export class WechatProbe {
     this.listenAbort?.abort(); this.listenAbort = null;
     await this.cancelSchedule();
     this.session = null; this.contextToken = ''; this.contextAt = null; this.cursor = '';
+    this.lastPoll = null;
     this.qrDataUrl = ''; this.tests = []; this.listening = false; this.phase = 'idle';
     await this.storage.remove();
     this.message = '本机测试连接已清除；微信侧解绑请在微信 ClawBot 中操作。'; await this.emit();

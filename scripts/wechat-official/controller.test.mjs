@@ -54,6 +54,7 @@ test('probe persists pending before a fixed synthetic send and never claims rece
   assert.ok(f.sends[0].text.startsWith(SYNTHETIC_TEXT));
   assert.ok(f.sends[0].text.includes(f.probe.tests[0].id.slice(0, 8)));
   assert.equal(f.sends[0].contextToken, 'original-context');
+  assert.equal(f.probe.status().tests[0].contextMode, 'included');
   assert.equal(f.probe.status().tests[0].confirmation, 'accepted');
   await f.probe.confirm(f.probe.tests[0].id);
   assert.equal(f.probe.status().tests[0].confirmation, 'received');
@@ -184,7 +185,28 @@ test('omitting context is explicit and does not attach current conversation toke
   const f = fixture(); f.bind();
   await f.probe.send({ omitContext: true });
   assert.equal(f.sends[0].contextToken, undefined);
+  assert.equal(f.probe.status().tests[0].contextMode, 'omitted');
+  assert.equal(f.writes.at(-1).tests[0].contextMode, 'omitted');
   assert.equal(f.probe.tests[0].contextAgeMinutes, undefined);
+});
+
+test('response hint and context mode recovery accepts only fixed enums and never guesses legacy request context', async () => {
+  const base = { id: 'synthetic-hint-test', label: '即时测试', at: '2026-10-02T08:00:00Z', confirmation: 'unknown', code: 'WECHAT_UNKNOWN' };
+  const hints = ['absent', 'empty', 'prepare_failed', 'rate_limited', 'other'];
+  const f = fixture({ saved: { version: 1, session, tests: [
+    ...hints.map((responseHint, index) => ({ ...base, id: `hint-${index}`, responseHint, contextMode: index % 2 ? 'included' : 'omitted' })),
+    base, { ...base, id: 'synthetic-unsafe-record', responseHint: 'synthetic-private-hint', contextMode: 'synthetic-private-mode' },
+  ] } });
+  try {
+    await f.probe.initialize();
+    hints.forEach((hint, index) => assert.equal(f.probe.status().tests[index].responseHint, hint));
+    assert.equal(Object.hasOwn(f.probe.status().tests[hints.length], 'contextMode'), false);
+    assert.equal(Object.hasOwn(f.probe.status().tests.at(-1), 'responseHint'), false);
+    assert.equal(Object.hasOwn(f.probe.status().tests.at(-1), 'contextMode'), false);
+    await f.probe.persist();
+    assert.ok(!JSON.stringify(f.writes.at(-1).tests).includes('synthetic-private'));
+    assert.equal(f.sends.length, 0);
+  } finally { await f.probe.stop(); }
 });
 
 test('25 hour delay uses original context even if a new conversation arrives', async () => {

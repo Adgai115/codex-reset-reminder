@@ -108,15 +108,32 @@ test('updates preserve conversation context and text while removing media', asyn
   assert.equal(calls[0].init.redirect, 'error');
 });
 
-test('updates require an explicit successful ret and a valid message array', async () => {
-  for (const payload of [{ msgs: [] }, { ret: '0', msgs: [] }, { ret: 0 },
-    { ret: 0, msgs: {} }, { ret: 0, msgs: [null] }, { ret: 0, msgs: [], get_updates_buf: {} },
+test('updates validate any present business code and message array', async () => {
+  for (const payload of [{ ret: '0', msgs: [] },
+    { ret: 0, msgs: null }, { ret: 0, msgs: {} }, { ret: 0, msgs: [null] }, { ret: 0, msgs: [], get_updates_buf: {} },
     { ret: 0, msgs: [], errcode: 'server-secret' }]) {
     await assert.rejects(mockClient(payload).client.getUpdates(session), errorCode('WECHAT_PROTOCOL'));
   }
   for (const payload of [{ ret: -14 }, { ret: 0, errcode: -14, msgs: [] }]) {
     await assert.rejects(mockClient(payload).client.getUpdates(session), errorCode('WECHAT_SESSION_EXPIRED'));
   }
+});
+
+test('successful empty long polls may omit msgs without losing the existing cursor', async () => {
+  for (const payload of [{}, { msgs: [] }, { ret: 0 }, { ret: 0, get_updates_buf: 'mock-next-cursor' }]) {
+    const { client, calls } = mockClient(payload);
+    assert.deepEqual(await client.getUpdates(session, { cursor: 'mock-existing-cursor' }),
+      { ret: 0, msgs: [], get_updates_buf: payload.get_updates_buf ?? 'mock-existing-cursor' });
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('updates without ret still recover an inbound context and reject a present nonzero errcode', async () => {
+  const { client } = mockClient({ msgs: [{ from_user_id: 'mock-user', message_type: 1,
+    context_token: 'mock-context' }], get_updates_buf: 'mock-next-cursor' });
+  assert.equal((await client.getUpdates(session)).msgs[0].context_token, 'mock-context');
+  await assert.rejects(mockClient({ errcode: -14 }).client.getUpdates(session), errorCode('WECHAT_SESSION_EXPIRED'));
+  await assert.rejects(mockClient({ errcode: -2 }).client.getUpdates(session), errorCode('WECHAT_REJECTED'));
 });
 
 test('numeric uint64 message IDs survive parsing without modifying message text', async () => {
@@ -174,7 +191,7 @@ test('send rejects only explicit nonzero ret and preserves validated numeric dia
     const { client, calls } = mockClient(payload);
     await assert.rejects(client.sendText(session, { text: '隔离验证' }), error =>
       errorCode('WECHAT_REJECTED')(error)
-      && error.businessCode === payload.ret && error.responseRet === payload.ret
+      && error.httpStatus === 200 && error.businessCode === payload.ret && error.responseRet === payload.ret
       && error.responseErrcode === payload.errcode);
     assert.equal(calls.length, 1);
   }
@@ -183,6 +200,23 @@ test('send rejects only explicit nonzero ret and preserves validated numeric dia
     await assert.rejects(client.sendText(session, { text: '隔离验证' }), error =>
       errorCode('WECHAT_SESSION_EXPIRED')(error) && error.businessCode === -14
       && error.responseRet === -14 && error.responseErrcode === payload.errcode);
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('send diagnostic hints use exact fixed categories without exposing arbitrary server text', async () => {
+  for (const [errmsg, expected] of [[undefined, 'absent'], ['', 'empty'], ['  ', 'empty'],
+    ['prepare failed', 'prepare_failed'], [' Prepare Failed ', 'prepare_failed'],
+    ['rate limited', 'rate_limited'], ['rate limit', 'rate_limited'],
+    ['prepare failed: server-secret mock-bot-token', 'other'],
+    ['rate limited server-secret', 'other'], ['server-secret', 'other'],
+    [{ token: 'server-secret' }, 'other'], ['x'.repeat(257), 'other']]) {
+    const { client, calls } = mockClient({ ret: -2, ...(errmsg !== undefined ? { errmsg } : {}) });
+    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error => {
+      errorCode('WECHAT_REJECTED')(error);
+      assert.equal(error.responseHint, expected);
+      return true;
+    });
     assert.equal(calls.length, 1);
   }
 });
@@ -302,7 +336,7 @@ test('response streaming is bounded and a stalled body is covered by timeout', a
     .client.sendText(session, { text: '隔离验证' }), errorCode('WECHAT_UNKNOWN'));
   const stalled = new ReadableStream({ start() {} });
   assert.deepEqual(await mockClient(new Response(stalled), { longPollTimeoutMs: 10 }).client.getUpdates(session),
-    { ret: 0, msgs: [], get_updates_buf: '' });
+    { ret: 0, msgs: [], get_updates_buf: '', pollOutcome: 'timeout' });
 });
 
 test('long-poll timeout means waiting and preserves the cursor for the next explicit poll', async () => {
@@ -323,7 +357,7 @@ test('long-poll timeout means waiting and preserves the cursor for the next expl
   assert.deepEqual(await client.pollQr('mock-qr'), { status: 'scaned' });
   assert.equal(qrCalls, 2);
   assert.deepEqual(await client.getUpdates(session, { cursor: 'mock-cursor' }),
-    { ret: 0, msgs: [], get_updates_buf: 'mock-cursor' });
+    { ret: 0, msgs: [], get_updates_buf: 'mock-cursor', pollOutcome: 'timeout' });
   assert.equal(updateCalls, 1);
   assert.equal((await client.getUpdates(session, { cursor: 'mock-cursor' })).get_updates_buf, 'mock-next-cursor');
   assert.equal(updateCalls, 2);

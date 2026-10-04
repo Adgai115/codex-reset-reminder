@@ -11,6 +11,7 @@ function fixture(sendText = async () => ({ confirmation: 'accepted' })) {
   });
   probe.session = { token: 'synthetic-token', userId: 'synthetic-peer', baseUrl: 'https://ilinkai.weixin.qq.com' };
   probe.phase = 'bound';
+  probe.contextToken = 'synthetic-context';
   return { probe, persisted, statuses, send: createSharedWechatSender(probe), advance: () => { now += 15000; } };
 }
 
@@ -39,14 +40,65 @@ test('shared transport reserves lock before await and blocks synthetic sends and
   await assert.rejects(f.send('synthetic second notification'), (error) => error.unsent && error.code === 'GATEWAY_BUSY');
 });
 
-test('contextless shared sends are explicit experiment and unavailable states never reach transport', async () => {
+test('shared sends require context before transport and show a fixed unsent verification step', async () => {
   const sends = [];
   const f = fixture(async (_session, input) => { sends.push(input); return { confirmation: 'accepted' }; });
-  await f.send('synthetic contextless notification');
-  assert.equal(sends[0].contextToken, undefined);
+  f.probe.contextToken = '';
+  const message = '微信尚未建立会话，请在手机 ClawBot 发送“验证”后再试。';
+  await assert.rejects(f.send('synthetic contextless notification'), (error) =>
+    error.unsent === true && error.code === 'PROBE_STATE' && error.message === message);
+  assert.equal(sends.length, 0);
+  assert.equal(f.probe.message, message);
+  assert.equal(f.statuses.at(-1).message, message);
+  assert.equal(f.probe.lastSendAt, -Infinity);
+  assert.equal(f.probe.busy, false);
+  assert.equal(f.probe.sendAbort, null);
+  assert.equal(f.probe.tests.length, 0);
+  assert.equal(f.persisted.length, 0);
+  f.probe.contextToken = 'new-private-context';
+  assert.deepEqual(await f.send('synthetic established notification'), { confirmation: 'accepted' });
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].contextToken, 'new-private-context');
   f.advance(); f.probe.phase = 'expired';
   await assert.rejects(f.send('synthetic notification'), (error) => error.unsent === true);
   assert.equal(sends.length, 1);
+});
+
+test('context arriving during a blocked shared send never triggers an automatic send', async () => {
+  let calls = 0, release;
+  const f = fixture(async () => { calls++; return { confirmation: 'accepted' }; });
+  f.probe.contextToken = '';
+  f.probe.storage.writeStatus = async (status) => {
+    if (status.busy) await new Promise((resolve) => { release = resolve; });
+  };
+  const blocked = f.send('synthetic notification');
+  assert.equal(f.probe.busy, true);
+  await assert.rejects(f.send('synthetic concurrent notification'), (error) =>
+    error.unsent === true && error.code === 'GATEWAY_BUSY');
+  f.probe.contextToken = 'new-private-context';
+  release();
+  await assert.rejects(blocked, (error) => error.unsent === true && error.code === 'PROBE_STATE');
+  assert.equal(calls, 0);
+  assert.equal(f.probe.lastSendAt, -Infinity);
+  assert.equal(f.probe.busy, false);
+  assert.equal(f.probe.sendAbort, null);
+});
+
+test('cancelling a contextless shared send before status completion remains unsent and releases its lock', async () => {
+  let calls = 0, release;
+  const f = fixture(async () => { calls++; return { confirmation: 'accepted' }; });
+  f.probe.contextToken = '';
+  f.probe.storage.writeStatus = async (status) => {
+    if (status.busy) await new Promise((resolve) => { release = resolve; });
+  };
+  const upstream = new AbortController();
+  const blocked = f.send('synthetic notification', { signal: upstream.signal });
+  upstream.abort(); release();
+  await assert.rejects(blocked, (error) => error.unsent === true && error.code === 'WECHAT_CANCELLED');
+  assert.equal(calls, 0);
+  assert.equal(f.probe.lastSendAt, -Infinity);
+  assert.equal(f.probe.busy, false);
+  assert.equal(f.probe.sendAbort, null);
 });
 
 test('transport unknown and stale session cannot auto retry or leak original error', async () => {

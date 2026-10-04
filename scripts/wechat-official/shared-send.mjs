@@ -12,7 +12,8 @@ export function createSharedWechatSender(probe, { canSend = () => true } = {}) {
     if (typeof text !== 'string' || !text.trim()) throw unsent('共享通知内容无效。');
     if (probe.now() - probe.lastSendAt < probe.cooldownMs) throw unsent('发送间隔不足，请稍后再提交。', 'GATEWAY_BUSY');
 
-    const session = probe.session, generation = probe.generation;
+    const session = probe.session, generation = probe.generation, contextToken = probe.contextToken;
+    const contextMessage = '微信尚未建立会话，请在手机 ClawBot 发送“验证”后再试。';
     const abort = new AbortController();
     const cancel = () => abort.abort();
     signal?.addEventListener('abort', cancel, { once: true });
@@ -20,13 +21,15 @@ export function createSharedWechatSender(probe, { canSend = () => true } = {}) {
     probe.busy = true; probe.sendAbort = abort;
     let transported = false;
     try {
+      if (!contextToken) probe.message = contextMessage;
       try { await probe.emit(); }
       catch { throw unsent('本机共享状态无法保存，本次未发送。'); }
       if (probe.closed || generation !== probe.generation || session !== probe.session || abort.signal.aborted)
         throw unsent('共享通知已取消。', 'WECHAT_CANCELLED');
+      if (!contextToken) throw unsent(contextMessage);
       probe.lastSendAt = probe.now(); transported = true;
       const result = await probe.client.sendText(session, {
-        text, contextToken: probe.contextToken || undefined, clientId, signal: abort.signal,
+        text, contextToken, clientId, signal: abort.signal,
       });
       if (probe.closed || generation !== probe.generation || session !== probe.session) throw unknown();
       if (result?.confirmation !== 'accepted') throw unknown();

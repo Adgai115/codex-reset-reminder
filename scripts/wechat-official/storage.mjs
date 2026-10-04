@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-// Diagnostics may cross the public boundary only as bounded numeric values.
+// Diagnostics use bounded numeric codes and a fixed response-hint enum.
 export function safeProbeDiagnostics(value) {
   const result = {};
   for (const key of ['businessCode', 'responseRet', 'responseErrcode']) {
@@ -11,6 +11,28 @@ export function safeProbeDiagnostics(value) {
   }
   if (Number.isSafeInteger(value?.httpStatus) && value.httpStatus >= 100 && value.httpStatus <= 599)
     result.httpStatus = value.httpStatus;
+  if (['absent', 'empty', 'prepare_failed', 'rate_limited', 'other'].includes(value?.responseHint))
+    result.responseHint = value.responseHint;
+  return result;
+}
+
+const knownErrorCode = (value) => typeof value === 'string'
+  && /^WECHAT_(?:CONFIGURATION|REJECTED|SESSION_EXPIRED|HTTP|PROTOCOL|NETWORK|TIMEOUT|CANCELLED|UNKNOWN)$/.test(value);
+
+export function safeProbePoll(value) {
+  if (!['ok', 'error', 'waiting'].includes(value?.state) || typeof value.at !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.at)
+    || !Number.isFinite(Date.parse(value.at)) || new Date(value.at).toISOString() !== value.at) return null;
+  const result = { state: value.state, at: value.at };
+  if (value.state === 'ok') {
+    for (const key of ['messageCount', 'pairedCount', 'contextCount']) {
+      if (Number.isSafeInteger(value[key]) && value[key] >= 0 && value[key] <= 1000) result[key] = value[key];
+    }
+  }
+  if (value.state === 'error') {
+    if (knownErrorCode(value.code)) result.code = value.code;
+    Object.assign(result, safeProbeDiagnostics(value));
+  }
   return result;
 }
 
@@ -63,12 +85,14 @@ export function createProbeStorage(directory, crypto, { secretName = 'session.bi
         phase: status.phase, busy: status.busy, bound: status.bound,
         hasContext: status.hasContext, contextAt: status.contextAt,
         listening: status.listening, scheduled: status.scheduled,
+        lastPoll: safeProbePoll(status.lastPoll),
         tests: status.tests.map(({ id, label, at, confirmation, code, contextAgeMinutes,
-          businessCode, httpStatus, responseRet, responseErrcode }) =>
+          businessCode, httpStatus, responseRet, responseErrcode, responseHint, contextMode }) =>
           ({ id, label, at, confirmation,
-            ...(typeof code === 'string' && /^WECHAT_(?:CONFIGURATION|REJECTED|SESSION_EXPIRED|HTTP|PROTOCOL|NETWORK|TIMEOUT|CANCELLED|UNKNOWN)$/.test(code) ? { code } : {}),
+            ...(knownErrorCode(code) ? { code } : {}),
             ...(typeof contextAgeMinutes === 'number' ? { contextAgeMinutes } : {}),
-            ...safeProbeDiagnostics({ businessCode, httpStatus, responseRet, responseErrcode }) })),
+            ...(['included', 'omitted'].includes(contextMode) ? { contextMode } : {}),
+            ...safeProbeDiagnostics({ businessCode, httpStatus, responseRet, responseErrcode, responseHint }) })),
       };
       return enqueue(() => atomicWrite(statusPath, JSON.stringify(value, null, 2)));
     },

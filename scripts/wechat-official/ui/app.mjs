@@ -20,6 +20,19 @@ const timeLabel = (value) => {
     : '时间未知';
 };
 
+const responseHints = {
+  absent: '响应未包含提示', empty: '响应提示为空', prepare_failed: '响应提示为消息准备失败',
+  rate_limited: '响应提示为频率限制', other: '响应包含其他提示',
+};
+const hintLabel = (value) => typeof value === 'string' && Object.hasOwn(responseHints, value)
+  ? `${responseHints[value]}（仅供诊断，不代表已确认原因）` : '';
+const countLabel = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1000 ? value : null;
+const pollErrors = {
+  WECHAT_CONFIGURATION: '连接参数无效', WECHAT_REJECTED: '微信拒绝轮询请求',
+  WECHAT_SESSION_EXPIRED: '连接已失效', WECHAT_HTTP: 'HTTP 请求失败', WECHAT_PROTOCOL: '响应格式不符合预期',
+  WECHAT_NETWORK: '网络连接失败', WECHAT_TIMEOUT: '请求超时', WECHAT_CANCELLED: '请求已取消', WECHAT_UNKNOWN: '结果待诊断',
+};
+
 function acceptStatus(payload) {
   const next = payload?.status ?? payload;
   if (!next || typeof next !== 'object' || !Object.hasOwn(next, 'phase')) return;
@@ -50,6 +63,8 @@ function renderTests(disabled) {
     meta.className = 'test-meta';
     const metadata = [timeLabel(test.at)];
     if (Number.isFinite(test.contextAgeMinutes)) metadata.push(`会话已过去 ${Math.round(test.contextAgeMinutes)} 分钟`);
+    if (test.contextMode === 'included') metadata.push('包含会话上下文');
+    if (test.contextMode === 'omitted') metadata.push('未带会话上下文');
     if (test.confirmation === 'rejected') {
       if (typeof test.code === 'string' && /^WECHAT_(?:CONFIGURATION|REJECTED|SESSION_EXPIRED|HTTP|PROTOCOL|NETWORK|TIMEOUT|CANCELLED|UNKNOWN)$/.test(test.code))
         metadata.push(`错误码 ${test.code}`);
@@ -57,7 +72,11 @@ function renderTests(disabled) {
         metadata.push(`业务码 ${test.businessCode}`);
       if (Number.isSafeInteger(test.httpStatus) && test.httpStatus >= 100 && test.httpStatus <= 599)
         metadata.push(`HTTP ${test.httpStatus}`);
+      if (test.businessCode === -2 && test.contextMode === 'omitted')
+        metadata.push('本次未带会话上下文；请先在手机发送“验证”，再做带上下文测试。');
     }
+    const hint = hintLabel(test.responseHint);
+    if (hint) metadata.push(hint);
     meta.textContent = metadata.join(' · ');
     const result = document.createElement('span');
     const confirmation = Object.hasOwn(labels, test.confirmation) ? test.confirmation : 'unknown';
@@ -122,7 +141,7 @@ function render() {
   const ready = bound && Boolean(state.hasContext);
   const hasSchedule = Boolean(state.scheduled?.at);
   elements.statusMessage.textContent = localError || state.message || (bound ? '微信测试连接已绑定。' : '请扫码绑定微信。');
-  elements.statusBanner.dataset.tone = localError || state.phase === 'error' ? 'error' : bound ? 'success' : 'neutral';
+  elements.statusBanner.dataset.tone = localError || state.phase === 'error' || state.lastPoll?.state === 'error' ? 'error' : bound ? 'success' : 'neutral';
   elements.loginButton.disabled = disabled || bound;
   elements.loginButton.textContent = bound ? '已扫码绑定' : state.phase === 'idle' ? '扫码绑定' : '重新扫码';
   elements.forgetButton.disabled = disabled || state.phase === 'idle';
@@ -137,7 +156,27 @@ function render() {
   elements.verifyButton.disabled = disabled || !elements.verifyCode.value.trim();
   elements.boundNote.hidden = !bound;
   elements.contextInstruction.textContent = ready ? '测试会话已建立，可以发送模拟提醒。' : '请在微信 ClawBot 会话中发送“验证”，建立测试会话。';
-  elements.contextDetail.textContent = ready && state.contextAt ? `最近收到消息：${timeLabel(state.contextAt)}` : state.listening ? '正在等待你发送的微信消息。' : '微信监听暂未运行，请查看上方状态。';
+  const details = [ready && state.contextAt ? `最近收到消息：${timeLabel(state.contextAt)}` : state.listening ? '正在等待你发送的微信消息。' : '微信监听暂未运行，请查看上方状态。'];
+  const poll = state.lastPoll;
+  if (poll?.state === 'ok') {
+    details.push(`最近轮询：${timeLabel(poll.at)}`);
+    for (const [key, label] of [['messageCount', '返回'], ['pairedCount', '本账号用户消息'], ['contextCount', '含会话上下文']]) {
+      const count = countLabel(poll[key]);
+      if (count !== null) details.push(`${label} ${count} 条`);
+    }
+  } else if (poll?.state === 'error') {
+    details.push(`最近轮询失败：${timeLabel(poll.at)}`);
+    if (typeof poll.code === 'string' && Object.hasOwn(pollErrors, poll.code)) details.push(pollErrors[poll.code]);
+    if (Number.isSafeInteger(poll.businessCode) && poll.businessCode >= -2147483648 && poll.businessCode <= 2147483647)
+      details.push(`业务码 ${poll.businessCode}`);
+    if (Number.isSafeInteger(poll.httpStatus) && poll.httpStatus >= 100 && poll.httpStatus <= 599)
+      details.push(`HTTP ${poll.httpStatus}`);
+    const hint = hintLabel(poll.responseHint);
+    if (hint) details.push(hint);
+  } else if (poll?.state === 'waiting') {
+    details.push('长轮询等待，尚未收到服务端结果。');
+  }
+  elements.contextDetail.textContent = details.join(' · ');
   elements.sendButton.disabled = disabled || !ready;
   elements.omitButton.disabled = disabled || !bound;
   elements.delayMinutes.disabled = disabled || !ready || hasSchedule;

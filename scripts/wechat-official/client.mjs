@@ -21,17 +21,31 @@ const messages = {
 };
 const validResponseCode = value => Number.isSafeInteger(value)
   && value >= -2147483648 && value <= 2147483647;
+const RESPONSE_HINTS = new Set(['absent', 'empty', 'prepare_failed', 'rate_limited', 'other']);
+const RESPONSE_HTTP_STATUS = Symbol('response-http-status');
+
+function responseHint(result) {
+  if (!Object.hasOwn(result, 'errmsg')) return 'absent';
+  if (typeof result.errmsg !== 'string' || result.errmsg.length > 256) return 'other';
+  const value = result.errmsg.trim().toLowerCase();
+  if (!value) return 'empty';
+  if (value === 'prepare failed') return 'prepare_failed';
+  if (value === 'rate limited' || value === 'rate limit') return 'rate_limited';
+  return 'other';
+}
 
 function failure(code, details = {}) {
   const error = new Error(messages[code]);
   error.code = code;
-  // Only fixed categories and numeric codes may cross the error boundary.
+  // Only fixed categories, exact allowlisted hints and numeric codes cross
+  // the error boundary. The server's original errmsg is never retained.
   for (const key of ['httpStatus', 'businessCode']) {
     if (Number.isSafeInteger(details[key])) error[key] = details[key];
   }
   for (const key of ['responseRet', 'responseErrcode']) {
     if (validResponseCode(details[key])) error[key] = details[key];
   }
+  if (RESPONSE_HINTS.has(details.responseHint)) error.responseHint = details.responseHint;
   return error;
 }
 
@@ -179,8 +193,10 @@ function checkBusiness(result, { required = true, send = false } = {}) {
     }
   }
   const details = {
+    httpStatus: result[RESPONSE_HTTP_STATUS],
     ...(hasRet ? { responseRet: result.ret } : {}),
     ...(hasError ? { responseErrcode: result.errcode } : {}),
+    responseHint: responseHint(result),
   };
   // Tencent's sendMessage checks ret, while its response type does not define
   // errcode. Conflicting or incomplete send responses cannot confirm delivery
@@ -256,7 +272,9 @@ export function createWechatClient({ fetchImpl = globalThis.fetch, timeoutMs = 1
         cancelBody(response);
         throw failure('WECHAT_HTTP', { httpStatus: response.status });
       }
-      return readBoundedJson(response);
+      const result = await readBoundedJson(response);
+      Object.defineProperty(result, RESPONSE_HTTP_STATUS, { value: response.status });
+      return result;
     };
     try {
       return await Promise.race([operation(), aborted]);
@@ -326,18 +344,22 @@ export function createWechatClient({ fetchImpl = globalThis.fetch, timeoutMs = 1
           requestTimeoutMs: longPollTimeoutMs });
       } catch (error) {
         if (signal?.aborted) throw failure('WECHAT_CANCELLED');
-        if (error?.code === 'WECHAT_TIMEOUT') return { ret: 0, msgs: [], get_updates_buf: cursor };
+        if (error?.code === 'WECHAT_TIMEOUT') return { ret: 0, msgs: [], get_updates_buf: cursor,
+          pollOutcome: 'timeout' };
         throw error;
       }
-      checkBusiness(result);
-      if (!Array.isArray(result.msgs) || result.msgs.length > 1000 || !result.msgs.every(record)
+      checkBusiness(result, { required: false });
+      // The official monitor treats an omitted msgs field as an empty poll.
+      // A present field must still be a valid bounded array.
+      const messages = result.msgs === undefined ? [] : result.msgs;
+      if (!Array.isArray(messages) || messages.length > 1000 || !messages.every(record)
         || (result.get_updates_buf !== undefined
           && !validString(result.get_updates_buf, { maxBytes: 131072, empty: true }))) {
         throw failure('WECHAT_PROTOCOL');
       }
       // Keep only text and conversation metadata. No media URL is fetched or
       // carried to callers, and received content is never written by this module.
-      const msgs = result.msgs.map(msg => {
+      const msgs = messages.map(msg => {
         const keep = {};
         for (const key of ['from_user_id', 'to_user_id', 'context_token', 'message_id']) {
           if (msg[key] === undefined) continue;
