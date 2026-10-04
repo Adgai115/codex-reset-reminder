@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL, safeWechatBaseUrl } from './client.mjs';
+import { safeProbeDiagnostics } from './storage.mjs';
 
 export const SYNTHETIC_TEXT = '模拟到期提醒\n账号：模拟账号\n卡片：模拟重置卡\n到期：模拟到期\n此消息仅用于微信直连验证，不含真实 Codex 资料。';
 const errorText = {
@@ -18,6 +19,13 @@ export function probeErrorMessage(error) {
   return errorText[error?.code] || (error?.code === 'PROBE_STATE' ? error.message : '验证工具操作失败，请稍后重试。');
 }
 const iso = (value) => new Date(value).toISOString();
+function publicTestRecord(test) {
+  return { id: test.id, label: test.label, at: test.at, confirmation: test.confirmation,
+    ...(typeof test.code === 'string' && Object.hasOwn(errorText, test.code) ? { code: test.code } : {}),
+    ...(typeof test.contextAgeMinutes === 'number' ? { contextAgeMinutes: test.contextAgeMinutes } : {}),
+    ...safeProbeDiagnostics(test),
+  };
+}
 function delay(milliseconds, signal) {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
@@ -44,7 +52,7 @@ export class WechatProbe {
       hasContext: Boolean(this.contextToken), contextAt: this.contextAt,
       qrDataUrl: this.qrDataUrl, listening: this.listening,
       scheduled: this.scheduled ? { at: iso(this.scheduled.at) } : null,
-      tests: this.tests.map((test) => ({ ...test })),
+      tests: this.tests.map(publicTestRecord),
     };
   }
   async emit() {
@@ -54,7 +62,7 @@ export class WechatProbe {
   }
   async persist() {
     await this.storage.write({ version: 1, session: this.session, contextToken: this.contextToken,
-      contextAt: this.contextAt, cursor: this.cursor, tests: this.tests });
+      contextAt: this.contextAt, cursor: this.cursor, tests: this.tests.map(publicTestRecord) });
   }
   available() {
     if (this.closed) throw problem('验证工具已退出。');
@@ -72,11 +80,9 @@ export class WechatProbe {
       this.cursor = typeof saved.cursor === 'string' ? saved.cursor : '';
       this.phase = 'bound'; this.message = '已恢复测试连接；不会恢复上次关闭时的定时发送。';
     }
-    this.tests = Array.isArray(saved?.tests) ? saved.tests.slice(0, 12).map((test) => ({
-      id: test.id, label: test.label, at: test.at,
+    this.tests = Array.isArray(saved?.tests) ? saved.tests.slice(0, 12).map((test) => publicTestRecord({
+      ...test,
       confirmation: test.confirmation === 'pending' ? 'unknown' : test.confirmation,
-      ...(test.code ? { code: test.code } : {}),
-      ...(typeof test.contextAgeMinutes === 'number' ? { contextAgeMinutes: test.contextAgeMinutes } : {}),
     })) : [];
     await this.emit();
     if (this.session) this.startListening();
@@ -247,7 +253,8 @@ export class WechatProbe {
       if (generation !== this.generation) return;
       const rejected = ['WECHAT_REJECTED', 'WECHAT_SESSION_EXPIRED', 'WECHAT_CONFIGURATION'].includes(error.code);
       test.confirmation = rejected ? 'rejected' : 'unknown';
-      test.code = errorText[error.code] ? error.code : 'WECHAT_UNKNOWN';
+      test.code = typeof error.code === 'string' && Object.hasOwn(errorText, error.code) ? error.code : 'WECHAT_UNKNOWN';
+      Object.assign(test, safeProbeDiagnostics(error));
       this.message = probeErrorMessage(error);
       if (error.code === 'WECHAT_SESSION_EXPIRED') { this.phase = 'expired'; await this.cancelSchedule(); }
     } finally {

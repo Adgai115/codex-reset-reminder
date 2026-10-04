@@ -2,6 +2,18 @@ import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
+// Diagnostics may cross the public boundary only as bounded numeric values.
+export function safeProbeDiagnostics(value) {
+  const result = {};
+  for (const key of ['businessCode', 'responseRet', 'responseErrcode']) {
+    if (Number.isSafeInteger(value?.[key]) && value[key] >= -2147483648 && value[key] <= 2147483647)
+      result[key] = value[key];
+  }
+  if (Number.isSafeInteger(value?.httpStatus) && value.httpStatus >= 100 && value.httpStatus <= 599)
+    result.httpStatus = value.httpStatus;
+  return result;
+}
+
 // This development profile never reads the reminder application's config or DB.
 export function createProbeStorage(directory, crypto, { secretName = 'session.bin', statusName = 'status.json' } = {}) {
   if (![secretName, statusName].every((name) => typeof name === 'string' && /^[a-z0-9-]+\.(?:bin|json)$/.test(name)))
@@ -51,9 +63,12 @@ export function createProbeStorage(directory, crypto, { secretName = 'session.bi
         phase: status.phase, busy: status.busy, bound: status.bound,
         hasContext: status.hasContext, contextAt: status.contextAt,
         listening: status.listening, scheduled: status.scheduled,
-        tests: status.tests.map(({ id, label, at, confirmation, code, contextAgeMinutes }) =>
-          ({ id, label, at, confirmation, ...(code ? { code } : {}),
-            ...(typeof contextAgeMinutes === 'number' ? { contextAgeMinutes } : {}) })),
+        tests: status.tests.map(({ id, label, at, confirmation, code, contextAgeMinutes,
+          businessCode, httpStatus, responseRet, responseErrcode }) =>
+          ({ id, label, at, confirmation,
+            ...(typeof code === 'string' && /^WECHAT_(?:CONFIGURATION|REJECTED|SESSION_EXPIRED|HTTP|PROTOCOL|NETWORK|TIMEOUT|CANCELLED|UNKNOWN)$/.test(code) ? { code } : {}),
+            ...(typeof contextAgeMinutes === 'number' ? { contextAgeMinutes } : {}),
+            ...safeProbeDiagnostics({ businessCode, httpStatus, responseRet, responseErrcode }) })),
       };
       return enqueue(() => atomicWrite(statusPath, JSON.stringify(value, null, 2)));
     },

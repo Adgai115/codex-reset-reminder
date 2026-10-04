@@ -50,7 +50,14 @@ function renderTests(disabled) {
     meta.className = 'test-meta';
     const metadata = [timeLabel(test.at)];
     if (Number.isFinite(test.contextAgeMinutes)) metadata.push(`会话已过去 ${Math.round(test.contextAgeMinutes)} 分钟`);
-    if (test.confirmation === 'rejected' && /^[A-Za-z0-9_-]{1,32}$/.test(String(test.code ?? ''))) metadata.push(`错误码 ${test.code}`);
+    if (test.confirmation === 'rejected') {
+      if (typeof test.code === 'string' && /^WECHAT_(?:CONFIGURATION|REJECTED|SESSION_EXPIRED|HTTP|PROTOCOL|NETWORK|TIMEOUT|CANCELLED|UNKNOWN)$/.test(test.code))
+        metadata.push(`错误码 ${test.code}`);
+      if (Number.isSafeInteger(test.businessCode) && test.businessCode >= -2147483648 && test.businessCode <= 2147483647)
+        metadata.push(`业务码 ${test.businessCode}`);
+      if (Number.isSafeInteger(test.httpStatus) && test.httpStatus >= 100 && test.httpStatus <= 599)
+        metadata.push(`HTTP ${test.httpStatus}`);
+    }
     meta.textContent = metadata.join(' · ');
     const result = document.createElement('span');
     const confirmation = Object.hasOwn(labels, test.confirmation) ? test.confirmation : 'unknown';

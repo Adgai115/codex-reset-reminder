@@ -36,3 +36,42 @@ test('storage refuses unavailable or plaintext system credential encryption', as
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('public receipt diagnostics allow only signed 32-bit business codes and valid numeric HTTP statuses', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wechat-storage-'));
+  try {
+    const store = createProbeStorage(directory, crypto);
+    const legacy = { id: 'legacy-test', label: '即时测试', at: '2026-10-02T08:00:00Z',
+      confirmation: 'received', code: 'WECHAT_UNKNOWN', contextAgeMinutes: 5 };
+    const valid = [[-2147483648, 100], [-7, 403], [0, 200], [2147483647, 599]];
+    const invalid = [['synthetic-secret-code', 'synthetic-secret-status'], ['-7', '403'], [true, false], [null, null],
+      [1.25, 403.25], [NaN, Infinity], [-2147483649, 99], [2147483648, 600]];
+    await store.writeStatus({ phase: 'bound', busy: false, bound: true, hasContext: false, contextAt: null,
+      listening: false, scheduled: null, tests: [legacy,
+        ...valid.map(([businessCode, httpStatus], index) => ({ ...legacy, id: `valid-${index}`, businessCode, httpStatus,
+          responseRet: businessCode, responseErrcode: businessCode })),
+        ...invalid.map(([businessCode, httpStatus], index) => ({ ...legacy, id: `invalid-${index}`, businessCode, httpStatus,
+          responseRet: businessCode, responseErrcode: businessCode,
+          errmsg: 'synthetic-private-message', rawResponse: 'synthetic-private-response', token: 'synthetic-private-token', body: 'synthetic-private-body' })),
+        { ...legacy, id: 'private-code', code: 'synthetic-private-code' },
+      ] });
+    const plain = await readFile(join(directory, 'status.json'), 'utf8');
+    const records = JSON.parse(plain).tests;
+    assert.deepEqual(records[0], legacy);
+    valid.forEach(([businessCode, httpStatus], index) => {
+      assert.equal(records[index + 1].businessCode, businessCode);
+      assert.equal(records[index + 1].httpStatus, httpStatus);
+      assert.equal(records[index + 1].responseRet, businessCode);
+      assert.equal(records[index + 1].responseErrcode, businessCode);
+    });
+    for (const record of records.slice(valid.length + 1)) {
+      assert.equal(Object.hasOwn(record, 'businessCode'), false);
+      assert.equal(Object.hasOwn(record, 'httpStatus'), false);
+      assert.equal(Object.hasOwn(record, 'responseRet'), false);
+      assert.equal(Object.hasOwn(record, 'responseErrcode'), false);
+    }
+    assert.equal(Object.hasOwn(records.at(-1), 'code'), false);
+    assert.ok(!plain.includes('synthetic-secret'));
+    assert.ok(!plain.includes('synthetic-private'));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

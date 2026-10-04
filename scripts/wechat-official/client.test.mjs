@@ -15,6 +15,8 @@ function errorCode(code) {
   return error => {
     assert.equal(error.code, code);
     assert.doesNotMatch(error.message, /mock-bot-token|server-secret|evil\.example/);
+    assert.doesNotMatch(JSON.stringify(error), /mock-bot-token|server-secret|evil\.example/);
+    assert.equal(error.errmsg, undefined);
     assert.equal(error.cause, undefined);
     return true;
   };
@@ -157,15 +159,82 @@ test('send network errors, redirects, HTTP errors and missing ret are unknown wi
   }
 });
 
-test('send checks ret and errcode including expired sessions without retry', async () => {
-  for (const payload of [{ ret: -2, errmsg: 'server-secret' }, { ret: 0, errcode: -2 }]) {
+test('send accepts an explicit successful ret with absent or zero errcode', async () => {
+  for (const payload of [{ ret: 0 }, { ret: 0, errcode: 0, errmsg: 'server-secret' }]) {
     const { client, calls } = mockClient(payload);
-    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error =>
-      errorCode('WECHAT_REJECTED')(error) && error.businessCode === -2);
+    assert.deepEqual(await client.sendText(session, { text: '隔离验证', clientId: 'mock-id' }),
+      { ok: true, confirmation: 'accepted', clientId: 'mock-id' });
     assert.equal(calls.length, 1);
   }
-  await assert.rejects(mockClient({ ret: -14 }).client.sendText(session, { text: '隔离验证' }),
-    errorCode('WECHAT_SESSION_EXPIRED'));
+});
+
+test('send rejects only explicit nonzero ret and preserves validated numeric diagnostics without retry', async () => {
+  for (const payload of [{ ret: -2, errmsg: 'server-secret' },
+    { ret: -2, errcode: -14, errmsg: 'server-secret' }, { ret: 7, errcode: 0 }]) {
+    const { client, calls } = mockClient(payload);
+    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error =>
+      errorCode('WECHAT_REJECTED')(error)
+      && error.businessCode === payload.ret && error.responseRet === payload.ret
+      && error.responseErrcode === payload.errcode);
+    assert.equal(calls.length, 1);
+  }
+  for (const payload of [{ ret: -14 }, { ret: -14, errcode: -2, errmsg: 'server-secret' }]) {
+    const { client, calls } = mockClient(payload);
+    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error =>
+      errorCode('WECHAT_SESSION_EXPIRED')(error) && error.businessCode === -14
+      && error.responseRet === -14 && error.responseErrcode === payload.errcode);
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('send treats missing ret and conflicting errcode as unknown rather than rejection or expiration', async () => {
+  for (const payload of [{}, { errcode: 0 }, { errcode: -2 }, { errcode: -14 },
+    { ret: 0, errcode: -2 }, { ret: 0, errcode: -14 }]) {
+    const { client, calls } = mockClient({ ...payload, errmsg: 'server-secret',
+      responseRet: 'server-secret', responseErrcode: 'server-secret' });
+    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error => {
+      errorCode('WECHAT_UNKNOWN')(error);
+      assert.equal(error.businessCode, undefined);
+      assert.equal(error.responseRet, payload.ret);
+      assert.equal(error.responseErrcode, payload.errcode);
+      return true;
+    });
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('send invalid business field types and out-of-range codes stay unknown without retaining invalid diagnostics', async () => {
+  for (const payload of [{ ret: 'server-secret' }, { ret: null }, { ret: 0.5 },
+    { ret: 2147483648 }, { ret: -2147483649 }, { ret: 0, errcode: 'server-secret' },
+    { ret: 0, errcode: null }, { ret: 0, errcode: 0.5 }, { ret: -2, errcode: 2147483648 }]) {
+    const { client, calls } = mockClient({ ...payload, errmsg: 'server-secret' });
+    await assert.rejects(client.sendText(session, { text: '隔离验证' }), error => {
+      errorCode('WECHAT_UNKNOWN')(error);
+      assert.equal(error.businessCode, undefined);
+      assert.equal(error.responseRet, undefined);
+      assert.equal(error.responseErrcode, undefined);
+      return true;
+    });
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('read and lifecycle APIs retain errcode rejection and expiration precedence', async () => {
+  for (const [payload, code, businessCode] of [
+    [{ ret: 0, errcode: -2 }, 'WECHAT_REJECTED', -2],
+    [{ errcode: -2 }, 'WECHAT_REJECTED', -2],
+    [{ ret: 0, errcode: -14 }, 'WECHAT_SESSION_EXPIRED', -14],
+    [{ ret: -2, errcode: -14 }, 'WECHAT_SESSION_EXPIRED', -14],
+  ]) {
+    for (const invoke of [client => client.requestQr(), client => client.getUpdates(session),
+      client => client.notify(session, 'start')]) {
+      const { client, calls } = mockClient({ ...payload, errmsg: 'server-secret' });
+      await assert.rejects(invoke(client), error => errorCode(code)(error)
+        && error.businessCode === businessCode && error.responseRet === payload.ret
+        && error.responseErrcode === payload.errcode);
+      assert.equal(calls.length, 1);
+    }
+  }
 });
 
 test('invalid session origins and send arguments are rejected before a request', async () => {

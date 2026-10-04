@@ -19,6 +19,8 @@ const messages = {
   WECHAT_CANCELLED: '微信官方请求已取消。',
   WECHAT_UNKNOWN: '微信提交结果未知；服务端可能已接收，请先在手机核对，勿立即重复发送。',
 };
+const validResponseCode = value => Number.isSafeInteger(value)
+  && value >= -2147483648 && value <= 2147483647;
 
 function failure(code, details = {}) {
   const error = new Error(messages[code]);
@@ -26,6 +28,9 @@ function failure(code, details = {}) {
   // Only fixed categories and numeric codes may cross the error boundary.
   for (const key of ['httpStatus', 'businessCode']) {
     if (Number.isSafeInteger(details[key])) error[key] = details[key];
+  }
+  for (const key of ['responseRet', 'responseErrcode']) {
+    if (validResponseCode(details[key])) error[key] = details[key];
   }
   return error;
 }
@@ -169,16 +174,29 @@ function checkBusiness(result, { required = true, send = false } = {}) {
   const hasRet = Object.hasOwn(result, 'ret');
   const hasError = Object.hasOwn(result, 'errcode');
   for (const key of ['ret', 'errcode']) {
-    if (Object.hasOwn(result, key)
-      && (!Number.isSafeInteger(result[key]) || result[key] < -2147483648 || result[key] > 2147483647)) {
+    if (Object.hasOwn(result, key) && !validResponseCode(result[key])) {
       throw failure(send ? 'WECHAT_UNKNOWN' : 'WECHAT_PROTOCOL');
     }
   }
-  if (result.ret === -14 || result.errcode === -14) throw failure('WECHAT_SESSION_EXPIRED', { businessCode: -14 });
+  const details = {
+    ...(hasRet ? { responseRet: result.ret } : {}),
+    ...(hasError ? { responseErrcode: result.errcode } : {}),
+  };
+  // Tencent's sendMessage checks ret, while its response type does not define
+  // errcode. Conflicting or incomplete send responses cannot confirm delivery
+  // or prove rejection; keep them unknown without an automatic retry.
+  if (send) {
+    if (!hasRet) throw failure('WECHAT_UNKNOWN', details);
+    if (result.ret !== 0) throw failure(result.ret === -14 ? 'WECHAT_SESSION_EXPIRED' : 'WECHAT_REJECTED',
+      { ...details, businessCode: result.ret });
+    if (hasError && result.errcode !== 0) throw failure('WECHAT_UNKNOWN', details);
+    return;
+  }
+  if (result.ret === -14 || result.errcode === -14) throw failure('WECHAT_SESSION_EXPIRED', { ...details, businessCode: -14 });
   const rejection = hasRet && result.ret !== 0 ? result.ret
     : hasError && result.errcode !== 0 ? result.errcode : undefined;
-  if (rejection !== undefined) throw failure('WECHAT_REJECTED', { businessCode: rejection });
-  if (required && !hasRet) throw failure(send ? 'WECHAT_UNKNOWN' : 'WECHAT_PROTOCOL');
+  if (rejection !== undefined) throw failure('WECHAT_REJECTED', { ...details, businessCode: rejection });
+  if (required && !hasRet) throw failure('WECHAT_PROTOCOL', details);
 }
 
 /** All methods perform one request. The caller owns any read-only polling. */
