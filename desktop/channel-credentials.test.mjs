@@ -146,3 +146,34 @@ test('invalid Token input and encrypted-file write failure keep configuration un
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), { keep: true });
   await assert.rejects(readdir(vault));
 });
+
+test('local gateway selection preserves existing encrypted provider and unknown fields; missing files cannot enable', async (t) => {
+  const { configPath, save, vault } = await fixture(t);
+  await commitWechatSettings(configPath, { future: { keep: true } }, { wechatEnabled: true, wechatToken: 'constructed-original' }, save, { crypto });
+  const original = JSON.parse(await readFile(configPath, 'utf8'));
+  const clientFile = join(dirname(configPath), 'constructed-client.bin');
+  await writeFile(clientFile, 'constructed-opaque-client');
+  await commitWechatSettings(configPath, original, { wechatProvider: 'local-gateway', wechatEnabled: true, wechatGatewayClientFile: clientFile }, save);
+  const local = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.equal(local.wechat.provider, 'local-gateway');
+  assert.equal(local.wechat.credentialId, original.wechat.credentialId);
+  assert.deepEqual(local.future, { keep: true });
+  assert.deepEqual(await wechatSettingsStatus(configPath, local), { wechatProvider: 'local-gateway', wechatEnabled: true,
+    wechatConfigured: true, wechatGatewayClientFile: clientFile });
+  await assert.rejects(commitWechatSettings(configPath, local, { wechatProvider: 'local-gateway', wechatEnabled: true,
+    wechatGatewayClientFile: join(dirname(configPath), 'missing.bin') }, save), /加密调用文件/);
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), local);
+  await commitWechatSettings(configPath, local, { wechatProvider: 'pushplus', wechatEnabled: false }, save);
+  const switched = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.equal(switched.wechat.provider, 'pushplus'); assert.equal(switched.wechat.enabled, false);
+  await commitWechatSettings(configPath, { ...local }, { wechatProvider: 'pushplus', wechatEnabled: true, wechatToken: 'constructed-new' }, save, { crypto });
+  assert.equal((await readdir(vault)).length, 1);
+});
+
+test('disabled local selection without a file saves, but invalid path and unknown provider never commit', async (t) => {
+  const { configPath, save } = await fixture(t);
+  await commitWechatSettings(configPath, {}, { wechatProvider: 'local-gateway', wechatEnabled: false }, save);
+  assert.equal(JSON.parse(await readFile(configPath, 'utf8')).wechat.provider, 'local-gateway');
+  for (const input of [{ wechatProvider: 'local-gateway', wechatGatewayClientFile: '../relative.bin' }, { wechatProvider: 'unknown' }])
+    await assert.rejects(commitWechatSettings(configPath, {}, input, () => { throw new Error('must not write'); }));
+});

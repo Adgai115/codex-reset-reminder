@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendPushplusReminder } from './pushplus.mjs';
+import { sendLocalWechatReminder } from './wechat-local-reminder.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const fields = new Set(['cardName', 'cardId', 'expiresAt', 'remainingDays', 'availableCount']);
@@ -27,6 +28,7 @@ export function buildWechatTemplate(config, card, days, { currentAvailableCount 
 }
 
 export async function sendWechatReminder(config, card, days, options = {}) {
+  if (config.wechat?.provider === 'local-gateway') return sendLocalWechatReminder(config, card, days, options);
   if (config.wechat?.provider === 'pushplus') return sendPushplusReminder(config, card, days, options);
   const payload = buildWechatTemplate(config, card, days, options);
   const pwsh = config.pwshPath || 'pwsh.exe';

@@ -78,6 +78,10 @@ export function openStore() {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (card_id, expires_at, node_kind, node_at, credential_id)
     );
+    CREATE TABLE IF NOT EXISTS wechat_local_payloads (
+      notification_id TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sync_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       checked_at INTEGER NOT NULL,

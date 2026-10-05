@@ -1,5 +1,17 @@
 // 只保存可操作的错误分类。外部 CLI 错误可能包含 URL、令牌或配置值。
 export function safeDeliveryFailure(error, channel) {
+  if (error?.code === 'WECHAT_UNKNOWN') return {
+    code: 'wechat_unknown', text: '微信发送结果未知；可能已接收，已停止补发，请到微信核对。', retryable: false,
+  };
+  if (error?.code === 'WECHAT_REJECTED') return {
+    code: 'wechat_rejected', text: '微信拒绝此通知；请核对网关连接和会话状态。', retryable: false,
+  };
+  if (error?.code === 'WECHAT_SESSION_EXPIRED') return {
+    code: 'wechat_expired', text: '微信连接已失效；请在本机微信网关重新扫码。', retryable: false,
+  };
+  if (/^WECHAT_LOCAL_/.test(error?.code || '') || error?.code === 'WECHAT_CONFIGURATION') return {
+    code: 'wechat_local', text: '本机微信网关未完成发送；请检查网关是否开启、调用文件及来源权限。',
+  };
   if (error?.code === 'PUSHPLUS_UNKNOWN') return {
     code: 'pushplus_unknown', text: '微信提交结果未知；可能已接收，已停止补发，请在 PushPlus 核对。', retryable: false,
   };

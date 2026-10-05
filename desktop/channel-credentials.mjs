@@ -1,7 +1,7 @@
 // 渠道 Token 只在主进程解密，配置和设置页仅保存凭据引用与状态。
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
 
 const credentialIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const configurationError = (message) => Object.assign(new Error(message), { code: 'PUSHPLUS_CONFIGURATION' });
@@ -23,13 +23,28 @@ export function validateWechatToken(value) {
   return token;
 }
 export async function wechatSettingsStatus(configPath, config) {
-  const provider = config.wechat?.provider === 'pushplus' ? 'pushplus' : config.wechat ? 'legacy' : '';
+  const provider = ['pushplus', 'local-gateway'].includes(config.wechat?.provider) ? config.wechat.provider : config.wechat ? 'legacy' : '';
   let configured = false;
   if (provider === 'pushplus') {
     try { configured = (await stat(credentialPath(configPath, config.wechat.credentialId))).isFile(); }
     catch { /* 配置状态不证明 Token 有效或消息已经送达。 */ }
   }
-  return { wechatEnabled: config.wechat?.enabled === true, wechatConfigured: configured, wechatProvider: provider };
+  if (provider === 'local-gateway') {
+    try {
+      const file = validateGatewayClientFile(config.wechat.gatewayClientFile);
+      const info = await stat(file);
+      configured = info.isFile() && info.size > 0 && info.size <= 65536;
+    } catch { /* 文件存在不等于网关在线或微信送达。 */ }
+  }
+  return { wechatEnabled: config.wechat?.enabled === true, wechatConfigured: configured, wechatProvider: provider,
+    ...(provider === 'local-gateway' ? { wechatGatewayClientFile: config.wechat.gatewayClientFile || '' } : {}) };
+}
+export function validateGatewayClientFile(value) {
+  if (typeof value !== 'string') throw new Error('请选择本机微信网关的加密调用文件');
+  const file = value.trim();
+  if (!file || file.length > 4096 || !isAbsolute(file) || !/\.bin$/i.test(file) || /[\u0000-\u001f]/.test(file))
+    throw new Error('请选择本机微信网关的加密调用文件');
+  return file;
 }
 export async function readWechatToken(configPath, config, { crypto } = {}) {
   if (config.wechat?.provider !== 'pushplus') throw configurationError('请先配置微信 PushPlus 渠道');
@@ -63,9 +78,26 @@ async function removeCredential(configPath, credentialId) {
 
 // 新凭据先加密写入，再由 write 提交所有偏好；失败时保留旧引用和旧凭据。
 export async function commitWechatSettings(configPath, config, input, write, { crypto } = {}) {
+  if (input.wechatProvider === 'local-gateway') {
+    const gatewayClientFile = String(input.wechatGatewayClientFile || config.wechat?.gatewayClientFile || '').trim();
+    const enabled = input.wechatEnabled === true;
+    if (gatewayClientFile) validateGatewayClientFile(gatewayClientFile);
+    const candidate = { ...config, wechat: { ...config.wechat, enabled, provider: 'local-gateway', gatewayClientFile } };
+    if (enabled && !(await wechatSettingsStatus(configPath, candidate)).wechatConfigured)
+      throw new Error('请先选择微信网关导出的加密调用文件');
+    return write(candidate);
+  }
+  if (Object.hasOwn(input, 'wechatProvider') && !['', 'pushplus', 'legacy'].includes(input.wechatProvider))
+    throw new Error('微信渠道类型无效');
   const hasInputs = Object.hasOwn(input, 'wechatEnabled') || Object.hasOwn(input, 'wechatToken');
   const token = Object.hasOwn(input, 'wechatToken') ? validateWechatToken(input.wechatToken) : '';
   const isPushplus = config.wechat?.provider === 'pushplus';
+  if (config.wechat?.provider === 'local-gateway' && input.wechatProvider === 'pushplus' && !token) {
+    const candidate = { ...config, wechat: { ...config.wechat, enabled: input.wechatEnabled === true, provider: 'pushplus' } };
+    if (candidate.wechat.enabled && !(await wechatSettingsStatus(configPath, candidate)).wechatConfigured)
+      throw new Error('请先填写并保存 PushPlus Token');
+    return write(candidate);
+  }
   if (!hasInputs || (!isPushplus && input.wechatEnabled !== true && !token)) return write(config);
   const enabled = Object.hasOwn(input, 'wechatEnabled') ? input.wechatEnabled === true : config.wechat?.enabled === true;
   let credentialId = isPushplus ? config.wechat.credentialId : undefined;
@@ -78,6 +110,6 @@ export async function commitWechatSettings(configPath, config, input, write, { c
     if (token) await removeCredential(configPath, credentialId);
     throw error;
   }
-  if (token && isPushplus && config.wechat.credentialId !== credentialId)
+  if (token && config.wechat?.credentialId && config.wechat.credentialId !== credentialId)
     await removeCredential(configPath, config.wechat.credentialId);
 }

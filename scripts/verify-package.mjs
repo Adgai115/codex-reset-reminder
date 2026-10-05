@@ -27,10 +27,12 @@ for (const name of ['desktop/main.mjs', 'desktop/diagnostics.mjs', 'core/store.m
   'desktop/cli-repair.mjs', 'desktop/reminder-items.mjs', 'desktop/reset-card.mjs', 'core/pending-reminders.mjs',
   'desktop/account-guard.mjs', 'desktop/account-sessions.mjs', 'desktop/codex-session.mjs',
   'desktop/channel-credentials.mjs', 'core/pushplus.mjs', 'core/pushplus-http.mjs',
+  'core/wechat-local-reminder.mjs', 'core/wechat-local-client.mjs', 'core/wechat-local-http.mjs', 'core/wechat-local-bridge.mjs',
+  'desktop/wechat-local-client-main.mjs', 'desktop/wechat-local-client-runtime.mjs', 'desktop/wechat-local-export.mjs',
   'ui/reminder/index.html', 'ui/reminder/app.mjs', 'ui/setup/index.html', 'config.example.json']) {
   assert.ok(existsSync(join(appRoot, name)), `安装包缺少 ${name}`);
 }
-for (const name of ['config.json', '.state', '.env', 'data.db', 'channels', 'accounts']) {
+for (const name of ['config.json', '.state', '.env', 'data.db', 'channels', 'accounts', 'scripts', 'gateway-state.bin', 'session.bin']) {
   assert.ok(!existsSync(join(appRoot, name)), `安装包包含用户数据 ${name}`);
 }
 const resources = dirname(appRoot);
